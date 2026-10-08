@@ -46,9 +46,10 @@ if (-not $FromMsi) { & reg.exe delete 'HKLM\SOFTWARE\Microsoft\Windows\CurrentVe
 & reg.exe delete 'HKLM\SOFTWARE\PS5Camera' /f 2>&1 | Out-Null
 Start-Sleep -Milliseconds 500
 if ($FromMsi) {
-    # What the installation made next to the MSI's files: the firmware, the signed boot driver
-    # package, DLLs moved aside while in use.
+    # What the installation (or the service, firmware.ps1) made next to the MSI's files: the
+    # firmware, the signed boot driver package, DLLs moved aside while in use.
     Remove-Item (Join-Path $target 'firmware.bin'), (Join-Path $target 'driver\ps5cam-boot.cat') -Force -ErrorAction SilentlyContinue
+    Get-ChildItem $target -Filter 'firmware.bin.*.tmp' -ErrorAction SilentlyContinue | Remove-Item -Force -ErrorAction SilentlyContinue
     Get-ChildItem $target -Filter '*.old-*' -ErrorAction SilentlyContinue | Remove-Item -Force -ErrorAction SilentlyContinue
 } else {
     Remove-Item $target -Recurse -Force -ErrorAction SilentlyContinue

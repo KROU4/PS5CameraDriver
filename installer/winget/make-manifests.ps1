@@ -78,9 +78,9 @@ ShortDescription: Driver for the PlayStation 5 HD Camera on Windows 11, with dep
 Description: |-
   Makes the PlayStation 5 HD Camera (CFI-ZEY1) a regular webcam on Windows 11 at native 1920x1080 and
   60 fps. Its two sensors give depth, from which the graphics card blurs the background (bokeh); the
-  effect is switched in Settings > Cameras like Windows' own camera effects. Needs a USB 3 port and an
-  internet connection while installing: the installer downloads Sony's original camera firmware and
-  applies the driver's changes to it.
+  effect is switched in Settings > Cameras like Windows' own camera effects. Needs a USB 3 port and,
+  at installation or later, an internet connection: Sony's original camera firmware is downloaded
+  and the driver's changes are applied to it.
 Tags:
 - bokeh
 - camera
@@ -104,8 +104,8 @@ ShortDescription: Драйвер камеры PlayStation 5 HD Camera для Win
 Description: |-
   Делает PlayStation 5 HD Camera (CFI-ZEY1) обычной веб-камерой Windows 11 с родными 1920x1080 при
   60 к/с. Два сенсора камеры дают глубину, по которой видеокарта размывает фон (боке); эффект
-  включается в Параметрах → Камеры, как собственные эффекты камеры Windows. Нужен порт USB 3 и
-  интернет во время установки: установщик скачивает оригинальную прошивку Sony и вносит в неё
+  включается в Параметрах → Камеры, как собственные эффекты камеры Windows. Нужен порт USB 3 и —
+  при установке или позже — интернет: скачивается оригинальная прошивка Sony, в которую вносятся
   изменения драйвера.
 ManifestType: locale
 ManifestVersion: $manifestVersion

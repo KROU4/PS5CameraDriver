@@ -30,6 +30,10 @@
     <Launch Condition="Installed OR BOKEH=&quot;on&quot; OR BOKEH=&quot;off&quot; OR BOKEH=&quot;keep&quot;"
             Message="BOKEH must be on, off or keep." />
     <Launch Condition="Installed OR NOT TRAY OR TRAY=&quot;0&quot; OR TRAY=&quot;1&quot;" Message="TRAY must be 0 or 1." />
+    <!-- The service runs programs and firmware.ps1 from the installation folder as SYSTEM: only a
+         folder in Program Files is out of other users' reach. -->
+    <Launch Condition="Installed OR NOT INSTALLFOLDER OR INSTALLFOLDER ~&lt;&lt; ProgramFiles64Folder"
+            Message="INSTALLFOLDER must be inside Program Files." />
     <!-- A trailing backslash would swallow the closing quote of the command line below. -->
     <Launch Condition="Installed OR NOT SONYFIRMWARE OR NOT (SONYFIRMWARE &gt;&gt; &quot;\&quot;)"
             Message="SONYFIRMWARE must be the path of a file." />
@@ -63,6 +67,10 @@
       <Component>
         <File Source="$(var.Dist)\uninstall.ps1" />
         <RemoveFile Id="OldUninstallPs1" Name="uninstall.ps1" On="install" />
+      </Component>
+      <Component>
+        <File Source="$(var.Dist)\firmware.ps1" />
+        <RemoveFile Id="OldFirmwarePs1" Name="firmware.ps1" On="install" />
       </Component>
       <Component>
         <File Source="$(var.Dist)\version.txt" />

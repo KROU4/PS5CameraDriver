@@ -10,5 +10,6 @@
     <pe-file path="ps5cam-tray.exe"><authenticode-sign/></pe-file>
     <powershell-file path="install.ps1"><authenticode-sign/></powershell-file>
     <powershell-file path="uninstall.ps1"><authenticode-sign/></powershell-file>
+    <powershell-file path="firmware.ps1"><authenticode-sign/></powershell-file>
   </zip-file>
 </artifact-configuration>

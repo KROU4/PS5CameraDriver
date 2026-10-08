@@ -48,7 +48,7 @@ $src = $PSScriptRoot
 $target = if ($FromMsi) { $PSScriptRoot.TrimEnd('\') } else { Join-Path $env:ProgramFiles 'PS5Camera' }
 $version = if (Test-Path (Join-Path $src 'version.txt')) { (Get-Content (Join-Path $src 'version.txt') -TotalCount 1).Trim() } else { '1.0.0' }
 $files = 'ps5cam-vcam.dll', 'ps5cam-dmft.dll', 'ps5cam-svc.exe', 'ps5cam-ctl.exe', 'ps5cam-tray.exe', 'ps5cam-firmware.json',
-    'uninstall.ps1'
+    'firmware.ps1', 'uninstall.ps1'
 # Subject of the per-computer certificate that signs the boot driver's catalog (uninstall.ps1 too).
 $signerSubject = 'CN=PS5 Camera driver signer (this computer only)'
 $russian = (Get-UICulture).TwoLetterISOLanguageName -eq 'ru'
@@ -74,51 +74,6 @@ function Finish($code) {
     if (-not $NoPause) { Write-Host ''; Read-Host (T 'Нажмите Enter, чтобы закрыть окно' 'Press Enter to close this window') | Out-Null }
     exit $code
 }
-function Sha256([byte[]]$bytes) {
-    $h = [Security.Cryptography.SHA256]::Create()
-    try { return -join ($h.ComputeHash($bytes) | ForEach-Object { $_.ToString('x2') }) } finally { $h.Dispose() }
-}
-
-# The camera firmware: Sony's original image (never shipped with the driver) plus our byte changes
-# from ps5cam-firmware.json; both the original and the result are checked by hash.
-function Build-Firmware([string]$patchPath) {
-    $patch = Get-Content $patchPath -Raw | ConvertFrom-Json
-    # An update with the same firmware changes needs no download: the built image is already there.
-    $built = Join-Path $target 'firmware.bin'
-    if (-not $Original -and (Test-Path $built)) {
-        $bytes = [IO.File]::ReadAllBytes($built)
-        if ((Sha256 $bytes) -eq $patch.result.sha256) {
-            Write-Host ("    " + (T 'прошивка уже собрана: ' 'firmware already built: ') + $built)
-            return , $bytes
-        }
-    }
-    $local = if ($Original) { $Original } elseif (Test-Path (Join-Path $src 'sony-firmware.bin')) { Join-Path $src 'sony-firmware.bin' }
-    $candidates = if ($local) { @($local) } else { @($patch.sources) }
-    [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
-    foreach ($where in $candidates) {
-        try {
-            $bytes = if ($local) { [IO.File]::ReadAllBytes($where) } else { (New-Object Net.WebClient).DownloadData($where) }
-        } catch {
-            Write-Host ("    " + (T "не удалось получить ${where}: " "could not get ${where}: ") + $_.Exception.Message)
-            continue
-        }
-        if ($bytes.Length -ne $patch.original.size -or (Sha256 $bytes) -ne $patch.original.sha256) {
-            Write-Host ("    ${where}: " + (T 'это не оригинальная прошивка Sony 21.01-03.20.00.04' 'this is not the original Sony firmware 21.01-03.20.00.04'))
-            continue
-        }
-        Write-Host ("    " + (T 'оригинал: ' 'original: ') + $where)
-        foreach ($run in $patch.runs) {
-            $offset = [int]$run[0]
-            $hex = [string]$run[1]
-            for ($i = 0; $i -lt $hex.Length / 2; $i++) { $bytes[$offset + $i] = [Convert]::ToByte($hex.Substring(2 * $i, 2), 16) }
-        }
-        if ((Sha256 $bytes) -ne $patch.result.sha256) { throw (T 'собранная прошивка не совпала с ожидаемой' 'the built firmware does not match the expected one') }
-        return , $bytes
-    }
-    throw (T 'не удалось получить оригинальную прошивку Sony: нужен интернет, либо положите её рядом с установщиком как sony-firmware.bin (или укажите -Original ФАЙЛ)' `
-        "could not get Sony's original firmware: an internet connection is needed, or put it next to the installer as sony-firmware.bin (or pass -Original FILE)")
-}
-
 function Remove-BootDriver {
     Get-WindowsDriver -Online -ErrorAction SilentlyContinue | Where-Object { $_.OriginalFileName -like '*\ps5cam-boot.inf' } |
         ForEach-Object { Run 'pnputil.exe' @('/delete-driver', $_.Driver, '/uninstall', '/force') | Out-Null }
@@ -164,7 +119,7 @@ if (-not $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administra
     # Re-launch elevated. Arguments go as an array, so any characters in the folder path are safe.
     $argList = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', "`"$PSCommandPath`"", '-Bokeh', $Bokeh)
     if ($Tray) { $argList += '-Tray' }
-    if ($Original) { $argList += @('-Original', "`"$((Resolve-Path $Original).Path)`"") }
+    if ($Original) { $argList += @('-Original', "`"$((Resolve-Path -LiteralPath $Original).ProviderPath)`"") }
     if ($VirtualCamera) { $argList += '-VirtualCamera' }
     if ($KeepRawCamera) { $argList += '-KeepRawCamera' }
     if ($Yes) { $argList += '-Yes' }
@@ -183,7 +138,14 @@ try {
     foreach ($f in $files + 'driver\ps5cam-boot.inf') {
         if (-not (Test-Path (Join-Path $src $f))) { throw ((T 'В папке установщика нет файла ' 'The installer folder lacks the file ') + $f) }
     }
-    if ($Original -and -not (Test-Path $Original)) { throw ((T 'нет файла ' 'no such file: ') + $Original) }
+    if ($Original -and -not (Test-Path -LiteralPath $Original)) { throw ((T 'нет файла ' 'no such file: ') + $Original) }
+    if ($Original) { $Original = (Resolve-Path -LiteralPath $Original).ProviderPath }  # .NET reads relative to another folder
+    # The service runs programs and firmware.ps1 from here as SYSTEM: Program Files only (the MSI's
+    # launch condition compares the text; this resolves "..").
+    $full = [IO.Path]::GetFullPath($target) + '\'
+    $inside = @($env:ProgramW6432, $env:ProgramFiles) | Where-Object { $_ } |
+        Where-Object { $full.StartsWith($_.TrimEnd('\') + '\', [StringComparison]::OrdinalIgnoreCase) }
+    if (-not $inside) { throw ((T 'Папка установки должна быть внутри ' 'The installation folder must be inside ') + $env:ProgramW6432) }
 
     if ($Bokeh -eq 'ask') {
         Write-Host (T 'PS5 HD Camera: как должна работать камера?' 'PS5 HD Camera: how should the camera work?') -ForegroundColor Cyan
@@ -232,8 +194,24 @@ try {
         }
     }
 
+    New-Item -ItemType Directory -Force $target | Out-Null
+
+    # The camera firmware the service uploads (firmware.ps1): Sony's original + the driver's changes,
+    # built before anything else changes. Without the original (no internet here, e.g.) the
+    # installation goes on: the service builds the firmware itself once the camera is plugged in and
+    # the computer is online.
     Step (T 'Прошивка камеры: оригинал Sony + изменения драйвера' "Camera firmware: Sony's original + the driver's changes")
-    $firmware = Build-Firmware (Join-Path $src 'ps5cam-firmware.json')
+    $fwArgs = @{ Patch = (Join-Path $src 'ps5cam-firmware.json'); Out = (Join-Path $target 'firmware.bin') }
+    $localOriginal = if ($Original) { $Original } elseif (Test-Path -LiteralPath (Join-Path $src 'sony-firmware.bin')) { Join-Path $src 'sony-firmware.bin' }
+    if ($localOriginal) { $fwArgs.Original = $localOriginal }
+    & (Join-Path $src 'firmware.ps1') @fwArgs
+    $firmwareCode = $LASTEXITCODE
+    if ($firmwareCode -eq 2) {
+        Write-Host (T '    Оригинальную прошивку Sony скачать не удалось (нет интернета?). Служба скачает её сама, когда камера будет подключена к компьютеру с интернетом.' `
+            "    Could not download Sony's original firmware (no internet?). The service fetches it itself once the camera is plugged into a computer that is online.") -ForegroundColor Yellow
+    } elseif ($firmwareCode -ne 0) {
+        throw ((T 'не удалось собрать прошивку камеры' 'could not build the camera firmware') + " ($firmwareCode)")
+    }
 
     Step (T 'Драйвер загрузчика камеры (WinUSB для 05A9:0580)' 'Camera boot loader driver (WinUSB for 05A9:0580)')
     Install-BootDriver
@@ -261,7 +239,6 @@ try {
             Copy-Item (Join-Path $src $f) $dst -Force
         }
     }
-    [IO.File]::WriteAllBytes((Join-Path $target 'firmware.bin'), $firmware)  # the service uploads this file
     $ctl = Join-Path $target 'ps5cam-ctl.exe'
 
     Step (T 'Регистрация компонентов видео' 'Registering the video components')
@@ -378,6 +355,24 @@ try {
     if (-not $VirtualCamera) {
         Write-Host (T 'Приложения, открытые во время установки, увидят камеру после перезапуска.' `
             'Programs that were open during the installation see the camera after a restart.')
+    }
+    if ($firmwareCode -eq 2) {
+        $retry = if ($FromMsi) {
+            T 'или установите пакет снова с SONYFIRMWARE=путь к оригиналу' 'or install the package again with SONYFIRMWARE=path of the original'
+        } else {
+            T 'или положите оригинал рядом с установщиком как sony-firmware.bin и запустите его снова' `
+                'or put the original next to the installer as sony-firmware.bin and run it again'
+        }
+        $kept = Get-Item -LiteralPath (Join-Path $target 'firmware.bin') -ErrorAction SilentlyContinue
+        # (the sizes the service accepts, LoadFirmwareFile in src\common\firmware.cpp)
+        $offline = if ($kept -and $kept.Length -ge 4096 -and $kept.Length -le 0x40000) {
+            T "Камера пока работает с прошивкой прежней установки: для новой запустите установку снова, когда появится интернет ($retry)." `
+                "The camera keeps the previous installation's firmware for now: for the new one run the installation again once the computer is online ($retry)."
+        } else {
+            T "Прошивки камеры пока нет: служба скачает её сама, когда появится интернет ($retry)." `
+                "The camera has no firmware yet: the service downloads it once the computer is online ($retry)."
+        }
+        Write-Host $offline -ForegroundColor Yellow
     }
     if ($Tray) {
         Write-Host (T 'Значок в трее: клик включает и выключает боке, правый клик открывает настройки.' `
