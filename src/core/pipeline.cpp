@@ -687,7 +687,7 @@ HRESULT StereoPipeline::Process(const uint8_t* yuy2, uint32_t yuy2Pitch, const E
             g.Unmap(d.meter, read);
         }
     }
-    m_subjectLuma = subject.valid ? subject.headLuma : 0.0f;
+    m_subjectLuma = subject.valid && subject.confidence > 0 ? subject.headLuma : 0.0f;
     if (d.slots[read].brightness) withHistogram(d.lumaHist, [&](const uint32_t* h) { UpdateGain(h, s, subject); });
     if (d.slots[read].depth) withHistogram(d.hist, [&](const uint32_t* h) { UpdateFocus(h, s); });
     if (d.slots[read].denoise) withHistogram(d.noiseHist, [&](const uint32_t* h) { UpdateNoise(h); });

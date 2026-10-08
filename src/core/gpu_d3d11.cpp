@@ -104,6 +104,7 @@ struct Gpu::Impl {
     ComPtr<ID3D11Query> disjoint[kSlots], tsBegin[kSlots], tsEnd[kSlots];
     std::vector<std::unique_ptr<GpuImage>> images;
     std::vector<std::unique_ptr<GpuBuffer>> buffers;
+    HRESULT error = S_OK;  // sticky: a recording mistake makes every later Map fail, as on Vulkan
 
     void Bind(ID3D11ComputeShader* cs, std::initializer_list<GpuRef> reads, std::initializer_list<GpuRef> writes)
     {
@@ -310,7 +311,10 @@ void Gpu::ClearFloat(GpuImage* image, float value)
 void Gpu::Dispatch(Kernel kernel, std::initializer_list<GpuRef> reads, std::initializer_list<GpuRef> writes, uint32_t x,
     uint32_t y, uint32_t z)
 {
-    if (reads.size() > kMaxReads || writes.size() > kMaxWrites) return;  // would stay bound to later kernels
+    if (reads.size() > kMaxReads || writes.size() > kMaxWrites) {  // would stay bound to later kernels
+        m->error = E_INVALIDARG;
+        return;
+    }
     m->Bind(m->kernels[size_t(kernel)].Get(), reads, writes);
     m->ctx->Dispatch(x, y, z);
 }
@@ -345,6 +349,7 @@ void Gpu::Flush()
 
 HRESULT Gpu::Map(GpuRef r, int slot, GpuMapped* out)
 {
+    if (FAILED(m->error)) return m->error;
     ID3D11Resource* staging = r.image ? static_cast<ID3D11Resource*>(r.image->staging[slot].Get())
                                       : static_cast<ID3D11Resource*>(r.buffer->staging[slot].Get());
     D3D11_MAPPED_SUBRESOURCE mapped;
