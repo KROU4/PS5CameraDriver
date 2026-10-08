@@ -10,7 +10,7 @@
 
 Texture2D<float4> Cur : register(t0);   // main sensor, this frame (Y, U, V, 1)
 Texture2D<float4> Prev : register(t1);  // the previous result
-RWTexture2D<unorm float4> Out : register(u0);
+FORMAT("rgba8") RWTexture2D<unorm float4> Out : register(u0);
 RWByteAddressBuffer NoiseHist : register(u1);  // 128 bins of the 3x3-mean change, 1/4096 each
 
 static const float kChromaSigma = 0.05;  // luma difference at which a neighbour's chroma counts ~60%

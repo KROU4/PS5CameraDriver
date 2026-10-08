@@ -11,7 +11,7 @@
 Texture2D<float> DispIn : register(t0);    // -1 = unknown
 Texture2D<float> DispPrev : register(t1);  // the previous frame's result, -1 = none
 Texture2D<float> WorkMain : register(t2);  // luma at work resolution
-RWTexture2D<float> DispOut : register(u0);
+FORMAT("r32f") RWTexture2D<float> DispOut : register(u0);
 
 // Sample distances along a direction: dense nearby, sparse far away (reaches 256 work pixels). A
 // valid strip narrower than a far step can be skipped; the ray then takes the next value beyond it.

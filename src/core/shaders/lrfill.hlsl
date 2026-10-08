@@ -7,8 +7,8 @@
 
 Texture2D<float> DispMain : register(t0);
 Texture2D<float> DispSecond : register(t1);
-RWTexture2D<float> DispOut : register(u0);    // -1 = still unknown
-RWTexture2D<float> LeftValid : register(u1);  // scratch: x of the nearest valid value to the left, -1 if none
+FORMAT("r32f") RWTexture2D<float> DispOut : register(u0);    // -1 = still unknown
+FORMAT("r32f") RWTexture2D<float> LeftValid : register(u1);  // scratch: x of the nearest valid value to the left, -1 if none
 
 // A real surface gives its neighbours similar disparities; a lone value is a speckle (a random
 // match in a weak-texture area), whatever the uniqueness test said.

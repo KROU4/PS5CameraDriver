@@ -9,9 +9,9 @@ Texture2D<float4> SecondYuv : register(t3);
 Texture2D<float> DispRaw : register(t4);
 Texture2D<float> DispFilled : register(t5);
 Texture2D<float> DispHoles : register(t6);
-RWTexture2D<unorm float> OutY : register(u0);
-RWTexture2D<unorm float2> OutUV : register(u1);
-RWTexture2D<unorm float4> OutYuy2 : register(u2);  // outSize.x/2 x outSize.y texels: Y0 U Y1 V
+FORMAT("r8") RWTexture2D<unorm float> OutY : register(u0);
+FORMAT("rg8") RWTexture2D<unorm float2> OutUV : register(u1);
+FORMAT("rgba8") RWTexture2D<unorm float4> OutYuy2 : register(u2);  // outSize.x/2 x outSize.y texels: Y0 U Y1 V
 
 float3 Turbo(float t)
 {

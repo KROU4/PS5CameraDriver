@@ -8,8 +8,8 @@
 
 Texture2D<float4> MainYuv : register(t0);
 Texture2D<float4> SecondYuv : register(t1);
-RWTexture2D<float> WorkMain : register(u0);
-RWTexture2D<float> WorkSecond : register(u1);
+FORMAT("r32f") RWTexture2D<float> WorkMain : register(u0);
+FORMAT("r32f") RWTexture2D<float> WorkSecond : register(u1);
 
 [numthreads(16, 8, 1)]
 void main(uint3 id : SV_DispatchThreadID)

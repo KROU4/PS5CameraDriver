@@ -3,12 +3,13 @@
 // firmware e9 frame with the second sensor at half size), NV12 or YUY2 out.
 // Depth comes from census + 4-path SGM on the two sensors, the main sensor image is shown
 // with a disparity-driven depth-of-field (bokeh) effect, or one of the diagnostic views.
-#include <windows.h>
-#include <d3d11.h>
-#include <wrl/client.h>
-
+// Runs on Direct3D 11 on Windows and on Vulkan elsewhere (gpu.h).
 #include <cstdint>
+#include <memory>
 #include <mutex>
+#include <string>
+
+#include "platform.h"
 
 namespace ps5cam {
 
@@ -97,6 +98,8 @@ struct FrameStats {
     float noise = 0;  // typical 3x3-mean luma change of a still scene between frames (denoise on)
 };
 
+class Gpu;
+
 class StereoPipeline {
 public:
     StereoPipeline();
@@ -104,9 +107,10 @@ public:
     StereoPipeline(const StereoPipeline&) = delete;
     StereoPipeline& operator=(const StereoPipeline&) = delete;
 
-    // Creates the D3D11 device on the default hardware adapter and all GPU resources.
+    // Creates the GPU device (Gpu::Initialize) and all GPU resources.
     HRESULT Initialize(const StereoFormat& stereo, const OutputFormat& output);
-    bool IsInitialized() const { return m_device != nullptr; }
+    bool IsInitialized() const { return m_impl != nullptr; }
+    std::string GpuName() const;
     const StereoFormat& Stereo() const { return m_stereo; }
     const OutputFormat& Output() const { return m_output; }
 
@@ -155,8 +159,7 @@ private:
     uint32_t m_lastDepthFrame = 0xFFFFFFF0;
     uint32_t m_lastDenoiseFrame = 0xFFFFFFF0;
 
-    Microsoft::WRL::ComPtr<ID3D11Device> m_device;
-    Microsoft::WRL::ComPtr<ID3D11DeviceContext> m_ctx;
+    std::unique_ptr<Gpu> m_gpu;
     Impl* m_impl = nullptr;
 };
 

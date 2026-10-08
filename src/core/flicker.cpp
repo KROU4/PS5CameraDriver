@@ -1,11 +1,9 @@
 #include "flicker.h"
 
-#include <windows.h>
-
 #include <algorithm>
 #include <atomic>
+#include <chrono>
 #include <cmath>
-#include <cwchar>
 
 namespace ps5cam {
 
@@ -13,8 +11,15 @@ namespace {
 
 // Flicker seen lately by this module (the device MFT and the virtual camera each have their own
 // copy, both in Frame Server): the next streams keep 50 Hz instead of showing the bands again.
-std::atomic<ULONGLONG> g_flickerTick = 0;
-constexpr ULONGLONG kRememberMs = 30ULL * 60 * 1000;
+std::atomic<uint64_t> g_flickerTick = 0;
+constexpr uint64_t kRememberMs = 30ULL * 60 * 1000;
+
+uint64_t NowMs()
+{
+    // Never 0, which g_flickerTick reserves for "not seen".
+    return uint64_t(std::chrono::duration_cast<std::chrono::milliseconds>(
+                        std::chrono::steady_clock::now().time_since_epoch()).count()) + 1;
+}
 
 }  // namespace
 
@@ -35,8 +40,8 @@ void MainRowMeans(const uint8_t* yuy2, uint32_t pitch, const StereoFormat& f, st
 int FlickerGuard::Start(AntiFlicker setting, bool mains60)
 {
     m_adaptive = setting == AntiFlicker::Auto && !mains60;
-    const ULONGLONG seen = g_flickerTick;
-    m_flickerSeen = seen && GetTickCount64() - seen < kRememberMs;
+    const uint64_t seen = g_flickerTick;
+    m_flickerSeen = seen && NowMs() - seen < kRememberMs;
     switch (setting) {
     case AntiFlicker::Hz50: return Set(kPowerLine50);
     case AntiFlicker::Hz60: return Set(kPowerLine60);
@@ -95,7 +100,7 @@ int FlickerGuard::Update(const std::vector<float>& rows)
     m_lastScore = sorted[sorted.size() / 2];
     if (m_lastScore <= kFlickerScore) return -1;
     m_flickerSeen = true;
-    g_flickerTick = GetTickCount64();
+    g_flickerTick = NowMs();
     return Set(kPowerLine50);
 }
 

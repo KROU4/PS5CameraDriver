@@ -6,7 +6,7 @@
 #include "common.hlsli"
 #include "depthsample.hlsli"
 
-RWTexture2D<unorm float> DepthOut : register(u0);
+FORMAT("r8") RWTexture2D<unorm float> DepthOut : register(u0);
 
 [numthreads(16, 8, 1)]
 void main(uint3 id : SV_DispatchThreadID)

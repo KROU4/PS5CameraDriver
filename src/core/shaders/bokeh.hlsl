@@ -4,7 +4,7 @@
 #include "common.hlsli"
 #include "depthsample.hlsli"
 
-RWTexture2D<float4> BokehHalf : register(u0);  // (Y, U, V, CoC in output px)
+FORMAT("rgba16f") RWTexture2D<float4> BokehHalf : register(u0);  // (Y, U, V, CoC in output px)
 
 static const float kGoldenAngle = 2.39996323;
 static const float kRadScale = 0.6;  // ring spacing in half-res pixels

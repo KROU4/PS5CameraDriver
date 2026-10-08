@@ -38,6 +38,13 @@ cbuffer Constants : register(b0)
 
 SamplerState LinearClamp : register(s0);
 
+// The format of a written image as SPIR-V needs it (dxc -spirv for Vulkan); fxc does without.
+#ifdef __spirv__
+#define FORMAT(f) [[vk::image_format(f)]]
+#else
+#define FORMAT(f)
+#endif
+
 static const uint kCensusW = 9;
 static const uint kCensusH = 7;
 static const uint kInvalidDisp = 0xFFFF;

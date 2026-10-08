@@ -11,7 +11,7 @@ static const int kRadius = 4;
 #if defined(ENTRY_PREP)
 Texture2D<float> WorkMain : register(t0);
 Texture2D<float> Disp : register(t1);
-RWTexture2D<float4> Out : register(u0);
+FORMAT("rgba32f") RWTexture2D<float4> Out : register(u0);
 [numthreads(16, 8, 1)]
 void main(uint3 id : SV_DispatchThreadID)
 {
@@ -22,7 +22,7 @@ void main(uint3 id : SV_DispatchThreadID)
 }
 #elif defined(ENTRY_BOX)
 Texture2D<float4> In : register(t0);
-RWTexture2D<float4> Out : register(u0);
+FORMAT("rgba32f") RWTexture2D<float4> Out : register(u0);
 [numthreads(16, 8, 1)]
 void main(uint3 id : SV_DispatchThreadID)
 {
@@ -35,7 +35,7 @@ void main(uint3 id : SV_DispatchThreadID)
 }
 #elif defined(ENTRY_COEF)
 Texture2D<float4> Means : register(t0);
-RWTexture2D<float4> Out : register(u0);
+FORMAT("rgba32f") RWTexture2D<float4> Out : register(u0);
 [numthreads(16, 8, 1)]
 void main(uint3 id : SV_DispatchThreadID)
 {
