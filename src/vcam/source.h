@@ -34,6 +34,7 @@ public:
     IMFStreamDescriptor* Descriptor() { return m_descriptor.Get(); }
     IMFAttributes* Attributes() { return m_attributes.Get(); }
     Microsoft::WRL::ComPtr<IUnknown> PhysicalSource() { return m_engine.PhysicalSource(); }
+    void HoldPowerLine() { m_engine.HoldPowerLine(); }
 
     // IMFMediaEventGenerator
     STDMETHODIMP BeginGetEvent(IMFAsyncCallback* cb, IUnknown* state) override;

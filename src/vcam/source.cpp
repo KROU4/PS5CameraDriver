@@ -488,6 +488,10 @@ STDMETHODIMP Ps5Source::KsProperty(PKSPROPERTY property, ULONG propertyLength, L
             if (FAILED(hr)) return hr;
             stream = m_stream;
         }
+        // An app choosing the anti-flicker itself: its choice stands for this stream (see flicker.h).
+        if (stream && property->Set == PROPSETID_VIDCAP_VIDEOPROCAMP &&
+            property->Id == KSPROPERTY_VIDEOPROCAMP_POWERLINE_FREQUENCY && (property->Flags & KSPROPERTY_TYPE_SET))
+            stream->HoldPowerLine();
         ComPtr<IUnknown> physical = stream ? stream->PhysicalSource() : nullptr;
         ComPtr<IKsControl> ks;
         if (physical && SUCCEEDED(physical.As(&ks)))

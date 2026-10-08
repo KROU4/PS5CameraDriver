@@ -6,6 +6,7 @@
 #include <algorithm>
 #include <cmath>
 
+#include "../common/effect.h"
 #include "../common/log.h"
 #include "../common/settings.h"
 
@@ -65,13 +66,35 @@ bool FrameProcessor::Configure(IMFMediaType* input, IMFMediaType* output)
     m_formatText = text;
     RefreshSettings(true);
     Log(L"processing %ux%u@%u (%ls) into %ls", inW, inH, inFps, mode.key, text);
+    if (!m_flickerStarted) {  // not again when the effect only switches the sensor mode
+        m_flickerStarted = true;
+        if (m_powerLineHeld) m_flicker.Hold();  // the app chose before starting
+        else m_powerLineRequest = m_flicker.Start(static_cast<AntiFlicker>(m_antiFlicker), m_mains60);
+    }
     return true;
+}
+
+void FrameProcessor::HoldPowerLine()
+{
+    if (!m_powerLineHeld) Log(L"an app set the anti-flicker itself: it stands for this stream");
+    m_powerLineHeld = true;
+    m_flicker.Hold();
+    m_powerLineRequest = -1;
+}
+
+int FrameProcessor::TakePowerLineRequest()
+{
+    const int v = m_powerLineRequest;
+    m_powerLineRequest = -1;
+    return v;
 }
 
 void FrameProcessor::Reset()
 {
     m_pipeline.reset();  // releases the GPU device and its ~65 MB while nobody streams
     m_lastTime = -1;
+    m_flickerStarted = false;
+    m_powerLineHeld = false;
     if (!m_configured) return;  // a transform that never streamed: another one may be streaming now
     m_configured = false;
     Status st;
@@ -91,14 +114,18 @@ void FrameProcessor::RefreshSettings(bool force)
     if (!force && now - m_settingsTick < 500) return;
     m_settingsTick = now;
     Settings s = LoadSettings();
-    m_effect.mode = static_cast<ViewMode>(s.mode);
-    m_effect.blurStrength = s.blur / 100.0f;
-    m_effect.autoFocus = s.autoFocus;
-    m_effect.manualFocus = s.focus / 100.0f;
-    m_effect.highlights = s.highlights / 100.0f;
-    m_effect.temporal = s.temporal / 100.0f;
-    m_effect.autoBrightness = s.autoBrightness;
-    m_effect.maxGain = s.maxGain / 10.0f;
+    ApplySettings(s, m_effect);
+    const bool mains60 = Mains60(s);
+    if (!m_settingsLoaded) {
+        m_settingsLoaded = true;  // the first reading is no change of the setting
+        m_antiFlicker = s.antiFlicker;
+        m_mains60 = mains60;
+    } else if (s.antiFlicker != m_antiFlicker || mains60 != m_mains60) {
+        m_antiFlicker = s.antiFlicker;
+        m_mains60 = mains60;
+        m_powerLineHeld = false;  // the user's choice now
+        if (m_flickerStarted) m_powerLineRequest = m_flicker.Start(static_cast<AntiFlicker>(m_antiFlicker), m_mains60);
+    }
     // The tray bumps Request; Handled records the last one served.
     if (LoadCalibrationRequest() != LoadCalibrationHandled() && !m_calibPending) {
         m_calibPending = true;
@@ -205,6 +232,13 @@ ComPtr<IMFSample> FrameProcessor::Process(IMFSample* input)
     if (!otherMode && pitch >= static_cast<LONG>(rowBytes) && available >= size_t(pitch) * (rows - 1) + rowBytes) {
         ++m_frameCount;
         Calibrate(scan0, static_cast<uint32_t>(pitch));
+        MainRowMeans(scan0, static_cast<uint32_t>(pitch), m_stereo, m_rowMeans);
+        if (const int pl = m_flicker.Update(m_rowMeans); pl >= 0) {
+            m_powerLineRequest = pl;
+            Log(pl == kPowerLineOff ? L"dim scene: anti-flicker off for a longer exposure"
+                                    : L"lamp flicker seen (score %.4f): anti-flicker back to 50 Hz",
+                m_flicker.Score());
+        }
         BYTE* dst = nullptr;
         LONG dstPitch = 0;
         ComPtr<IMF2DBuffer2> lock;

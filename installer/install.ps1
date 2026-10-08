@@ -1,24 +1,44 @@
 # PS5 HD Camera driver installer. Runs elevated (through Install.cmd); talks Russian on a Russian
 # Windows and English otherwise.
-#   .\install.ps1 [-Bokeh ask|on|off] [-Tray] [-Original FILE] [-VirtualCamera [-KeepRawCamera]] [-Yes] [-NoPause]
-#   -Bokeh          on: background always blurred; off: plain camera; ask (default): ask
+#   .\install.ps1 [-Bokeh ask|on|off|keep] [-Tray] [-Original FILE] [-VirtualCamera [-KeepRawCamera]] [-Yes] [-NoPause]
+#   -Bokeh          on: background always blurred; off: plain camera; ask (default): ask;
+#                   keep: as set before (on for a first installation)
 #   -Yes            do not ask to confirm the system changes (unattended install)
 #   -Tray           tray icon for development (switches modes on the fly); none without it
 #   -Original       Sony's original firmware (else sony-firmware.bin next to this script, or a download)
 #   -VirtualCamera  the previous way: a separate virtual camera with the camera itself hidden (shown
 #                   with -KeepRawCamera). By default the effect runs inside the camera (Device MFT).
+#   -FromMsi        run by the MSI package (as SYSTEM, no console): its files are already in place,
+#                   it owns the "Installed apps" entry; implies -Yes -NoPause, output goes to -Log.
+#                   Its TRAY and SONYFIRMWARE properties arrive as -MsiTray 1 and -MsiOriginal PATH
+#                   (empty when not set).
 param(
-    [ValidateSet('ask', 'on', 'off')][string]$Bokeh = 'ask',
+    [ValidateSet('ask', 'on', 'off', 'keep')][string]$Bokeh = 'ask',
     [switch]$Tray,
     [string]$Original,
     [switch]$VirtualCamera,
     [switch]$KeepRawCamera,
     [switch]$Yes,
-    [switch]$NoPause
+    [switch]$NoPause,
+    [switch]$FromMsi,
+    [string]$MsiTray,
+    [string]$MsiOriginal,
+    [string]$Log
 )
 $ErrorActionPreference = 'Stop'
+if ($FromMsi) {
+    $Yes = $true
+    $NoPause = $true
+    if ($MsiTray -eq '1') { $Tray = [switch]$true }
+    if ($MsiOriginal) { $Original = $MsiOriginal }
+}
+if ($Log) {
+    New-Item -ItemType Directory -Force (Split-Path $Log) | Out-Null
+    Start-Transcript -Path $Log -Force | Out-Null
+}
 $src = $PSScriptRoot
 $target = Join-Path $env:ProgramFiles 'PS5Camera'
+$version = if (Test-Path (Join-Path $src 'version.txt')) { (Get-Content (Join-Path $src 'version.txt') -TotalCount 1).Trim() } else { '1.0.0' }
 $files = 'ps5cam-vcam.dll', 'ps5cam-dmft.dll', 'ps5cam-svc.exe', 'ps5cam-ctl.exe', 'ps5cam-tray.exe', 'ps5cam-firmware.json',
     'uninstall.ps1'
 # Subject of the per-computer certificate that signs the boot driver's catalog (uninstall.ps1 too).
@@ -37,6 +57,7 @@ function Run([string]$exe, [string[]]$arguments) {
     return $code
 }
 function Finish($code) {
+    if ($Log) { Stop-Transcript | Out-Null }
     if (-not $NoPause) { Write-Host ''; Read-Host (T 'Нажмите Enter, чтобы закрыть окно' 'Press Enter to close this window') | Out-Null }
     exit $code
 }
@@ -91,11 +112,15 @@ function Remove-BootDriver {
 function Install-BootDriver {
     Remove-BootDriver
     $dir = Join-Path $target 'driver'
-    Remove-Item $dir -Recurse -Force -ErrorAction SilentlyContinue
-    New-Item -ItemType Directory -Force $dir | Out-Null
     $inf = Join-Path $dir 'ps5cam-boot.inf'
-    Copy-Item (Join-Path $src 'driver\ps5cam-boot.inf') $inf
     $cat = Join-Path $dir 'ps5cam-boot.cat'
+    if ($FromMsi) {
+        Remove-Item $cat -Force -ErrorAction SilentlyContinue  # the MSI put the .inf there itself
+    } else {
+        Remove-Item $dir -Recurse -Force -ErrorAction SilentlyContinue
+        New-Item -ItemType Directory -Force $dir | Out-Null
+        Copy-Item (Join-Path $src 'driver\ps5cam-boot.inf') $inf
+    }
     New-FileCatalog -Path $dir -CatalogFilePath $cat -CatalogVersion 2.0 | Out-Null
     $cert = New-SelfSignedCertificate -Type CodeSigningCert -Subject $signerSubject -CertStoreLocation Cert:\LocalMachine\My -NotAfter (Get-Date).AddYears(50)
     try {
@@ -122,6 +147,8 @@ if (-not $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administra
     if ($KeepRawCamera) { $argList += '-KeepRawCamera' }
     if ($Yes) { $argList += '-Yes' }
     if ($NoPause) { $argList += '-NoPause' }
+    if ($Log) { $argList += @('-Log', "`"$Log`"") }
+    if ($Log) { Stop-Transcript | Out-Null }
     Start-Process powershell.exe -Verb RunAs -ArgumentList $argList
     exit
 }
@@ -197,10 +224,10 @@ try {
     # Frame Server keeps the video DLLs loaded; stop it to replace them.
     Stop-Service FrameServerMonitor, FrameServer -Force -ErrorAction SilentlyContinue
 
-    Step ((T 'Копирование файлов в ' 'Copying files to ') + $target)
+    if (-not $FromMsi) { Step ((T 'Копирование файлов в ' 'Copying files to ') + $target) }
     New-Item -ItemType Directory -Force $target | Out-Null
     Get-ChildItem $target -Filter '*.old-*' -ErrorAction SilentlyContinue | Remove-Item -Force -ErrorAction SilentlyContinue
-    foreach ($f in $files) {
+    foreach ($f in $(if ($FromMsi) { @() } else { $files })) {  # the MSI has put them there
         $dst = Join-Path $target $f
         try {
             Copy-Item (Join-Path $src $f) $dst -Force -ErrorAction Stop
@@ -225,10 +252,16 @@ try {
     Step (T 'Настройки и журналы' 'Settings and logs')
     $rc = Run $ctl @('setup')
     if ($rc -ne 0) { throw ((T 'не удалось настроить права на настройки и журналы' 'could not set up the settings and log permissions') + " ($rc)") }
-    if (-not (Get-ItemProperty 'HKLM:\SOFTWARE\PS5Camera' -Name Mode -ErrorAction SilentlyContinue)) { Run $ctl @('defaults') | Out-Null }
-    # Mode 0 = bokeh, 1 = plain camera (src/core/pipeline.h ViewMode).
-    $rc = Run $ctl @('set', 'mode', $(if ($Bokeh -eq 'on') { '0' } else { '1' }))
-    if ($rc -ne 0) { throw ((T 'не удалось записать режим камеры' 'could not save the camera mode') + " ($rc)") }
+    $hadSettings = [bool](Get-ItemProperty 'HKLM:\SOFTWARE\PS5Camera' -Name Mode -ErrorAction SilentlyContinue)
+    if (-not $hadSettings) { Run $ctl @('defaults') | Out-Null }
+    if ($Bokeh -eq 'keep') {
+        # An update keeps the user's choice; a first installation starts with bokeh.
+        $Bokeh = if ($hadSettings -and (Get-ItemProperty 'HKLM:\SOFTWARE\PS5Camera').Mode -ne 0) { 'off' } else { 'on' }
+    } else {
+        # Mode 0 = bokeh, 1 = plain camera (src/core/pipeline.h ViewMode).
+        $rc = Run $ctl @('set', 'mode', $(if ($Bokeh -eq 'on') { '0' } else { '1' }))
+        if ($rc -ne 0) { throw ((T 'не удалось записать режим камеры' 'could not save the camera mode') + " ($rc)") }
+    }
     # Admin-only subkey: the SYSTEM service restarts the camera according to these values.
     $rc = Run 'reg.exe' @('add', 'HKLM\SOFTWARE\PS5Camera\Service', '/v', 'HideRawCamera', '/t', 'REG_DWORD', '/d', [string][int](-not $KeepRawCamera), '/f')
     if ($rc -ne 0) { throw ((T 'не удалось записать настройку' 'could not save the setting') + " HideRawCamera ($rc)") }
@@ -278,23 +311,29 @@ try {
     if ($Tray) {
         Step (T 'Значок в трее (для разработки)' 'Tray icon (for development)')
         Set-ItemProperty $runKey -Name PS5CameraTray -Value "`"$target\ps5cam-tray.exe`""
-        Start-Process explorer.exe -ArgumentList "`"$target\ps5cam-tray.exe`""  # not elevated
+        # Not elevated; from the MSI (SYSTEM, no desktop) it starts at the next sign-in instead.
+        if (-not $FromMsi) { Start-Process explorer.exe -ArgumentList "`"$target\ps5cam-tray.exe`"" }
     } else {
         # A previous installation may have put the icon into autostart.
         Remove-ItemProperty $runKey -Name PS5CameraTray -ErrorAction SilentlyContinue
     }
 
-    Step (T 'Запись в "Установленные приложения"' 'Entry in "Installed apps"')
     $un = 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\PS5Camera'
-    New-Item $un -Force | Out-Null
-    Set-ItemProperty $un -Name DisplayName -Value 'PS5 HD Camera'
-    Set-ItemProperty $un -Name Publisher -Value 'PS5CameraDriver'
-    Set-ItemProperty $un -Name DisplayVersion -Value '1.0.0'
-    Set-ItemProperty $un -Name InstallLocation -Value $target
-    Set-ItemProperty $un -Name DisplayIcon -Value "$target\ps5cam-tray.exe"
-    Set-ItemProperty $un -Name UninstallString -Value "powershell.exe -NoProfile -ExecutionPolicy Bypass -File `"$target\uninstall.ps1`""
-    New-ItemProperty $un -Name NoModify -Value 1 -PropertyType DWord -Force | Out-Null
-    New-ItemProperty $un -Name NoRepair -Value 1 -PropertyType DWord -Force | Out-Null
+    if ($FromMsi) {
+        # The MSI has its own entry; one left by an installation from the ZIP package goes.
+        Run 'reg.exe' @('delete', 'HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\PS5Camera', '/f') | Out-Null
+    } else {
+        Step (T 'Запись в "Установленные приложения"' 'Entry in "Installed apps"')
+        New-Item $un -Force | Out-Null
+        Set-ItemProperty $un -Name DisplayName -Value 'PS5 HD Camera'
+        Set-ItemProperty $un -Name Publisher -Value 'PS5CameraDriver'
+        Set-ItemProperty $un -Name DisplayVersion -Value $version
+        Set-ItemProperty $un -Name InstallLocation -Value $target
+        Set-ItemProperty $un -Name DisplayIcon -Value "$target\ps5cam-tray.exe"
+        Set-ItemProperty $un -Name UninstallString -Value "powershell.exe -NoProfile -ExecutionPolicy Bypass -File `"$target\uninstall.ps1`""
+        New-ItemProperty $un -Name NoModify -Value 1 -PropertyType DWord -Force | Out-Null
+        New-ItemProperty $un -Name NoRepair -Value 1 -PropertyType DWord -Force | Out-Null
+    }
 
     Write-Host ''
     if ($Bokeh -eq 'on') {
@@ -311,6 +350,11 @@ try {
     if ($Tray) {
         Write-Host (T 'Значок в трее: клик включает и выключает боке, правый клик открывает настройки.' `
             'Tray icon: a click turns bokeh on and off, a right click opens the settings.')
+    } elseif (-not $VirtualCamera) {
+        Write-Host (T 'Боке включается и выключается в Параметры → Bluetooth и устройства → Камеры → PS5 Camera →' `
+            'Bokeh is switched on and off in Settings → Bluetooth & devices → Cameras → PS5 Camera →')
+        Write-Host (T '  Эффекты камеры (размытие фона: портретное или стандартное), а также в приложениях с эффектами камеры.' `
+            '  Camera effects (background blur: portrait or standard), and in apps that offer camera effects.')
     } else {
         Write-Host (T 'Сменить режим: запустите установщик ещё раз или выполните в PowerShell' `
             'To change the mode, run the installer again or run in PowerShell')

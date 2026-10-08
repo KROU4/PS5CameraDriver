@@ -6,6 +6,7 @@
 #include <cstdio>
 #include <string>
 
+#include "../common/camdefaults.h"
 #include "../common/ids.h"
 #include "../common/settings.h"
 #include "../common/vcamreg.h"
@@ -67,6 +68,10 @@ static int Setup()
                  ApplySecurity(L"MACHINE\\SOFTWARE\\PS5Camera\\Service", SE_REGISTRY_KEY,
                      L"O:BAD:P(A;CI;KA;;;SY)(A;CI;KA;;;BA)(A;CI;KR;;;BU)(A;CI;KR;;;LS)");
     wprintf(L"registry key: %ls\n", regOk ? L"ok" : L"failed");
+    // Run by the installer as the installing user: their country decides the mains frequency
+    // (anti-flicker), which Frame Server cannot see. (From the MSI it runs as SYSTEM, whose region is
+    // the one Windows was set up with; the tray corrects it at sign-in.)
+    if (regOk) WriteSetting(L"MainsHz", RegionMainsHz());
 
     wchar_t dir[MAX_PATH];
     ExpandEnvironmentStringsW(L"%ProgramData%\\PS5Camera", dir, MAX_PATH);
@@ -129,7 +134,11 @@ int wmain(int argc, wchar_t** argv)
         if (!on) RestartCameraService();  // it brings the virtual camera back right away
         return code;
     }
-    if (cmd == L"defaults") return SaveSettings(Settings{}) ? 0 : 1;
+    if (cmd == L"defaults") {
+        Settings s;
+        s.mainsHz = LoadSettings().mainsHz;  // a fact about the user, not a preference
+        return SaveSettings(s) ? 0 : 1;
+    }
     if (cmd == L"set" && argc == 4) {
         Settings s = LoadSettings();
         std::wstring k = argv[2];
@@ -139,7 +148,7 @@ int wmain(int argc, wchar_t** argv)
             return 1;
         }
         if (k == L"mode") s.mode = v;
-        else if (k == L"blur") s.blur = v;
+        else if (k == L"blur") s.blur = v, s.blurStyle = kBlurPortrait;  // a chosen strength, not "Standard blur"
         else if (k == L"autofocus") s.autoFocus = v != 0;
         else if (k == L"focus") s.focus = v;
         else if (k == L"prefer60") s.prefer60 = v != 0;
@@ -148,6 +157,9 @@ int wmain(int argc, wchar_t** argv)
         else if (k == L"temporal") s.temporal = v;
         else if (k == L"autobrightness") s.autoBrightness = v != 0;
         else if (k == L"maxgain") s.maxGain = v;
+        else if (k == L"denoise") s.denoise = v;
+        else if (k == L"antiflicker" && v <= 3) s.antiFlicker = v;
+        else if (k == L"blurstyle" && v <= 1) s.blurStyle = v;
         else {
             wprintf(L"unknown setting\n");
             return 1;
@@ -166,6 +178,15 @@ int wmain(int argc, wchar_t** argv)
                 L"(written while an app uses the camera; readable by administrators only)\n");
         return 0;
     }
+    if (cmd == L"effectsync") {
+        // Run by the service as the signed-in administrator (Windows keeps the default per user and
+        // lets only administrators save it): 0 updated, 3 nothing to update, 2 no camera, 1 failed.
+        std::wstring result;
+        const HRESULT hr = SyncBackgroundEffectDefault(LoadSettings(), &result);
+        wprintf(L"Windows background effects default: %ls (0x%08lX), now %ls\n", result.c_str(), static_cast<unsigned long>(hr),
+            DescribeBackgroundEffectDefault().c_str());
+        return hr == HRESULT_FROM_WIN32(ERROR_DEVICE_NOT_CONNECTED) ? 2 : FAILED(hr) ? 1 : hr == S_FALSE ? 3 : 0;
+    }
     if (cmd == L"recalibrate") {
         BumpCalibrationRequest();
         return 0;
@@ -177,9 +198,11 @@ int wmain(int argc, wchar_t** argv)
         wprintf(L"physical camera : %ls\n", link.empty() ? L"not connected" : link.c_str());
         wprintf(L"raw camera hidden: %ls\n", IsPhysicalCameraHidden() ? L"yes" : L"no");
         wprintf(L"device MFT      : %ls\n", IsDeviceMftSet() ? L"on" : L"off");
+        wprintf(L"Windows default : background effects %ls\n", DescribeBackgroundEffectDefault().c_str());
         wprintf(L"settings        : mode %u blur %u autofocus %u focus %u prefer60 %u fullhdonly %u highlights %u "
-                L"temporal %u\n",
-            s.mode, s.blur, s.autoFocus, s.focus, s.prefer60, s.fullHdOnly, s.highlights, s.temporal);
+                L"temporal %u autobrightness %u maxgain %u denoise %u antiflicker %u blurstyle %u mains %u Hz\n",
+            s.mode, s.blur, s.autoFocus, s.focus, s.prefer60, s.fullHdOnly, s.highlights, s.temporal, s.autoBrightness,
+            s.maxGain, s.denoise, s.antiFlicker, s.blurStyle, s.mainsHz ? s.mainsHz : RegionMainsHz());
         wprintf(L"stream          : %ls %ls fps %.2f gpu %.2f ms focus %.2f %ls\n", st.streaming ? L"active" : L"idle",
             st.format.c_str(), st.fpsX100 / 100.0, st.gpuUs / 1000.0, st.focusX100 / 100.0, st.error.c_str());
         return 0;
@@ -187,8 +210,11 @@ int wmain(int argc, wchar_t** argv)
     wprintf(L"usage: ps5cam-ctl setup | register | remove | hide | unhide | dmft on|off | status | recalibrate |\n"
             L"                  record N | defaults |\n"
             L"                  set mode|blur|autofocus|focus|prefer60|fullhdonly|highlights|temporal|autobrightness|\n"
-            L"                      maxgain VALUE\n"
+            L"                      maxgain|denoise|antiflicker|blurstyle VALUE\n"
             L"  fullhdonly 1: apps are offered 1920x1080 at 60 fps only; 0: also 1280x720 and 30 fps\n"
+            L"  denoise 0..100: temporal noise reduction of the picture (0 off)\n"
+            L"  antiflicker 0 auto (dim scenes without lamp flicker get the longer exposure), 1 50 Hz, 2 60 Hz, 3 off\n"
+            L"  blurstyle 0 portrait blur (the bokeh as set), 1 standard blur (strongest): Windows' background effects\n"
             L"  (formats apply when no app has the camera open)\n");
     return 1;
 }

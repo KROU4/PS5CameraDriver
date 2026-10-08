@@ -9,6 +9,7 @@
 #include "shaders/bokeh.h"
 #include "shaders/census.h"
 #include "shaders/composite.h"
+#include "shaders/denoise.h"
 #include "shaders/downscale.h"
 #include "shaders/guided_box.h"
 #include "shaders/guided_coef.h"
@@ -28,6 +29,8 @@ namespace ps5cam {
 namespace {
 
 constexpr uint32_t kNumDisp = 64;
+constexpr uint32_t kNoiseBins = 128;  // shaders/denoise.hlsl: bins of 1/4096 of the 3x3-mean change
+constexpr float kNoiseBinWidth = 1.0f / 4096;
 
 // Mirrors cbuffer Constants in shaders/common.hlsli.
 struct GpuConstants {
@@ -46,8 +49,11 @@ struct GpuConstants {
     float lumaGain;
     float pad;
     uint32_t secondW, secondH, secondFolded, depthMirror;
+    float noiseLevel, denoiseKeep;
+    uint32_t denoiseHistory;
+    float denoiseSpatial;
 };
-static_assert(sizeof(GpuConstants) == 160, "constant buffer layout");
+static_assert(sizeof(GpuConstants) == 176, "constant buffer layout");
 // kNumDisp mirrors MAX_DISP in shaders/common.hlsli.
 
 uint32_t DivUp(uint32_t a, uint32_t b) { return (a + b - 1) / b; }
@@ -64,10 +70,11 @@ struct StereoPipeline::Impl {
     ComPtr<ID3D11Buffer> constants;
     ComPtr<ID3D11SamplerState> linearClamp;
     ComPtr<ID3D11ComputeShader> unpack, downscale, census, aggregate, wta, lrfill, holefill, guidedPrep, guidedBox, guidedCoef,
-        histogram, bokeh, composite, score, lumastats;
+        histogram, bokeh, composite, score, lumastats, denoise;
 
     Tex packed;                    // R8G8B8A8_UINT, YUY2 texels
     Tex mainYuv, secondYuv;        // each sensor at its own size (eyeWidth x eyeHeight, SecondWidth x SecondHeight)
+    Tex clean[2];                  // denoised main sensor, ping-pong (this frame / history)
     Tex workMain, workSecond;      // R32_FLOAT work res
     Tex censusMain, censusSecond;  // R32G32_UINT work res
     Tex dispMain, dispSecond;      // R32_FLOAT work res
@@ -86,13 +93,16 @@ struct StereoPipeline::Impl {
     ComPtr<ID3D11ShaderResourceView> sumSrv;
     ComPtr<ID3D11Buffer> hist, histStaging[2], scoreBuf, scoreStaging, lumaHist, lumaHistStaging[2];
     ComPtr<ID3D11UnorderedAccessView> histUav, scoreUav, lumaHistUav;
+    ComPtr<ID3D11Buffer> noiseHist, noiseHistStaging[2];
+    ComPtr<ID3D11UnorderedAccessView> noiseHistUav;
 
     ComPtr<ID3D11Query> disjoint[2], tsBegin[2], tsEnd[2];
     struct Slot {
-        bool depth = false, brightness = false;
+        bool depth = false, brightness = false, denoise = false;
     } slots[2];
     int pending = -1;  // slot holding a submitted frame that has not been read back yet
     uint32_t histIndex = 0;  // which dispHist is current
+    uint32_t cleanIndex = 0;  // which clean texture holds the last denoised frame
     GpuConstants c = {};
 };
 
@@ -231,6 +241,7 @@ HRESULT StereoPipeline::CreateResources()
     CS(composite, g_composite);
     CS(score, g_score);
     CS(lumastats, g_lumastats);
+    CS(denoise, g_denoise);
 #undef CS
 
     D3D11_BUFFER_DESC cb = {};
@@ -253,6 +264,8 @@ HRESULT StereoPipeline::CreateResources()
     TRY(MakeTex(dev, m_stereo.PackedWidth() / 2, m_stereo.PackedHeight(), DXGI_FORMAT_R8G8B8A8_UINT, false, d.packed));
     TRY(MakeTex(dev, ew, eh, DXGI_FORMAT_R8G8B8A8_UNORM, true, d.mainYuv));
     TRY(MakeTex(dev, m_stereo.SecondWidth(), m_stereo.SecondHeight(), DXGI_FORMAT_R8G8B8A8_UNORM, true, d.secondYuv));
+    TRY(MakeTex(dev, ew, eh, DXGI_FORMAT_R8G8B8A8_UNORM, true, d.clean[0]));
+    TRY(MakeTex(dev, ew, eh, DXGI_FORMAT_R8G8B8A8_UNORM, true, d.clean[1]));
     // Depth resources (~45 MB): a single-sensor pipeline never computes depth, so it skips them;
     // Process binds their (null) views only to shaders that do not sample them in Main view.
     if (!m_stereo.mono) {
@@ -285,6 +298,7 @@ HRESULT StereoPipeline::CreateResources()
     TRY(MakeRawBuffer(dev, kNumDisp * 4, false, d.hist, d.histUav, nullptr, &d.histStaging[0]));
     TRY(MakeRawBuffer(dev, 16, false, d.scoreBuf, d.scoreUav, nullptr, &d.scoreStaging));
     TRY(MakeRawBuffer(dev, kNumDisp * 4, false, d.lumaHist, d.lumaHistUav, nullptr, &d.lumaHistStaging[0]));
+    TRY(MakeRawBuffer(dev, kNoiseBins * 4, false, d.noiseHist, d.noiseHistUav, nullptr, &d.noiseHistStaging[0]));
     {
         D3D11_BUFFER_DESC sd2 = {};
         sd2.ByteWidth = kNumDisp * 4;
@@ -292,6 +306,8 @@ HRESULT StereoPipeline::CreateResources()
         sd2.CPUAccessFlags = D3D11_CPU_ACCESS_READ;
         TRY(dev->CreateBuffer(&sd2, nullptr, &d.histStaging[1]));
         TRY(dev->CreateBuffer(&sd2, nullptr, &d.lumaHistStaging[1]));
+        sd2.ByteWidth = kNoiseBins * 4;
+        TRY(dev->CreateBuffer(&sd2, nullptr, &d.noiseHistStaging[1]));
     }
 
     for (int i = 0; i < 2; ++i) {
@@ -309,6 +325,8 @@ void StereoPipeline::Reset()
 {
     std::lock_guard lock(m_lock);
     m_haveHistory = false;
+    m_haveClean = false;
+    m_noise = -1;  // another stream may run at another gain
     m_focus = -1;
     m_focusPeak = -1;
     m_focusCandidate = -1;
@@ -388,6 +406,12 @@ void StereoPipeline::UpdateConstants(const EffectSettings* s, uint32_t pathDir)
         c.focusDisp = m_focus >= 0 ? m_focus : 16.0f;
         c.outFormat = static_cast<uint32_t>(o.format);
         c.lumaGain = s->autoBrightness ? m_gain : 1.0f;
+        // Strongest setting: a still pixel keeps 12% of each new frame (noise std / ~4 once settled).
+        const float denoise = std::clamp(s->denoise, 0.0f, 1.0f);
+        c.denoiseKeep = 1.0f - 0.88f * denoise;
+        c.denoiseSpatial = denoise;
+        c.denoiseHistory = m_haveClean ? 1 : 0;
+        c.noiseLevel = m_noise >= 0 ? m_noise : 0.0f;
     }
 
     D3D11_MAPPED_SUBRESOURCE m;
@@ -547,6 +571,32 @@ void StereoPipeline::UpdateGain(const uint32_t* h, const EffectSettings& s)
     m_gain += float(target - m_gain) * 0.08f;  // like a camera AE: settle over about half a second
 }
 
+void StereoPipeline::UpdateNoise(const uint32_t* h)
+{
+    // The still scene's change from the lower quarter of the distribution (for the half-normal
+    // distribution of noise the 25th percentile is 0.32 sigma and the median, which the shader works
+    // with, 0.67), so that motion in part of the picture raises it little: a quarter of the picture
+    // moving by ~1.4x, half of it by ~2x. When even the lower quarter is in the last bin, nearly
+    // everything changed (a pan, an exposure step): no measurement. The level rises slowly and falls
+    // quickly, so a moment of such change does not make the filter blend motion into the history.
+    double total = 0;
+    for (uint32_t i = 0; i < kNoiseBins; ++i) total += h[i];
+    if (total < 1000) return;
+    const double want = total * 0.25;
+    double acc = 0;
+    float quartile = -1;
+    for (uint32_t i = 0; i + 1 < kNoiseBins; ++i) {
+        if (acc + h[i] >= want) {
+            quartile = i + float((want - acc) / h[i]);
+            break;
+        }
+        acc += h[i];
+    }
+    if (quartile < 0) return;
+    const float level = quartile * kNoiseBinWidth * (0.674f / 0.319f);
+    m_noise = m_noise < 0 ? level : m_noise + (level - m_noise) * (level > m_noise ? 0.05f : 0.2f);
+}
+
 HRESULT StereoPipeline::Process(const uint8_t* yuy2, uint32_t yuy2Pitch, const EffectSettings& requested, uint8_t* dst,
     uint8_t* dstUV, uint32_t dstPitch, FrameStats* stats)
 {
@@ -558,6 +608,9 @@ HRESULT StereoPipeline::Process(const uint8_t* yuy2, uint32_t yuy2Pitch, const E
     auto& d = *m_impl;
     const uint32_t ow = m_output.width, oh = m_output.height;
     const int slot = (d.pending == 0) ? 1 : 0;
+    // The second sensor view shows no main sensor image to clean up.
+    const bool denoise = s.denoise > 0.0f && s.mode != ViewMode::Second;
+    if (denoise && m_frame != m_lastDenoiseFrame + 1) m_haveClean = false;  // it was off: history is stale
 
     ctx->Begin(d.disjoint[slot].Get());
     ctx->End(d.tsBegin[slot].Get());
@@ -579,9 +632,29 @@ HRESULT StereoPipeline::Process(const uint8_t* yuy2, uint32_t yuy2Pitch, const E
         ctx->Dispatch(DivUp(m_stereo.eyeWidth / 8, 16), DivUp(m_stereo.eyeHeight / 8, 8), 1);
         ctx->CopyResource(d.lumaHistStaging[slot].Get(), d.lumaHist.Get());
     }
+    // What the picture is made of: the denoised main sensor image, or the raw one. Stereo matching
+    // keeps the raw image (census does not mind the noise, and a history there would lag behind
+    // motion); the full-resolution guide of the disparity (DisparityAt) is the picture, whose
+    // edges are where the blur has to follow, and its smaller noise only steadies the disparity.
+    ID3D11ShaderResourceView* image = d.mainYuv.srv.Get();
+    d.slots[slot].denoise = denoise && m_haveClean;  // only then the shader fills the noise histogram
+    if (denoise) {
+        const uint32_t cur = d.cleanIndex ^ 1;
+        const UINT zeros[4] = {};
+        ctx->ClearUnorderedAccessViewUint(d.noiseHistUav.Get(), zeros);
+        Bind(ctx, d.denoise.Get(), {d.mainYuv.srv.Get(), d.clean[d.cleanIndex].srv.Get()},
+            {d.clean[cur].uav.Get(), d.noiseHistUav.Get()});
+        ctx->Dispatch(DivUp(m_stereo.eyeWidth, 16), DivUp(m_stereo.eyeHeight, 8), 1);
+        if (d.slots[slot].denoise) ctx->CopyResource(d.noiseHistStaging[slot].Get(), d.noiseHist.Get());
+        d.cleanIndex = cur;
+        m_haveClean = true;
+        m_lastDenoiseFrame = m_frame;
+        image = d.clean[cur].srv.Get();
+    }
 
     const bool needDepth = s.mode == ViewMode::Bokeh || s.mode == ViewMode::Depth || s.mode == ViewMode::DebugRaw ||
-                           s.mode == ViewMode::DebugFilled;
+                           s.mode == ViewMode::DebugFilled || s.mode == ViewMode::DebugHoles ||
+                           s.mode == ViewMode::DebugGrey;
     d.slots[slot].depth = needDepth;
     if (needDepth) {
         if (m_frame != m_lastDepthFrame + 1) m_haveHistory = false;  // depth was off: history is stale
@@ -590,18 +663,18 @@ HRESULT StereoPipeline::Process(const uint8_t* yuy2, uint32_t yuy2Pitch, const E
         UpdateConstants(&s, 0);
         const UINT zero[4] = {};
         ctx->ClearUnorderedAccessViewUint(d.histUav.Get(), zero);
-        Bind(ctx, d.histogram.Get(), {d.mainYuv.srv.Get(), d.gfC.srv.Get()}, {d.histUav.Get()});
+        Bind(ctx, d.histogram.Get(), {image, d.gfC.srv.Get()}, {d.histUav.Get()});
         ctx->Dispatch(DivUp(ow / 4, 16), DivUp(oh / 4, 8), 1);
         ctx->CopyResource(d.histStaging[slot].Get(), d.hist.Get());
     }
     if (s.mode == ViewMode::Bokeh) {
-        Bind(ctx, d.bokeh.Get(), {d.mainYuv.srv.Get(), d.gfC.srv.Get()}, {d.bokehHalf.uav.Get()});
+        Bind(ctx, d.bokeh.Get(), {image, d.gfC.srv.Get()}, {d.bokehHalf.uav.Get()});
         ctx->Dispatch(DivUp(ow / 2, 16), DivUp(oh / 2, 8), 1);
     }
     const bool packedOut = m_output.format == PixelFormat::YUY2;
     Bind(ctx, d.composite.Get(),
-        {d.mainYuv.srv.Get(), d.gfC.srv.Get(), d.bokehHalf.srv.Get(), d.secondYuv.srv.Get(), d.dispMain.srv.Get(),
-            d.dispFill.srv.Get()},
+        {image, d.gfC.srv.Get(), d.bokehHalf.srv.Get(), d.secondYuv.srv.Get(), d.dispMain.srv.Get(),
+            d.dispFill.srv.Get(), d.dispHist[d.histIndex].srv.Get()},
         {d.outY.uav.Get(), d.outUV.uav.Get(), d.outYuy2.uav.Get()});
     ctx->Dispatch(DivUp(ow / 2, 16), DivUp(oh / 2, 8), 1);
     Bind(ctx, nullptr, {}, {});
@@ -651,6 +724,13 @@ HRESULT StereoPipeline::Process(const uint8_t* yuy2, uint32_t yuy2Pitch, const E
             ctx->Unmap(d.histStaging[read].Get(), 0);
         }
     }
+    if (d.slots[read].denoise) {
+        D3D11_MAPPED_SUBRESOURCE nm;
+        if (SUCCEEDED(ctx->Map(d.noiseHistStaging[read].Get(), 0, D3D11_MAP_READ, 0, &nm))) {
+            UpdateNoise(static_cast<const uint32_t*>(nm.pData));
+            ctx->Unmap(d.noiseHistStaging[read].Get(), 0);
+        }
+    }
 
     if (stats) {
         D3D11_QUERY_DATA_TIMESTAMP_DISJOINT dj = {};
@@ -662,6 +742,7 @@ HRESULT StereoPipeline::Process(const uint8_t* yuy2, uint32_t yuy2Pitch, const E
             stats->gpuMs = float(double(t1 - t0) * 1000.0 / dj.Frequency);
         stats->focusDisparity = m_focus;
         stats->gain = s.autoBrightness ? m_gain : 1.0f;
+        stats->noise = std::max(m_noise, 0.0f);
     }
     return S_OK;
 }

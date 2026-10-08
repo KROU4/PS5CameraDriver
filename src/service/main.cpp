@@ -7,6 +7,8 @@
 #include <cfgmgr32.h>
 #include <initguid.h>
 #include <usbiodef.h>
+#include <userenv.h>
+#include <wtsapi32.h>
 
 #include <atomic>
 #include <condition_variable>
@@ -16,9 +18,11 @@
 #include <string>
 #include <thread>
 
+#include "../common/camdefaults.h"
 #include "../common/firmware.h"
 #include "../common/ids.h"
 #include "../common/log.h"
+#include "../common/settings.h"
 #include "../common/vcamreg.h"
 
 using namespace ps5cam;
@@ -41,6 +45,8 @@ struct Job {
 };
 std::deque<Job> g_queue;
 std::atomic<bool> g_stopping = false;
+HANDLE g_settingsEvent = nullptr;  // settings changed, or the camera arrived: check the effect default
+std::atomic<bool> g_resyncEffects = false;  // somebody signed in: sync the effect default again
 
 std::wstring ModuleDir()
 {
@@ -207,12 +213,113 @@ void Worker()
             BootDevice(job.path);
         } else if (job.kind == JobKind::CameraReady) {
             CameraReady();
+            SetEvent(g_settingsEvent);
         } else if (!UseDeviceMft()) {
             std::wstring msg;
             RegisterVirtualCamera(msg);
             Log(L"virtual camera: %ls", msg.c_str());
         }
     }
+}
+
+// The signed-in user's administrator token as a primary token: the elevated half of their split
+// token, or the token itself for an administrator without UAC. Null for a standard user or when
+// nobody is signed in. Windows keeps the camera defaults per user and lets only administrators
+// save them.
+HANDLE UserAdminToken()
+{
+    const DWORD session = WTSGetActiveConsoleSessionId();
+    HANDLE user = nullptr;
+    if (session == 0xFFFFFFFF || !WTSQueryUserToken(session, &user)) return nullptr;
+    HANDLE candidate = nullptr;
+    TOKEN_ELEVATION_TYPE type = TokenElevationTypeDefault;
+    DWORD len = 0;
+    if (GetTokenInformation(user, TokenElevationType, &type, sizeof(type), &len)) {
+        TOKEN_LINKED_TOKEN linked = {};
+        if (type == TokenElevationTypeLimited) {
+            if (GetTokenInformation(user, TokenLinkedToken, &linked, sizeof(linked), &len)) candidate = linked.LinkedToken;
+        } else {
+            DuplicateTokenEx(user, MAXIMUM_ALLOWED, nullptr, SecurityImpersonation, TokenPrimary, &candidate);
+        }
+    }
+    CloseHandle(user);
+    HANDLE primary = nullptr, check = nullptr;
+    BOOL admin = FALSE;
+    BYTE sid[SECURITY_MAX_SID_SIZE];
+    DWORD sidSize = sizeof(sid);
+    if (candidate && DuplicateTokenEx(candidate, MAXIMUM_ALLOWED, nullptr, SecurityImpersonation, TokenPrimary, &primary) &&
+        DuplicateTokenEx(primary, TOKEN_QUERY, nullptr, SecurityIdentification, TokenImpersonation, &check) &&
+        CreateWellKnownSid(WinBuiltinAdministratorsSid, nullptr, sid, &sidSize))
+        CheckTokenMembership(check, sid, &admin);
+    if (check) CloseHandle(check);
+    if (candidate) CloseHandle(candidate);
+    if (!admin && primary) {
+        CloseHandle(primary);
+        primary = nullptr;
+    }
+    return primary;
+}
+
+// Runs "ps5cam-ctl effectsync" as that user (in a process of their own, so that it works with their
+// profile); its exit code, or -1.
+int RunEffectSync(HANDLE token)
+{
+    std::wstring cmd = L"\"" + ModuleDir() + L"\\ps5cam-ctl.exe\" effectsync";
+    void* env = nullptr;
+    if (!CreateEnvironmentBlock(&env, token, FALSE)) env = nullptr;
+    STARTUPINFOW si = {sizeof(si)};
+    wchar_t desktop[] = L"winsta0\\default";
+    si.lpDesktop = desktop;
+    PROCESS_INFORMATION pi = {};
+    const BOOL started = CreateProcessAsUserW(token, nullptr, cmd.data(), nullptr, nullptr, FALSE,
+        CREATE_NO_WINDOW | CREATE_UNICODE_ENVIRONMENT, env, ModuleDir().c_str(), &si, &pi);
+    if (env) DestroyEnvironmentBlock(env);
+    if (!started) return -1;
+    DWORD code = 1;
+    if (WaitForSingleObject(pi.hProcess, 30000) == WAIT_OBJECT_0) GetExitCodeProcess(pi.hProcess, &code);
+    else TerminateProcess(pi.hProcess, 1);
+    CloseHandle(pi.hThread);
+    CloseHandle(pi.hProcess);
+    return static_cast<int>(code);
+}
+
+// Windows keeps a default for the camera's "Background effects" once the user has set them in
+// Settings, and writes it to the camera at every start. The service follows the bokeh switch of
+// the tray and ps5cam-ctl into it, as the signed-in administrator (see camdefaults.h), and again
+// when somebody signs in.
+void EffectDefaultWatcher()
+{
+    HKEY key = nullptr;
+    if (RegCreateKeyExW(HKEY_LOCAL_MACHINE, kRegRoot, 0, nullptr, 0, KEY_READ | KEY_NOTIFY, nullptr, &key, nullptr) !=
+        ERROR_SUCCESS) {
+        Log(L"background effects default: cannot watch the settings");
+        return;
+    }
+    uint64_t synced = ~0ULL;
+    bool toldNoAdmin = false;
+    while (!g_stopping) {
+        if (g_resyncEffects.exchange(false)) synced = ~0ULL;
+        // Armed before reading, so a change while syncing wakes the next round; without the
+        // notification, the settings are looked at every minute.
+        const bool notified =
+            RegNotifyChangeKeyValue(key, FALSE, REG_NOTIFY_CHANGE_LAST_SET, g_settingsEvent, TRUE) == ERROR_SUCCESS;
+        const uint64_t flags = BackgroundEffectFlags(LoadSettings());
+        if (flags != synced) {
+            if (HANDLE admin = UserAdminToken()) {
+                const int code = RunEffectSync(admin);
+                CloseHandle(admin);
+                if (code == 0 || code == 3) synced = flags;  // 2: no camera; 1, -1: failed (retried on change)
+                if (code != 2 && code != 3) Log(L"background effects default: ps5cam-ctl effectsync exit %d", code);
+                toldNoAdmin = false;
+            } else if (!toldNoAdmin) {
+                Log(L"background effects default: no signed-in administrator to update it");
+                toldNoAdmin = true;
+            }
+        }
+        HANDLE waits[] = {g_settingsEvent, g_stopEvent};
+        WaitForMultipleObjects(2, waits, FALSE, notified ? INFINITE : 60000);
+    }
+    RegCloseKey(key);
 }
 
 bool IsRunningCameraPath(std::wstring s)
@@ -240,7 +347,15 @@ DWORD CALLBACK OnDeviceChange(HCMNOTIFICATION, PVOID, CM_NOTIFY_ACTION action, P
 int RunLoop()
 {
     Log(L"started, firmware dir %ls", ModuleDir().c_str());
+    g_settingsEvent = CreateEventW(nullptr, FALSE, FALSE, nullptr);
     std::thread worker(Worker);
+    std::thread effects([] {
+        try {
+            if (g_settingsEvent) EffectDefaultWatcher();
+        } catch (...) {
+            Log(L"background effects default: the watcher failed");  // the camera itself is not affected
+        }
+    });
 
     CM_NOTIFY_FILTER filter = {};
     filter.cbSize = sizeof(filter);
@@ -262,6 +377,7 @@ int RunLoop()
     g_queueCv.notify_all();
     if (notify) CM_Unregister_Notification(notify);
     worker.join();
+    effects.join();  // g_stopEvent is set: the watcher's wait returns
     Log(L"stopped");
     return 0;
 }
@@ -272,18 +388,22 @@ void SetState(DWORD state)
 {
     std::lock_guard lock(g_statusMutex);
     g_status.dwCurrentState = state;
-    g_status.dwControlsAccepted = state == SERVICE_RUNNING ? SERVICE_ACCEPT_STOP | SERVICE_ACCEPT_SHUTDOWN : 0;
+    g_status.dwControlsAccepted =
+        state == SERVICE_RUNNING ? SERVICE_ACCEPT_STOP | SERVICE_ACCEPT_SHUTDOWN | SERVICE_ACCEPT_SESSIONCHANGE : 0;
     // Stopping can wait for a device restart (pnputil, up to 30 s).
     g_status.dwWaitHint = (state == SERVICE_START_PENDING || state == SERVICE_STOP_PENDING) ? 45000 : 0;
     if (g_status.dwWaitHint) ++g_status.dwCheckPoint;
     SetServiceStatus(g_statusHandle, &g_status);
 }
 
-DWORD WINAPI ServiceCtrl(DWORD control, DWORD, LPVOID, LPVOID)
+DWORD WINAPI ServiceCtrl(DWORD control, DWORD type, LPVOID, LPVOID)
 {
     if (control == SERVICE_CONTROL_STOP || control == SERVICE_CONTROL_SHUTDOWN) {
         SetState(SERVICE_STOP_PENDING);
         SetEvent(g_stopEvent);
+    } else if (control == SERVICE_CONTROL_SESSIONCHANGE && type == WTS_SESSION_LOGON && g_settingsEvent) {
+        g_resyncEffects = true;
+        SetEvent(g_settingsEvent);
     }
     return NO_ERROR;
 }

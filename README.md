@@ -24,7 +24,9 @@ Telegram, OBS, browsers and any other program.
   and **bokeh**: the background is blurred by real depth measured with the camera's two sensors,
   just like on the PS5. No neural networks: the GPU computes depth with a stereo algorithm
   (census + SGM) in Direct3D 11 shaders. The camera shows up as "PS5 Camera", with no separate
-  virtual camera.
+  virtual camera, and the bokeh is switched like Windows' own camera effects: Settings →
+  Cameras → Background effects (standard or portrait blur). Noise reduction and automatic
+  anti-flicker help in dim rooms.
 - **Linux and macOS:** the camera without bokeh, native 1920x1080 at 30 and 60 fps.
 
 ## Install
@@ -32,16 +34,17 @@ Telegram, OBS, browsers and any other program.
 A **USB 3** port is required: on USB 2.0 the camera only delivers 640x400.
 
 **Windows 11**
-1. Download `PS5CameraDriver.zip` from the [releases](https://github.com/KROU4/PS5CameraDriver/releases/latest) page.
-2. If Windows warns about files from the internet, open the archive's properties and tick
-   "Unblock" before extracting (until releases are digitally signed, see
-   [Code signing policy](#code-signing-policy)).
-3. Extract it and run `Install.cmd`. The installer asks whether you want bokeh (or pass
-   `Install.cmd -Bokeh on` / `-Bokeh off`), lists what it will change in the system, and asks
-   for administrator rights.
-4. Choose the "PS5 Camera" camera in your programs.
+1. Download `PS5CameraDriver.msi` (`PS5CameraDriver-ru.msi` in Russian) from the
+   [releases](https://github.com/KROU4/PS5CameraDriver/releases/latest) page and run it. It needs
+   administrator rights and an internet connection (it downloads Sony's original firmware, see
+   [Firmware](#firmware)). Until releases are digitally signed, SmartScreen may warn about an
+   unknown publisher (see [Code signing policy](#code-signing-policy)).
+2. Choose the "PS5 Camera" camera in your programs.
 
-To change the mode later, run the installer again. Details, modes and troubleshooting:
+Bokeh is on after the first installation. Switch it in Settings → Bluetooth & devices → Cameras →
+PS5 Camera → Camera effects. Unattended installation:
+`msiexec /i PS5CameraDriver.msi /qn BOKEH=on|off`. The ZIP package (`Install.cmd`) installs the
+same without MSI. Details, modes, settings and troubleshooting:
 [installer/README.txt](installer/README.txt).
 
 **Linux** (systemd and udev required): `sudo bash install.sh` from `PS5CameraDriver-linux.zip`.
@@ -49,7 +52,7 @@ To change the mode later, run the installer again. Details, modes and troublesho
 **macOS** (Command Line Tools required: `xcode-select --install`): `sudo bash install.sh` from
 `PS5CameraDriver-macos.zip`.
 
-Uninstall: `Uninstall.cmd` or Settings → Apps on Windows; `uninstall.sh` from the install folder on
+Uninstall: Settings → Apps → Installed apps on Windows; `uninstall.sh` from the install folder on
 Linux and macOS (the installer prints its path at the end).
 
 ## Firmware
@@ -59,7 +62,7 @@ firmware is not part of the project: the installer downloads the original image 
 software 21.01-03.20.00.04) from public copies, checks its SHA-256 and applies the driver's
 changes — 90 bytes from [firmware/ps5cam-firmware.json](firmware/ps5cam-firmware.json). Without
 internet access, put the original next to the installer as `sony-firmware.bin` or pass it with
-`-Original` (Windows) / `--original` (Linux, macOS).
+`SONYFIRMWARE=` (MSI), `-Original` (`Install.cmd`) or `--original` (Linux, macOS).
 
 What the patch changes:
 - 1920x1080 from one sensor at 60 fps (Sony limits 1080p to 30 fps);
@@ -76,7 +79,7 @@ flowchart TB
     uvc["USB 05A9:058C — UVC camera<br/>(standard Windows driver)"] --> fs
     subgraph fs["Windows Camera Frame Server"]
         dmft["ps5cam-dmft.dll — the camera's Device MFT"]
-        gpu["Direct3D 11: census → SGM → drop unreliable matches → fill holes<br/>→ temporal filter → guided filter → autofocus → bokeh → auto brightness"]
+        gpu["Direct3D 11: noise reduction · census → SGM → drop unreliable matches → fill holes<br/>→ temporal filter → guided filter → autofocus → bokeh → auto brightness"]
         dmft --> gpu
     end
     fs --> apps["“PS5 Camera” in Media Foundation, WinRT and DirectShow"]
@@ -94,7 +97,7 @@ previous variant with a separate virtual camera is still available: `Install.cmd
 | [src/core](src/core) | GPU pipeline, shaders in [src/core/shaders](src/core/shaders) |
 | [src/ctl](src/ctl) | `ps5cam-ctl`: settings (`set mode 0` — bokeh, `set mode 1` — none), registration |
 | [src/tray](src/tray) | tray icon for development (`Install.cmd -Tray`) |
-| [installer](installer) | installers for Windows, Linux and macOS |
+| [installer](installer) | installers: MSI ([installer/msi](installer/msi)) and ZIP for Windows, Linux, macOS; winget manifests ([installer/winget](installer/winget)) |
 
 **Boot-mode driver.** It is Windows' built-in WinUSB; there is no own kernel code. Windows only
 accepts a driver package that is signed, so the installer creates a certificate on this computer,
@@ -108,8 +111,10 @@ Requires Windows 11, Visual Studio 2022 Build Tools (C++) and Windows SDK 10.0.2
 
 ```powershell
 .\build.ps1      # build\Release
-.\package.ps1    # dist\: packages for Windows, Linux and macOS
+.\package.ps1    # dist\: packages for Windows (ZIP, and MSI with WiX), Linux and macOS
 ```
+
+The MSI packages need the WiX Toolset 5 .NET tool: `dotnet tool install --global wix --version 5.0.2`.
 
 [GitHub Actions](.github/workflows/build.yml) builds the same packages on every commit and
 publishes them as a release for `v*` tags.
@@ -140,7 +145,7 @@ GitHub Actions build. Every release is signed only after manual approval.
 
 Signed files are the programs and install scripts in `PS5CameraDriver.zip`: `ps5cam-dmft.dll`,
 `ps5cam-vcam.dll`, `ps5cam-svc.exe`, `ps5cam-ctl.exe`, `ps5cam-tray.exe`, `install.ps1`,
-`uninstall.ps1`.
+`uninstall.ps1`; the MSI packages are built from these signed files.
 
 **Privacy policy.** This program will not transfer any information to other networked systems
 unless specifically requested by the user or the person installing or operating it. The only

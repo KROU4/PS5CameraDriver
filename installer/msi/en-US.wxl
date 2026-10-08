@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<WixLocalization xmlns="http://wixtoolset.org/schemas/v4/wxl" Culture="en-US" Codepage="1252">
+  <String Id="Language" Value="1033" />
+  <String Id="Downgrade" Value="A newer version of PS5 HD Camera is already installed." />
+</WixLocalization>

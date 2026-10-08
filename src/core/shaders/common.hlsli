@@ -18,7 +18,7 @@ cbuffer Constants : register(b0)
     float  p1;            // SGM small-step penalty
     float  p2;            // SGM large-step penalty
     uint   mode;          // 0 bokeh, 1 main sensor, 2 second sensor, 3 depth view, 4 side by side,
-                          // 5/6 raw / checked disparity (bench only)
+                          // bench only: 5/6/7 raw / checked / hole-filled disparity, 8 disparity in grey
     float  guidedEps;     // guided filter regulariser
     uint   secondOffsetTexels; // texel x where the second sensor starts in the packed frame
     uint   mainOffsetTexels;   // texel x where the main sensor starts
@@ -30,6 +30,10 @@ cbuffer Constants : register(b0)
     uint   secondFolded;  // 1: each second-sensor row spans two frame lines, starting at line 1
     uint   depthMirror;   // 1: work images are mirrored, so the second sensor's match lies at x - d
                           //    although the main sensor is the left stream (see downscale.hlsl)
+    float  noiseLevel;    // typical frame-to-frame change of a 3x3 luma mean in a still scene
+    float  denoiseKeep;   // share of the new frame kept where nothing moves (1 = no temporal denoise)
+    uint   denoiseHistory; // 0: no previous frame to blend with
+    float  denoiseSpatial; // share of the spatially smoothed luma where something moves (0..1)
 };
 
 SamplerState LinearClamp : register(s0);

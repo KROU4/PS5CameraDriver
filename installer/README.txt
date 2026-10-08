@@ -10,12 +10,15 @@ the background by that depth (bokeh).
 Install
 -------
 1. Plug the camera into a USB 3 port.
-2. Run Install.cmd and confirm the administrator rights prompt.
-   The installer asks for the mode: 1 — with bokeh (background always blurred),
-   2 — without bokeh (a plain camera). Without the question: Install.cmd -Bokeh on
-   or Install.cmd -Bokeh off.
-   Before installing it lists what it will change in the system and asks to confirm
-   (to skip that: Install.cmd -Bokeh on -Yes).
+2. Run PS5CameraDriver.msi (PS5CameraDriver-ru.msi in Russian) from the release page and
+   confirm the administrator rights prompt. An internet connection is needed: the installer
+   downloads Sony's original firmware and builds the driver's firmware from it. Bokeh is on
+   after the first installation; an update keeps your choice.
+   Unattended: msiexec /i PS5CameraDriver.msi /qn [BOKEH=on|off] [TRAY=1]
+   [SONYFIRMWARE=C:\path\to\sony-firmware.bin]; the log is %ProgramData%\PS5Camera\install.log.
+   Or, from this ZIP package: run Install.cmd. It asks for the mode (1 — with bokeh, 2 —
+   without; or Install.cmd -Bokeh on / -Bokeh off), lists what it will change in the system
+   and asks to confirm (to skip that: Install.cmd -Bokeh on -Yes).
 3. In Zoom, Discord, Teams, Telegram, OBS, a browser or the Camera app choose
    "PS5 Camera". Programs that were open during the installation see it after a restart.
 
@@ -27,10 +30,26 @@ kernel driver and no test mode): it is the same USB camera, just named "PS5 Came
 with bokeh. The previous way — a separate virtual camera "PS5 Camera (Windows Virtual
 Camera)" with the USB camera itself hidden: Install.cmd -VirtualCamera.
 
-To change the mode later, run Install.cmd again or run in a command prompt (cmd)
+Bokeh on and off: Settings → Bluetooth & devices → Cameras → PS5 Camera → Camera effects
+→ Background effects ("Portrait blur" is the bokeh as set, "Standard blur" the strongest),
+or the camera effects of programs that offer them. Windows remembers the choice there and
+applies it whenever a program opens the camera. From a command prompt (cmd):
   "C:\Program Files\PS5Camera\ps5cam-ctl.exe" set mode 0   (with bokeh)
   "C:\Program Files\PS5Camera\ps5cam-ctl.exe" set mode 1   (without bokeh)
-(in PowerShell put & before the command).
+(in PowerShell put & before the command); the service then updates Windows' remembered
+choice too, while an administrator is signed in.
+
+Picture
+-------
+- Noise reduction (on by default, medium): in a dim room the sensor noise is averaged over
+  several frames where nothing moves, and smoothed within the frame where something does.
+  ps5cam-ctl set denoise 0..100 (0 = off).
+- Anti-flicker (automatic by default): in a dim room the camera exposes up to the whole
+  frame time instead of 10 ms steps, unless lamps flicker; when the picture shows the moving
+  bands of flickering lamps it goes back to 50 Hz at once and stays there for half an hour.
+  ps5cam-ctl set antiflicker 0 (auto), 1 (50 Hz), 2 (60 Hz), 3 (off). The mains frequency
+  follows the country Windows is set to; a program that sets anti-flicker itself keeps its
+  choice.
 
 Tray icon (for development: Install.cmd -Tray)
 ---------
@@ -40,7 +59,8 @@ Tray icon (for development: Install.cmd -Tray)
   side by side (in these views the second sensor comes at 960x540).
 - Background blur: light, medium, strong, maximum.
 - Focus: autofocus on the person or fixed (near, middle, far).
-- Bokeh highlights, auto brightness for a dark room.
+- Bokeh highlights, auto brightness for a dark room, noise reduction, anti-flicker.
+- A link to the camera's page in Windows Settings (background effects).
 - "Full HD 60 fps only": programs see a single format, 1920x1080@60 (the default).
   Without it — 1080p and 720p at 30 and 60 fps, and "Prefer 60 fps" decides which
   mode programs see first.
@@ -61,16 +81,16 @@ Modes
   1280x720, 30 and 60 fps):
     "C:\Program Files\PS5Camera\ps5cam-ctl.exe" set fullhdonly 0
   (back: set fullhdonly 1). The list changes when no program holds the camera.
-  In a room lit by 50 Hz lamps the picture is darker at 60 fps (see below): bring back
-  the full list then as well and choose 30 fps in the program.
 When switching between the plain camera and the depth modes the camera reopens
 itself, and the picture freezes for about half a second.
 Why the second sensor is downscaled: this camera's USB 3.0 link carries at most
 ~393 MB/s, two full 1080p60 pictures need ~498 MB/s, and 1080p + 960x540 ~320 MB/s.
 If the camera still runs an older firmware (until it is replugged after an update),
 bokeh works the old way: at 30 fps from both full sensors, at 60 fps from a 1280x800 crop.
-At 60 fps in a room lit by 50 Hz lamps the picture is darker: anti-flicker limits the
-exposure to 10 ms; auto brightness partly compensates for that.
+At 60 fps under lamps that do flicker at 100 Hz the exposure stays limited to 10 ms, so the
+picture is darker there than at 30 fps; auto brightness and noise reduction make up for part
+of it. If that is not enough, bring back the full list of formats (see above) and choose
+30 fps in the program.
 
 As with any webcam, one program uses the camera at a time. A second one gets a
 "camera in use" error until the first one releases it.
@@ -88,4 +108,5 @@ Troubleshooting
 
 Uninstall
 ---------
-Uninstall.cmd or Settings → Apps → Installed apps → PS5 HD Camera.
+Settings → Apps → Installed apps → PS5 HD Camera (or Uninstall.cmd after an installation
+from the ZIP package).

@@ -3,7 +3,9 @@
 // background unless the subject surrounds it, and one stray value can no longer be dragged across
 // a whole wall as a fill along rows does. Each ray prefers the nearest valid value of similar
 // brightness (likely the same surface) to the nearest one, so a patch of wall framed by the arms
-// takes the wall behind them rather than the arms. Then temporal smoothing.
+// takes the wall behind them rather than the arms. Where the rays find both the subject and the
+// background, the gap goes to the side of similar brightness, and to the background when neither
+// is closer: a plain wall beside the head no longer stays sharp. Then temporal smoothing.
 #include "common.hlsli"
 
 Texture2D<float> DispIn : register(t0);    // -1 = unknown
@@ -24,7 +26,11 @@ static const int2 kDirs[8] = {
 // Same surface: luma within this of the hole's, looked for up to kDist[kSimilarSteps - 1] away
 // (farther, a similar brightness is as likely another object).
 static const float kSameSurface = 0.04;
-static const int kSimilarSteps = 12;
+static const int kSimilarSteps = 8;
+// Lower median and lower third this far apart: the rays found two surfaces. The nearer one wins
+// only if its brightness is closer to the hole's by kLumaMargin.
+static const float kSplit = 2.0;
+static const float kLumaMargin = 0.01;
 
 [numthreads(16, 8, 1)]
 void main(uint3 id : SV_DispatchThreadID)
@@ -37,13 +43,15 @@ void main(uint3 id : SV_DispatchThreadID)
     bool measured = d >= 0;
     if (!measured)
     {
-        float found[8];  // per direction, -1 = nothing within reach
+        float found[8];      // per direction, -1 = nothing within reach
+        float foundLuma[8];  // luma where it was found
         uint n = 0;
         const float luma = WorkMain[p];
         [unroll] for (uint k = 0; k < 8; ++k)
         {
-            float nearest = -1;
+            float nearest = -1, nearestLuma = 0;
             found[k] = -1;
+            foundLuma[k] = 0;
             [loop] for (int s = 0; s < kSteps; ++s)
             {
                 int2 q = p + kDirs[k] * kDist[s];
@@ -52,32 +60,65 @@ void main(uint3 id : SV_DispatchThreadID)
                 float v = DispIn[q];
                 if (v < 0)
                     continue;
+                float l = WorkMain[q];
                 if (nearest < 0)
+                {
                     nearest = v;
-                if (abs(WorkMain[q] - luma) <= kSameSurface)
+                    nearestLuma = l;
+                }
+                if (abs(l - luma) <= kSameSurface)
                 {
                     found[k] = v;
+                    foundLuma[k] = l;
                     break;
                 }
                 if (s + 1 >= kSimilarSteps)
                     break;
             }
             if (found[k] < 0)
+            {
                 found[k] = nearest;
+                foundLuma[k] = nearestLuma;
+            }
             n += found[k] >= 0 ? 1 : 0;
         }
         // Nothing usable anywhere around (a dark or blank frame): keep the last value, else far.
         d = max(prev, 0.0);
         if (n > 0)
         {
-            uint want = (n - 1) / 2;  // rank of the lower median
+            // Lower median and lower third of what the rays found. They differ when the hole lies
+            // between a subject and its background: it takes the side whose brightness it shares,
+            // and the background when that does not tell (dark hair against a dark wall), since a
+            // sharp patch of background around a subject shows more than a slightly soft edge.
+            uint wantMid = (n - 1) / 2, wantLow = (n - 1) / 3;
+            float mid = -1, low = -1;
             [unroll] for (uint i = 0; i < 8; ++i)
             {
                 uint rank = 0;
                 [unroll] for (uint j = 0; j < 8; ++j)
                     rank += (found[j] >= 0 && (found[j] < found[i] || (found[j] == found[i] && j < i))) ? 1 : 0;
-                if (found[i] >= 0 && rank == want)
-                    d = found[i];
+                if (found[i] >= 0 && rank == wantMid)
+                    mid = found[i];
+                if (found[i] >= 0 && rank == wantLow)
+                    low = found[i];
+            }
+            d = mid;
+            if (mid - low > kSplit)
+            {
+                const float split = 0.5 * (mid + low);
+                float nearDiff = 0, farDiff = 0, nearCount = 0, farCount = 0;
+                [unroll] for (uint m = 0; m < 8; ++m)
+                {
+                    if (found[m] < 0)
+                        continue;
+                    float diff = abs(foundLuma[m] - luma);
+                    if (found[m] > split)
+                        nearDiff += diff, nearCount += 1;
+                    else
+                        farDiff += diff, farCount += 1;
+                }
+                if (nearDiff / nearCount + kLumaMargin >= farDiff / farCount)
+                    d = low;
             }
         }
     }

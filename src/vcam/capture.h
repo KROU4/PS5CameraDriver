@@ -16,7 +16,9 @@
 #include <mutex>
 #include <string>
 #include <thread>
+#include <vector>
 
+#include "flicker.h"
 #include "pipeline.h"
 #include "../common/settings.h"
 
@@ -43,6 +45,8 @@ public:
 
     // For forwarding UVC controls (brightness etc.) to the physical camera.
     Microsoft::WRL::ComPtr<IUnknown> PhysicalSource();
+    // An app set the anti-flicker itself: none of ours until the next Start or a setting change.
+    void HoldPowerLine();
 
     // Called by the reader callback while the engine is attached; returns true to read the next frame.
     bool OnReadSample(HRESULT hr, DWORD flags, IMFSample* sample);
@@ -53,11 +57,13 @@ private:
     void CloseCamera();
     void Supervisor();
     void ProcessFrame(IMFSample* sample);
+    void HandleFrame(IMFSample* sample);
     void Deliver(const uint8_t* yuy2, uint32_t pitch);
     void DeliverPlaceholder();
     bool EnsurePipeline();
     IMFSample* NewOutputSample(BYTE** scan0, LONG* pitch, Microsoft::WRL::ComPtr<IMF2DBuffer2>& lockOut);
     void RefreshSettings(bool force);
+    void ApplyPendingPowerLine();
     void StartRecording(uint32_t frames);
     void EndRecording(const wchar_t* why);
     void PublishStatus();
@@ -88,6 +94,13 @@ private:
 
     EffectSettings m_effect;
     ULONGLONG m_settingsTick = 0;
+    FlickerGuard m_flicker;      // under m_lock
+    bool m_flickerStarted = false;  // since Start
+    bool m_powerLineHeld = false;   // see HoldPowerLine
+    uint32_t m_antiFlicker = 0;  // the setting it runs with
+    bool m_mains60 = false;
+    int m_powerLineRequest = -1;  // control value to send (ApplyPendingPowerLine), -1 none
+    std::vector<float> m_rowMeans;
     bool m_calibPending = false;
     uint32_t m_calibFailures = 0;
     uint32_t m_nextCalibFrame = 10;

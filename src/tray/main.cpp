@@ -28,8 +28,11 @@ enum Cmd : UINT {
     CmdAutoBrightness = 500,
     CmdPrefer60 = 501,
     CmdFullHdOnly = 502,
+    CmdDenoiseBase = 510,  // + level index
+    CmdFlickerBase = 520,  // + AntiFlicker value
     CmdRecalibrate = 600,
     CmdOpenCamera = 601,
+    CmdCameraSettings = 603,
     CmdOpenLogs = 602,
     CmdExit = 700,
 };
@@ -41,7 +44,9 @@ const struct {
     uint32_t value;
 } kBlur[] = {{L"Лёгкое", 25}, {L"Среднее", 50}, {L"Сильное", 75}, {L"Максимальное", 100}},
   kFocus[] = {{L"Близко (до 60 см)", 85}, {L"Средне (около 1 м)", 50}, {L"Далеко", 20}},
-  kHighlights[] = {{L"Без бликов", 0}, {L"Обычные", 150}, {L"Яркие", 300}};
+  kHighlights[] = {{L"Без бликов", 0}, {L"Обычные", 150}, {L"Яркие", 300}},
+  kDenoise[] = {{L"Выключено", 0}, {L"Слабое", 40}, {L"Среднее", 70}, {L"Сильное", 100}};
+const wchar_t* kFlickerNames[] = {L"Авто (в темноте ярче, если лампы не мерцают)", L"50 Гц", L"60 Гц", L"Выключена"};
 
 constexpr uint32_t kModeBokeh = 0;
 constexpr uint32_t kModeMain = 1;
@@ -204,12 +209,19 @@ void ShowMenu()
     AppendMenuW(menu, MF_POPUP, reinterpret_cast<UINT_PTR>(hl), L"Блики боке");
 
     AddItem(menu, CmdAutoBrightness, L"Автояркость (для тёмной комнаты)", s.autoBrightness, false);
+    HMENU dn = CreatePopupMenu();
+    for (UINT i = 0; i < 4; ++i) AddItem(dn, CmdDenoiseBase + i, kDenoise[i].name, s.denoise == kDenoise[i].value);
+    AppendMenuW(menu, MF_POPUP, reinterpret_cast<UINT_PTR>(dn), L"Шумоподавление");
+    HMENU fl = CreatePopupMenu();
+    for (UINT i = 0; i < 4; ++i) AddItem(fl, CmdFlickerBase + i, kFlickerNames[i], s.antiFlicker == i);
+    AppendMenuW(menu, MF_POPUP, reinterpret_cast<UINT_PTR>(fl), L"Защита от мерцания ламп");
     AddItem(menu, CmdFullHdOnly, L"Только Full HD 60 к/с (при следующем запуске камеры)", s.fullHdOnly, false);
     if (!s.fullHdOnly)
         AddItem(menu, CmdPrefer60, L"Предпочитать 60 к/с (при следующем запуске камеры)", s.prefer60, false);
     AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
     AppendMenuW(menu, MF_STRING, CmdRecalibrate, L"Перекалибровать стерео");
     AppendMenuW(menu, MF_STRING, CmdOpenCamera, L"Открыть приложение «Камера»");
+    AppendMenuW(menu, MF_STRING, CmdCameraSettings, L"Камера в параметрах Windows (эффекты фона)");
     AppendMenuW(menu, MF_STRING, CmdOpenLogs, L"Папка журналов");
     AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
     AppendMenuW(menu, MF_STRING, CmdExit, L"Закрыть значок");
@@ -230,16 +242,22 @@ void ShowMenu()
     else if (cmd >= CmdBlurBase && cmd < CmdBlurBase + 4) {
         s.blur = kBlur[cmd - CmdBlurBase].value;
         s.mode = 0;
+        s.blurStyle = kBlurPortrait;  // a chosen strength, not Windows' fixed "Standard blur"
     } else if (cmd == CmdFocusAuto) s.autoFocus = true;
     else if (cmd >= CmdFocusBase && cmd < CmdFocusBase + 3) {
         s.autoFocus = false;
         s.focus = kFocus[cmd - CmdFocusBase].value;
     } else if (cmd >= CmdHighlightsBase && cmd < CmdHighlightsBase + 3) s.highlights = kHighlights[cmd - CmdHighlightsBase].value;
     else if (cmd == CmdAutoBrightness) s.autoBrightness = !s.autoBrightness;
+    else if (cmd >= CmdDenoiseBase && cmd < CmdDenoiseBase + 4) s.denoise = kDenoise[cmd - CmdDenoiseBase].value;
+    else if (cmd >= CmdFlickerBase && cmd < CmdFlickerBase + 4) s.antiFlicker = cmd - CmdFlickerBase;
     else if (cmd == CmdPrefer60) s.prefer60 = !s.prefer60;
     else if (cmd == CmdFullHdOnly) s.fullHdOnly = !s.fullHdOnly;
     else if (cmd == CmdRecalibrate) {
         BumpCalibrationRequest();
+        return;
+    } else if (cmd == CmdCameraSettings) {
+        ShellExecuteW(nullptr, L"open", L"ms-settings:camera", nullptr, nullptr, SW_SHOWNORMAL);
         return;
     } else if (cmd == CmdOpenCamera) {
         ShellExecuteW(nullptr, L"open", L"microsoft.windows.camera:", nullptr, nullptr, SW_SHOWNORMAL);
@@ -296,6 +314,10 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR, int)
 {
     HANDLE single = CreateMutexW(nullptr, TRUE, L"Local\\PS5CameraTray");
     if (GetLastError() == ERROR_ALREADY_EXISTS) return 0;
+
+    // The camera's anti-flicker follows the mains of the user's country; Frame Server, which runs
+    // the camera, cannot see the user's region.
+    if (LoadSettings().mainsHz != RegionMainsHz()) WriteSetting(L"MainsHz", RegionMainsHz());
 
     g_taskbarCreated = RegisterWindowMessageW(L"TaskbarCreated");
     WNDCLASSEXW wc = {sizeof(wc)};

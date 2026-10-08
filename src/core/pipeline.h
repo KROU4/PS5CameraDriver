@@ -12,9 +12,14 @@
 
 namespace ps5cam {
 
-// DebugRaw / DebugFilled (bench only): disparity after SGM and the confidence tests in wta.hlsl,
-// and after the left-right check and the fill of occlusions (before the 2D hole fill).
-enum class ViewMode : uint32_t { Bokeh = 0, Main = 1, Second = 2, Depth = 3, SideBySide = 4, DebugRaw = 5, DebugFilled = 6 };
+// DebugRaw / DebugFilled / DebugHoles (bench only): disparity after SGM and the confidence tests in
+// wta.hlsl, after the left-right check and the fill of occlusions (before the 2D hole fill), and
+// after the hole fill and temporal smoothing (before the guided filter). DebugGrey: the final
+// disparity as grey levels for measurements (Y = 16 + 219 d / 64).
+enum class ViewMode : uint32_t {
+    Bokeh = 0, Main = 1, Second = 2, Depth = 3, SideBySide = 4, DebugRaw = 5, DebugFilled = 6, DebugHoles = 7,
+    DebugGrey = 8
+};
 enum class PixelFormat : uint32_t { NV12 = 0, YUY2 = 1 };
 
 struct EffectSettings {
@@ -28,6 +33,7 @@ struct EffectSettings {
     float highlights = 1.5f;      // bokeh highlight emphasis
     bool autoBrightness = true;   // digital exposure compensation for dim rooms
     float maxGain = 6.0f;
+    float denoise = 0.7f;         // temporal noise reduction of the image, 0 (off) .. 1
 };
 
 struct StereoFormat {
@@ -79,6 +85,7 @@ struct FrameStats {
     float gpuMs = 0;
     float focusDisparity = 0;
     float gain = 1;
+    float noise = 0;  // typical 3x3-mean luma change of a still scene between frames (denoise on)
 };
 
 class StereoPipeline {
@@ -118,6 +125,7 @@ private:
     float ScoreAlignment(float dy, float rotationDeg);
     void UpdateFocus(const uint32_t* histogram, const EffectSettings& s);
     void UpdateGain(const uint32_t* histogram, const EffectSettings& s);
+    void UpdateNoise(const uint32_t* histogram);
 
     std::mutex m_lock;
     StereoFormat m_stereo;
@@ -130,9 +138,12 @@ private:
     int m_focusCandidate = -1;                          // peak waiting to take the focus over
     uint32_t m_focusCandidateFrames = 0;
     float m_gain = 1;
+    float m_noise = -1;  // < 0: not measured yet
     bool m_haveHistory = false;
+    bool m_haveClean = false;  // a denoised previous frame to blend with
     uint32_t m_frame = 0;
     uint32_t m_lastDepthFrame = 0xFFFFFFF0;
+    uint32_t m_lastDenoiseFrame = 0xFFFFFFF0;
 
     Microsoft::WRL::ComPtr<ID3D11Device> m_device;
     Microsoft::WRL::ComPtr<ID3D11DeviceContext> m_ctx;

@@ -16,6 +16,8 @@
 #include <string>
 #include <vector>
 
+#include "../common/camctl.h"
+#include "../common/effect.h"
 #include "../common/log.h"
 #include "cameramodes.h"
 
@@ -112,6 +114,15 @@ ComPtr<IUnknown> CaptureEngine::PhysicalSource()
     return m_source;
 }
 
+void CaptureEngine::HoldPowerLine()
+{
+    std::lock_guard lock(m_lock);
+    if (!m_powerLineHeld) Log(L"an app set the anti-flicker itself: it stands for this stream");
+    m_powerLineHeld = true;
+    m_flicker.Hold();
+    m_powerLineRequest = -1;
+}
+
 void CaptureEngine::SetError(const wchar_t* text)
 {
     std::lock_guard lock(m_errorLock);
@@ -133,6 +144,8 @@ HRESULT CaptureEngine::Start(const OutputRequest& req, FrameSink sink)
     m_sink = std::move(sink);
     m_frameCount = 0;
     m_framesInWindow = 0;
+    m_flickerStarted = false;
+    m_powerLineHeld = false;
     m_statusTick = GetTickCount64();
     SetError(L"");
     wchar_t fmt[64];
@@ -176,20 +189,40 @@ void CaptureEngine::StopLocked()
     Log(L"capture stop");
 }
 
+void CaptureEngine::ApplyPendingPowerLine()
+{
+    // A USB control request: sent without m_lock, which the reader thread and app control requests
+    // forwarded through PhysicalSource() wait for.
+    int value = -1;
+    bool flickerSeen = false;
+    ComPtr<IMFMediaSource> source;
+    {
+        std::lock_guard lock(m_lock);
+        std::swap(value, m_powerLineRequest);
+        flickerSeen = m_flicker.FlickerSeen();
+        source = m_source;
+    }
+    if (value < 0 || !source) return;
+    const HRESULT hr = SetPowerLineFrequency(source.Get(), value);
+    Log(L"anti-flicker %ls%ls (0x%08lX)", value == kPowerLineOff ? L"off" : value == kPowerLine50 ? L"50 Hz" : L"60 Hz",
+        flickerSeen && value == kPowerLine50 ? L", lamp flicker seen" : L"", static_cast<unsigned long>(hr));
+}
+
 void CaptureEngine::RefreshSettings(bool force)
 {
     ULONGLONG now = GetTickCount64();
     if (!force && now - m_settingsTick < 500) return;
     m_settingsTick = now;
     Settings s = LoadSettings();
-    m_effect.mode = static_cast<ViewMode>(s.mode);
-    m_effect.blurStrength = s.blur / 100.0f;
-    m_effect.autoFocus = s.autoFocus;
-    m_effect.manualFocus = s.focus / 100.0f;
-    m_effect.highlights = s.highlights / 100.0f;
-    m_effect.temporal = s.temporal / 100.0f;
-    m_effect.autoBrightness = s.autoBrightness;
-    m_effect.maxGain = s.maxGain / 10.0f;
+    ApplySettings(s, m_effect);
+    if (s.antiFlicker != m_antiFlicker || Mains60(s) != m_mains60) {
+        m_antiFlicker = s.antiFlicker;
+        m_mains60 = Mains60(s);
+        if (m_flickerStarted) {  // a change by the user while streaming wins over an app's choice
+            m_powerLineHeld = false;
+            m_powerLineRequest = m_flicker.Start(static_cast<AntiFlicker>(m_antiFlicker), m_mains60);
+        }
+    }
     // Taken only while frames flow, so the file is named after the sensor mode actually streaming.
     if (m_readerAlive && !m_recordLeft)
         if (uint32_t frames = TakeRecordRequest()) StartRecording(frames);
@@ -383,7 +416,18 @@ HRESULT CaptureEngine::OpenCamera()
         if (m_pipeline) m_pipeline->Reset();
         EnsurePipeline();
         m_source = source;
+        // Once per stream; a reopen for another sensor mode keeps what the guard found, on the new
+        // source. An app's own choice stands.
+        if (m_powerLineHeld) {
+            m_flicker.Hold();
+        } else if (!m_flickerStarted) {
+            m_flickerStarted = true;
+            m_powerLineRequest = m_flicker.Start(static_cast<AntiFlicker>(m_antiFlicker), m_mains60);
+        } else {
+            m_powerLineRequest = m_flicker.Value();
+        }
     }
+    ApplyPendingPowerLine();
     {
         std::lock_guard lock(readerLink->m);
         readerLink->engine = this;
@@ -440,6 +484,12 @@ bool CaptureEngine::OnReadSample(HRESULT hr, DWORD flags, IMFSample* sample)
 }
 
 void CaptureEngine::ProcessFrame(IMFSample* sample)
+{
+    HandleFrame(sample);
+    ApplyPendingPowerLine();
+}
+
+void CaptureEngine::HandleFrame(IMFSample* sample)
 {
     ComPtr<IMFMediaBuffer> buf;
     if (FAILED(sample->GetBufferByIndex(0, &buf))) return;
@@ -534,6 +584,8 @@ void CaptureEngine::Deliver(const uint8_t* yuy2, uint32_t pitch)
             m_nextCalibFrame = m_frameCount + (30u << (m_calibFailures - 1)) * std::max<uint32_t>(m_req.fps / 30, 1);
         }
     }
+    MainRowMeans(yuy2, pitch, m_stereo, m_rowMeans);
+    if (const int pl = m_flicker.Update(m_rowMeans); pl >= 0) m_powerLineRequest = pl;
     BYTE* scan0 = nullptr;
     LONG outPitch = 0;
     ComPtr<IMF2DBuffer2> lock;

@@ -23,7 +23,10 @@ Telegram, OBS, браузерах и любых других программа�
 - **Windows 11:** родные 1920x1080 при 60 к/с во всех программах (по желанию также 720p и 30 к/с)
   и **боке**: фон размывается по настоящей глубине, которую считают два сенсора камеры, как на
   PS5. Нейросети не используются: глубину считает видеокарта стерео-алгоритмом (census + SGM) в
-  шейдерах Direct3D 11. Камера видна в системе как «PS5 Camera», без отдельной виртуальной камеры.
+  шейдерах Direct3D 11. Камера видна в системе как «PS5 Camera», без отдельной виртуальной камеры,
+  а боке включается как собственные эффекты камеры Windows: Параметры → Камеры → Эффекты фона
+  (стандартное или портретное размытие). В тёмной комнате помогают шумоподавление и автоматическая
+  защита от мерцания ламп.
 - **Linux и macOS:** камера без боке, родные 1920x1080 при 30 и 60 к/с.
 
 ## Установка
@@ -31,15 +34,17 @@ Telegram, OBS, браузерах и любых других программа�
 Нужен порт **USB 3**: в USB 2.0 камера отдаёт только 640x400.
 
 **Windows 11**
-1. Скачайте `PS5CameraDriver.zip` со страницы [релизов](https://github.com/KROU4/PS5CameraDriver/releases/latest).
-2. Если Windows предупреждает о файлах из интернета, перед распаковкой откройте свойства архива и
-   отметьте «Разблокировать» (пока релиз без цифровой подписи, см. [Code signing policy](#code-signing-policy)).
-3. Распакуйте и запустите `Install.cmd`. Установщик спросит, нужно ли боке (сразу задать:
-   `Install.cmd -Bokeh on` или `-Bokeh off`), перечислит, что изменит в системе, и попросит права
-   администратора.
-4. В программах выберите камеру «PS5 Camera».
+1. Скачайте `PS5CameraDriver-ru.msi` (на английском — `PS5CameraDriver.msi`) со страницы
+   [релизов](https://github.com/KROU4/PS5CameraDriver/releases/latest) и запустите. Нужны права
+   администратора и интернет (установщик скачивает оригинальную прошивку Sony, см.
+   [Прошивка](#прошивка)). Пока релизы без цифровой подписи, SmartScreen может предупредить о
+   неизвестном издателе (см. [Code signing policy](#code-signing-policy)).
+2. В программах выберите камеру «PS5 Camera».
 
-Сменить режим потом: запустите установщик ещё раз. Подробности, режимы и решение проблем — в
+После первой установки боке включено. Переключается в Параметры → Bluetooth и устройства →
+Камеры → PS5 Camera → Эффекты камеры. Установка без окон:
+`msiexec /i PS5CameraDriver-ru.msi /qn BOKEH=on|off`. ZIP-пакет (`Install.cmd`) ставит то же без
+MSI. Подробности, режимы, настройки и решение проблем — в
 [installer/README.ru.txt](installer/README.ru.txt).
 
 **Linux** (нужны systemd и udev): `sudo bash install.sh` из `PS5CameraDriver-linux.zip`.
@@ -47,7 +52,7 @@ Telegram, OBS, браузерах и любых других программа�
 **macOS** (нужны Command Line Tools: `xcode-select --install`): `sudo bash install.sh` из
 `PS5CameraDriver-macos.zip`.
 
-Удаление: `Uninstall.cmd` или «Параметры → Приложения» на Windows, `uninstall.sh` из папки
+Удаление: «Параметры → Приложения → Установленные приложения» на Windows, `uninstall.sh` из папки
 установки на Linux и macOS (путь установщик печатает в конце).
 
 ## Прошивка
@@ -57,7 +62,7 @@ Telegram, OBS, браузерах и любых других программа�
 из публичных копий, проверяет его SHA-256 и накладывает изменения драйвера —
 90 байт из [firmware/ps5cam-firmware.json](firmware/ps5cam-firmware.json). Без интернета положите
 оригинал рядом с установщиком под именем `sony-firmware.bin` или укажите его параметром
-`-Original` (Windows) / `--original` (Linux, macOS).
+`SONYFIRMWARE=` (MSI), `-Original` (`Install.cmd`) или `--original` (Linux, macOS).
 
 Что меняет патч:
 - 1920x1080 с одного сенсора при 60 к/с (у Sony 1080p ограничен 30 к/с);
@@ -74,7 +79,7 @@ flowchart TB
     uvc["USB 05A9:058C — UVC-камера<br/>(стандартный драйвер Windows)"] --> fs
     subgraph fs["Windows Camera Frame Server"]
         dmft["ps5cam-dmft.dll — Device MFT камеры"]
-        gpu["Direct3D 11: census → SGM → отсев ненадёжных совпадений → заливка дыр<br/>→ временной фильтр → guided filter → автофокус → боке → автояркость"]
+        gpu["Direct3D 11: шумоподавление · census → SGM → отсев ненадёжных совпадений → заливка дыр<br/>→ временной фильтр → guided filter → автофокус → боке → автояркость"]
         dmft --> gpu
     end
     fs --> apps["«PS5 Camera» в Media Foundation, WinRT и DirectShow"]
@@ -92,7 +97,7 @@ Device MFT — штатный способ Windows добавить обрабо
 | [src/core](src/core) | конвейер на видеокарте, шейдеры в [src/core/shaders](src/core/shaders) |
 | [src/ctl](src/ctl) | `ps5cam-ctl`: настройки (`set mode 0` — боке, `set mode 1` — без), регистрация |
 | [src/tray](src/tray) | значок в трее для разработки (`Install.cmd -Tray`) |
-| [installer](installer) | установщики для Windows, Linux и macOS |
+| [installer](installer) | установщики: MSI ([installer/msi](installer/msi)) и ZIP для Windows, Linux, macOS; манифесты winget ([installer/winget](installer/winget)) |
 
 **Драйвер режима загрузчика.** Это встроенный в Windows WinUSB, своего кода в ядре нет. Windows
 принимает пакет драйвера только с подписью. Поэтому установщик создаёт сертификат на этом
@@ -106,8 +111,10 @@ Device MFT — штатный способ Windows добавить обрабо
 
 ```powershell
 .\build.ps1      # build\Release
-.\package.ps1    # dist\: пакеты для Windows, Linux и macOS
+.\package.ps1    # dist\: пакеты для Windows (ZIP, а с WiX и MSI), Linux и macOS
 ```
+
+Для MSI нужен .NET-инструмент WiX Toolset 5: `dotnet tool install --global wix --version 5.0.2`.
 
 Те же пакеты собирает [GitHub Actions](.github/workflows/build.yml) на каждый коммит; на тег `v*`
 они выкладываются в релиз.
@@ -138,7 +145,7 @@ GitHub Actions. Каждый релиз подписывается только 
 
 Подписываются программы и сценарии установки из `PS5CameraDriver.zip`: `ps5cam-dmft.dll`,
 `ps5cam-vcam.dll`, `ps5cam-svc.exe`, `ps5cam-ctl.exe`, `ps5cam-tray.exe`, `install.ps1`,
-`uninstall.ps1`.
+`uninstall.ps1`; пакеты MSI собираются из этих подписанных файлов.
 
 **Privacy policy.** This program will not transfer any information to other networked systems
 unless specifically requested by the user or the person installing or operating it. Программа не

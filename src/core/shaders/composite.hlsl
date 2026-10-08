@@ -5,8 +5,10 @@
 
 Texture2D<float4> BokehHalf : register(t2);
 Texture2D<float4> SecondYuv : register(t3);
-Texture2D<float> DispRaw : register(t4);     // debug views 5 and 6 (work resolution, -1 = invalid)
+// Debug views (work resolution, -1 = invalid): 5 raw, 6 checked and occlusion-filled, 7 hole-filled.
+Texture2D<float> DispRaw : register(t4);
 Texture2D<float> DispFilled : register(t5);
+Texture2D<float> DispHoles : register(t6);
 RWTexture2D<unorm float> OutY : register(u0);
 RWTexture2D<unorm float2> OutUV : register(u1);
 RWTexture2D<unorm float4> OutYuy2 : register(u2);  // outSize.x/2 x outSize.y texels: Y0 U Y1 V
@@ -49,12 +51,16 @@ float3 Shade(float2 outPx)
     {
         result = RgbToYuv(Turbo(DisparityAt(uv) / 64.0));
     }
-    else if (mode == 5 || mode == 6)
+    else if (mode == 8)
+    {
+        result = float3(DisparityAt(uv) / 64.0, 0.5, 0.5);  // for measurements: Y = 16 + 219 d / 64
+    }
+    else if (mode >= 5 && mode <= 7)
     {
         // Nearest work pixel, black where invalid.
         float2 workUv = depthMirror != 0 ? float2(1.0 - uv.x, uv.y) : uv;
         int2 wp = min(int2(workUv * float2(workSize)), int2(workSize) - 1);
-        float d = mode == 5 ? DispRaw[wp] : DispFilled[wp];
+        float d = mode == 5 ? DispRaw[wp] : mode == 6 ? DispFilled[wp] : DispHoles[wp];
         result = d < 0 ? float3(0, 0.5, 0.5) : RgbToYuv(Turbo(d / 64.0));
     }
     else if (mode == 4)
@@ -75,7 +81,7 @@ float3 Shade(float2 outPx)
     }
     // Digital exposure for dim rooms: linear gain with a soft shoulder so highlights do not clip
     // hard; chroma follows the luma ratio so colours keep their saturation.
-    if (lumaGain > 1.01 && mode != 3)
+    if (lumaGain > 1.01 && mode != 3 && mode != 8)
     {
         float y = result.x * lumaGain;
         const float knee = 0.75;

@@ -8,8 +8,10 @@
 
 #include <memory>
 #include <string>
+#include <vector>
 
 #include "cameramodes.h"
+#include "flicker.h"
 #include "pipeline.h"
 
 namespace ps5cam {
@@ -27,6 +29,11 @@ public:
     const wchar_t* WantedKey();
     const wchar_t* InputKey() const { return m_configured ? m_mode.key : L""; }
     bool Configured() const { return m_configured; }
+    // The anti-flicker value the camera should get now (see flicker.h), or -1; each request once.
+    int TakePowerLineRequest();
+    // An app set the anti-flicker (before or during its stream): none of ours until the stream ends
+    // or the setting changes.
+    void HoldPowerLine();
 
 private:
     bool EnsurePipeline();
@@ -51,6 +58,15 @@ private:
     uint32_t m_nextCalibFrame = 10;
     uint32_t m_frameCount = 0;
     LONGLONG m_lastTime = -1;  // time stamp of the frame the pipeline holds
+
+    FlickerGuard m_flicker;
+    bool m_flickerStarted = false;  // since the stream started
+    bool m_powerLineHeld = false;   // see HoldPowerLine
+    bool m_settingsLoaded = false;
+    uint32_t m_antiFlicker = 0;     // the setting it runs with
+    bool m_mains60 = false;
+    int m_powerLineRequest = -1;
+    std::vector<float> m_rowMeans;
 
     ULONGLONG m_statusTick = 0;
     uint32_t m_framesInWindow = 0;
