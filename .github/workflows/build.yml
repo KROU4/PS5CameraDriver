@@ -1,6 +1,7 @@
 # Builds the Windows, Linux and macOS packages on every push and pull request. On a v* tag the
 # Windows package is signed through SignPath.io (once the project is set up there, see
-# .signpath/README.md) and all packages are published as a GitHub release.
+# .signpath/README.md) and all packages are published as a GitHub release. Runs on demand too
+# (Actions → Build → Run workflow).
 name: Build
 
 on:
