@@ -128,11 +128,7 @@ void FrameProcessor::RefreshSettings(bool force)
         if (m_flickerStarted) m_powerLineRequest = m_flicker.Start(static_cast<AntiFlicker>(m_antiFlicker), m_mains60);
     }
     // The tray bumps Request; Handled records the last one served.
-    if (LoadCalibrationRequest() != LoadCalibrationHandled() && !m_calibPending) {
-        m_calibPending = true;
-        m_calibFailures = 0;
-        m_nextCalibFrame = m_frameCount + 10;
-    }
+    if (LoadCalibrationRequest() != LoadCalibrationHandled()) m_calib.Request(m_frameCount);
 }
 
 bool FrameProcessor::EnsurePipeline()
@@ -156,28 +152,23 @@ bool FrameProcessor::EnsurePipeline()
         StoredCalibration full = LoadCalibration(L"1080");
         if (full.valid) p->SetRectification({-full.dy, -full.rotation, 0});
     }
-    m_calibPending = !m_stereo.mono && (!cal.valid || LoadCalibrationRequest() != LoadCalibrationHandled());
-    m_calibFailures = 0;
-    m_nextCalibFrame = m_frameCount + 10;
+    m_calib.Start(!m_stereo.mono && (!cal.valid || LoadCalibrationRequest() != LoadCalibrationHandled()), m_frameCount);
     m_pipeline = std::move(p);
     return true;
 }
 
 void FrameProcessor::Calibrate(const uint8_t* yuy2, uint32_t pitch)
 {
-    if (!m_calibPending || m_stereo.mono || m_frameCount < m_nextCalibFrame) return;
+    if (m_stereo.mono || !m_calib.Due(m_frameCount)) return;
     Rectification r;
     uint32_t request = LoadCalibrationRequest();
     if (SUCCEEDED(m_pipeline->Calibrate(yuy2, pitch, &r))) {
-        m_calibPending = false;
-        m_calibFailures = 0;
+        m_calib.Succeeded();
         SaveCalibration(m_mode.key, {true, r.dy, r.rotation});
         SaveCalibrationHandled(request);
         Log(L"calibrated %ls: dy %.2f roll %.2f (score %.2f)", m_mode.key, r.dy, r.rotation, r.quality);
     } else {
-        // Dark or featureless scene: back off (1 s, 2 s, 4 s ... up to 16 s at 30 fps).
-        m_calibFailures = std::min<uint32_t>(m_calibFailures + 1, 5);
-        m_nextCalibFrame = m_frameCount + (30u << (m_calibFailures - 1)) * std::max<uint32_t>(m_fps / 30, 1);
+        m_calib.Failed(m_frameCount, m_fps);  // dark or featureless scene
     }
 }
 

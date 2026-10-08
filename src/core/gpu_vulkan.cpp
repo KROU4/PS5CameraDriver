@@ -133,6 +133,7 @@ struct Gpu::Impl {
     VkInstance instance = VK_NULL_HANDLE;
     VkPhysicalDevice physical = VK_NULL_HANDLE;
     VkPhysicalDeviceProperties props = {};
+    VkPhysicalDeviceFeatures features = {};
     VkPhysicalDeviceMemoryProperties memProps = {};
     VkDevice device = VK_NULL_HANDLE;
     VkQueue queue = VK_NULL_HANDLE;
@@ -142,7 +143,10 @@ struct Gpu::Impl {
     VkSampler sampler = VK_NULL_HANDLE;
     VkQueryPool queries = VK_NULL_HANDLE;
     bool timingWritten[kSlots] = {};
-    VkResult lost = VK_SUCCESS;  // sticky: a lost device stays lost
+    VkResult lost = VK_SUCCESS;  // sticky: a lost (or hung) device stays lost, nothing is recorded any more
+    // Sticky too: a command that could not be recorded (a kernel the driver did not build, out of
+    // memory). The frames are wrong from then on, so Map reports it and the caller rebuilds.
+    HRESULT error = S_OK;
 
     // A kernel's pipeline, made at its first dispatch from the kinds of resources given there.
     struct KernelState {
@@ -151,8 +155,14 @@ struct Gpu::Impl {
         VkPipelineLayout layout = VK_NULL_HANDLE;
         VkPipeline pipeline = VK_NULL_HANDLE;
         std::vector<char> reads, writes;  // 'i' image, 'b' buffer
-        bool mismatchLogged = false;
+        bool failed = false;              // not tried again
     } kernels[size_t(Kernel::Count)];
+
+    void Fail(HRESULT hr, const char* what)
+    {
+        if (error == S_OK) fprintf(stderr, "ps5cam gpu: %s\n", what);
+        if (error == S_OK) error = hr;
+    }
 
     enum class BatchState { Idle, Recording, Submitted };
     struct Batch {
@@ -210,12 +220,14 @@ struct Gpu::Impl {
         if (r != VK_SUCCESS) return r;
         VkMemoryRequirements req;
         vkGetBufferMemoryRequirements(device, out.buffer, &req);
-        // The CPU reads readback copies, which is slow from uncached memory.
+        // The CPU reads readback copies, which is slow from uncached memory (Map invalidates what is
+        // not coherent). What the CPU writes (uploads, constants) needs no flushes when coherent,
+        // which every desktop driver offers.
         const VkMemoryPropertyFlags visible = VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT;
-        const VkMemoryPropertyFlags want = forReading ? visible | VK_MEMORY_PROPERTY_HOST_CACHED_BIT
-                                                      : visible | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT;
+        const VkMemoryPropertyFlags coherent = visible | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT;
         VkMemoryPropertyFlags got = 0;
-        r = AllocateFor(req, want, visible, &out.memory, &got);
+        r = forReading ? AllocateFor(req, visible | VK_MEMORY_PROPERTY_HOST_CACHED_BIT, visible, &out.memory, &got)
+                       : AllocateFor(req, coherent, coherent, &out.memory, &got);
         if (r != VK_SUCCESS) return r;
         r = vkBindBufferMemory(device, out.buffer, out.memory, 0);
         if (r != VK_SUCCESS) return r;
@@ -254,12 +266,13 @@ struct Gpu::Impl {
             nullptr);
     }
 
+    // A batch that did not finish stays Submitted: its command buffer and memory may still be in use.
     bool Wait(Batch& b)
     {
         if (b.state != BatchState::Submitted) return lost == VK_SUCCESS;
         VkResult r = vkWaitForFences(device, 1, &b.fence, VK_TRUE, kWaitNs);
         if (r != VK_SUCCESS) {
-            fprintf(stderr, "ps5cam gpu: waiting for the GPU failed (%d)\n", int(r));
+            if (lost == VK_SUCCESS) fprintf(stderr, "ps5cam gpu: waiting for the GPU failed (%d)\n", int(r));
             lost = VK_ERROR_DEVICE_LOST;
             return false;
         }
@@ -267,12 +280,13 @@ struct Gpu::Impl {
         return lost == VK_SUCCESS;
     }
 
-    // The batch being recorded, started if need be.
-    Batch& Rec()
+    // The batch being recorded, started if need be; null once the device is lost.
+    Batch* Rec()
     {
+        if (lost != VK_SUCCESS) return nullptr;
         Batch& b = batches[current];
-        if (b.state == BatchState::Recording) return b;
-        Wait(b);
+        if (b.state == BatchState::Recording) return &b;
+        if (!Wait(b)) return nullptr;
         vkResetCommandBuffer(b.cmd, 0);
         vkResetDescriptorPool(device, b.pool, 0);
         b.uploadUsed = 0;
@@ -286,7 +300,7 @@ struct Gpu::Impl {
         // Dispatches without a SetConstants in this batch see the constants set last.
         memcpy(b.constants.ptr, lastConstants, sizeof(lastConstants));
         constantsUsed = false;
-        return b;
+        return &b;
     }
 
     void Submit()
@@ -324,7 +338,8 @@ struct Gpu::Impl {
 
     void ToGeneral(VkImage image)
     {
-        Batch& b = Rec();
+        Batch* b = Rec();
+        if (!b) return;
         VkImageMemoryBarrier ib = {VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER};
         ib.dstAccessMask = VK_ACCESS_MEMORY_READ_BIT | VK_ACCESS_MEMORY_WRITE_BIT;
         ib.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
@@ -332,7 +347,7 @@ struct Gpu::Impl {
         ib.srcQueueFamilyIndex = ib.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
         ib.image = image;
         ib.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
-        vkCmdPipelineBarrier(b.cmd, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, 0, 0, nullptr,
+        vkCmdPipelineBarrier(b->cmd, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, 0, 0, nullptr,
             0, nullptr, 1, &ib);
     }
 
@@ -347,6 +362,13 @@ Gpu::Impl::~Impl()
         if (instance) vkDestroyInstance(instance, nullptr);
         return;
     }
+    // A hung GPU may still use everything below and never return from vkDeviceWaitIdle: leave it all
+    // to the process's end rather than block the caller or free memory in use.
+    for (Batch& b : batches)
+        if (b.state == BatchState::Submitted && vkWaitForFences(device, 1, &b.fence, VK_TRUE, 2000000000ull) != VK_SUCCESS) {
+            fprintf(stderr, "ps5cam gpu: the GPU does not finish; its objects are left behind\n");
+            return;
+        }
     vkDeviceWaitIdle(device);
     for (auto& img : images) {
         if (img->view) vkDestroyImageView(device, img->view, nullptr);
@@ -386,6 +408,7 @@ VkResult Gpu::Impl::PickDevice()
     std::vector<VkPhysicalDevice> devices(count);
     r = vkEnumeratePhysicalDevices(instance, &count, devices.data());
     if (r != VK_SUCCESS && r != VK_INCOMPLETE) return r;
+    devices.resize(count);
 
     std::string wanted;
     if (const char* env = std::getenv("PS5CAM_GPU")) wanted = env;
@@ -402,10 +425,16 @@ VkResult Gpu::Impl::PickDevice()
         vkGetPhysicalDeviceQueueFamilyProperties(pd, &families, nullptr);
         std::vector<VkQueueFamilyProperties> qf(families);
         vkGetPhysicalDeviceQueueFamilyProperties(pd, &families, qf.data());
-        // A queue family that does compute; the timestamps matter only for the statistics.
+        // The universal queue (graphics and compute), the one every driver schedules best, else any
+        // compute queue; one with timestamps if there is a choice (they only feed the statistics).
+        auto rank = [&](uint32_t i) {
+            const VkQueueFlags f = qf[i].queueFlags;
+            if (!(f & VK_QUEUE_COMPUTE_BIT)) return -1;
+            return ((f & VK_QUEUE_GRAPHICS_BIT) ? 2 : 0) + (qf[i].timestampValidBits ? 1 : 0);
+        };
         int family = -1;
         for (uint32_t i = 0; i < families; ++i)
-            if ((qf[i].queueFlags & VK_QUEUE_COMPUTE_BIT) && (family < 0 || qf[i].timestampValidBits)) family = int(i);
+            if (rank(i) >= 0 && (family < 0 || rank(i) > rank(uint32_t(family)))) family = int(i);
         if (family < 0) continue;
         // The kernels filter these formats linearly and write the others as storage images.
         bool formats = true;
@@ -425,20 +454,26 @@ VkResult Gpu::Impl::PickDevice()
             fprintf(stderr, "ps5cam gpu: %s lacks an image format the pipeline needs\n", p.deviceName);
             continue;
         }
+        // A CPU driver (lavapipe) manages about one frame a second at full load: only when asked for
+        // by name (tests, CI).
         int score = p.deviceType == VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU     ? 4
                     : p.deviceType == VK_PHYSICAL_DEVICE_TYPE_INTEGRATED_GPU ? 3
                     : p.deviceType == VK_PHYSICAL_DEVICE_TYPE_VIRTUAL_GPU    ? 2
-                    : p.deviceType == VK_PHYSICAL_DEVICE_TYPE_CPU            ? 1
+                    : p.deviceType == VK_PHYSICAL_DEVICE_TYPE_CPU            ? -1
                                                                              : 0;
         if (!wanted.empty()) score = lower(p.deviceName).find(lower(wanted)) != std::string::npos ? 10 : -1;
         if (score > bestScore) {
             bestScore = score;
             physical = pd;
             props = p;
+            features = supported;
             queueFamily = uint32_t(family);
             timestampBits = qf[family].timestampValidBits;
         }
     }
+    if (!physical)
+        fprintf(stderr, "ps5cam gpu: no GPU with Vulkan 1.1 found%s\n",
+            wanted.empty() ? " (a CPU driver such as lavapipe is used only when PS5CAM_GPU names it)" : " by PS5CAM_GPU");
     return physical ? VK_SUCCESS : VK_ERROR_INCOMPATIBLE_DRIVER;
 }
 
@@ -510,8 +545,11 @@ HRESULT Gpu::Initialize()
     qi.queueCount = 1;
     qi.pQueuePriorities = &priority;
     // Images written as r8, rg8 and rg32ui (composite, depthout, census) need the extended formats.
+    // Robust buffer access, where offered, makes a stray index read zero as on D3D11 instead of
+    // touching other memory.
     VkPhysicalDeviceFeatures features = {};
     features.shaderStorageImageExtendedFormats = VK_TRUE;
+    features.robustBufferAccess = m->features.robustBufferAccess;
     VkDeviceCreateInfo dci = {VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO};
     dci.queueCreateInfoCount = 1;
     dci.pQueueCreateInfos = &qi;
@@ -560,11 +598,12 @@ HRESULT Gpu::Initialize()
     // Reads given as none see zeros, as a null view does in D3D11.
     HRESULT hr = CreateImage(1, 1, GpuFormat::R32_FLOAT, 0, &m->dummy);
     if (FAILED(hr)) return hr;
-    Impl::Batch& b = m->Rec();
+    Impl::Batch* b = m->Rec();
+    if (!b) return kGpuDeviceLost;
     VkClearColorValue zero = {};
     VkImageSubresourceRange range = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
-    vkCmdClearColorImage(b.cmd, m->dummy->image, VK_IMAGE_LAYOUT_GENERAL, &zero, 1, &range);
-    Impl::Barrier(b.cmd);
+    vkCmdClearColorImage(b->cmd, m->dummy->image, VK_IMAGE_LAYOUT_GENERAL, &zero, 1, &range);
+    Impl::Barrier(b->cmd);
     return S_OK;
 }
 
@@ -649,16 +688,22 @@ void Gpu::Upload(GpuImage* image, const uint8_t* data, uint32_t pitch)
 {
     const VkDeviceSize rowBytes = VkDeviceSize(image->width) * image->texelBytes;
     const VkDeviceSize bytes = rowBytes * image->height;
-    Impl::Batch* b = &m->Rec();
+    if (pitch < rowBytes) {
+        m->Fail(E_INVALIDARG, "upload: rows shorter than the image");
+        return;
+    }
+    Impl::Batch* b = m->Rec();
+    if (!b) return;
     if (b->uploadUsed + bytes > b->upload.size) {
         if (b->uploadUsed) {
             m->Submit();  // its commands still read this batch's staging memory
-            b = &m->Rec();
+            if (!(b = m->Rec())) return;
         }
         if (bytes > b->upload.size) {
             m->FreeHostBuffer(b->upload);
             if (m->MakeHostBuffer(bytes * 2, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, false, b->upload) != VK_SUCCESS) {
                 m->FreeHostBuffer(b->upload);
+                m->Fail(E_OUTOFMEMORY, "upload: no memory for the staging buffer");
                 return;
             }
         }
@@ -677,11 +722,12 @@ void Gpu::Upload(GpuImage* image, const uint8_t* data, uint32_t pitch)
 void Gpu::SetConstants(const void* data, uint32_t bytes)
 {
     bytes = std::min(bytes, kMaxConstantBytes);
-    Impl::Batch* b = &m->Rec();
+    Impl::Batch* b = m->Rec();
+    if (!b) return;
     if (m->constantsUsed) {
         if (b->constantSlot + 1 >= kConstantSlots) {
             m->Submit();
-            b = &m->Rec();
+            if (!(b = m->Rec())) return;
         } else {
             ++b->constantSlot;
         }
@@ -694,34 +740,48 @@ void Gpu::SetConstants(const void* data, uint32_t bytes)
 
 void Gpu::ClearUint(GpuBuffer* buffer)
 {
-    Impl::Batch& b = m->Rec();
-    vkCmdFillBuffer(b.cmd, buffer->buffer, 0, VK_WHOLE_SIZE, 0);
-    Impl::Barrier(b.cmd);
+    Impl::Batch* b = m->Rec();
+    if (!b) return;
+    vkCmdFillBuffer(b->cmd, buffer->buffer, 0, VK_WHOLE_SIZE, 0);
+    Impl::Barrier(b->cmd);
 }
 
 void Gpu::ClearFloat(GpuImage* image, float value)
 {
-    Impl::Batch& b = m->Rec();
+    Impl::Batch* b = m->Rec();
+    if (!b) return;
     VkClearColorValue color = {};
     for (float& f : color.float32) f = value;
     VkImageSubresourceRange range = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
-    vkCmdClearColorImage(b.cmd, image->image, VK_IMAGE_LAYOUT_GENERAL, &color, 1, &range);
-    Impl::Barrier(b.cmd);
+    vkCmdClearColorImage(b->cmd, image->image, VK_IMAGE_LAYOUT_GENERAL, &color, 1, &range);
+    Impl::Barrier(b->cmd);
 }
 
 Gpu::Impl::KernelState* Gpu::Impl::Prepare(Kernel kernel, std::initializer_list<GpuRef> reads,
     std::initializer_list<GpuRef> writes)
 {
     KernelState& k = kernels[size_t(kernel)];
+    if (k.failed) return nullptr;
     std::vector<char> r, w;
     for (const GpuRef& ref : reads) r.push_back(ref.buffer ? 'b' : 'i');  // none: the dummy image
     for (const GpuRef& ref : writes) w.push_back(ref.buffer ? 'b' : 'i');
     if (k.pipeline) {
         if (r == k.reads && w == k.writes) return &k;
-        if (!k.mismatchLogged) fprintf(stderr, "ps5cam gpu: kernel %u bound with other resource kinds\n", unsigned(kernel));
-        k.mismatchLogged = true;
+        Fail(E_INVALIDARG, "a kernel was bound with other kinds of resources than at its first use");
         return nullptr;
     }
+    // Made once: a failure is final for this Gpu (the caller rebuilds it).
+    auto failed = [&](const char* what, VkResult res) {
+        fprintf(stderr, "ps5cam gpu: kernel %u: %s failed (%d)\n", unsigned(kernel), what, int(res));
+        if (k.layout) vkDestroyPipelineLayout(device, k.layout, nullptr);
+        if (k.setLayout) vkDestroyDescriptorSetLayout(device, k.setLayout, nullptr);
+        k.layout = VK_NULL_HANDLE;
+        k.setLayout = VK_NULL_HANDLE;
+        k.pipeline = VK_NULL_HANDLE;
+        k.failed = true;
+        Fail(ToHresult(res), "a kernel could not be built");
+        return nullptr;
+    };
     std::vector<VkDescriptorSetLayoutBinding> bindings;
     auto add = [&](uint32_t binding, VkDescriptorType type) {
         VkDescriptorSetLayoutBinding lb = {};
@@ -740,23 +800,21 @@ Gpu::Impl::KernelState* Gpu::Impl::Prepare(Kernel kernel, std::initializer_list<
     VkDescriptorSetLayoutCreateInfo dli = {VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO};
     dli.bindingCount = uint32_t(bindings.size());
     dli.pBindings = bindings.data();
-    if (vkCreateDescriptorSetLayout(device, &dli, nullptr, &k.setLayout) != VK_SUCCESS) return nullptr;
+    VkResult res = vkCreateDescriptorSetLayout(device, &dli, nullptr, &k.setLayout);
+    if (res != VK_SUCCESS) return failed("descriptor set layout", res);
     VkPipelineLayoutCreateInfo pli = {VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO};
     pli.setLayoutCount = 1;
     pli.pSetLayouts = &k.setLayout;
-    if (vkCreatePipelineLayout(device, &pli, nullptr, &k.layout) != VK_SUCCESS) return nullptr;
+    res = vkCreatePipelineLayout(device, &pli, nullptr, &k.layout);
+    if (res != VK_SUCCESS) return failed("pipeline layout", res);
     VkComputePipelineCreateInfo cpi = {VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO};
     cpi.stage.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
     cpi.stage.stage = VK_SHADER_STAGE_COMPUTE_BIT;
     cpi.stage.module = k.module;
     cpi.stage.pName = "main";
     cpi.layout = k.layout;
-    VkResult res = vkCreateComputePipelines(device, VK_NULL_HANDLE, 1, &cpi, nullptr, &k.pipeline);
-    if (res != VK_SUCCESS) {
-        fprintf(stderr, "ps5cam gpu: kernel %u: pipeline creation failed (%d)\n", unsigned(kernel), int(res));
-        k.pipeline = VK_NULL_HANDLE;
-        return nullptr;
-    }
+    res = vkCreateComputePipelines(device, VK_NULL_HANDLE, 1, &cpi, nullptr, &k.pipeline);
+    if (res != VK_SUCCESS) return failed("pipeline", res);
     k.reads = std::move(r);
     k.writes = std::move(w);
     return &k;
@@ -765,9 +823,15 @@ Gpu::Impl::KernelState* Gpu::Impl::Prepare(Kernel kernel, std::initializer_list<
 void Gpu::Dispatch(Kernel kernel, std::initializer_list<GpuRef> reads, std::initializer_list<GpuRef> writes, uint32_t x,
     uint32_t y, uint32_t z)
 {
+    Impl::Batch* b = m->Rec();
+    if (!b) return;
     Impl::KernelState* k = m->Prepare(kernel, reads, writes);
     if (!k) return;
-    Impl::Batch* b = &m->Rec();
+    for (const GpuRef& ref : writes)
+        if (!ref.image && !ref.buffer) {
+            m->Fail(E_INVALIDARG, "a kernel was given none for an image it writes");
+            return;
+        }
     VkDescriptorSet set = VK_NULL_HANDLE;
     VkDescriptorSetAllocateInfo ai = {VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO};
     ai.descriptorSetCount = 1;
@@ -776,9 +840,12 @@ void Gpu::Dispatch(Kernel kernel, std::initializer_list<GpuRef> reads, std::init
     if (b->sets >= kSetsPerBatch || vkAllocateDescriptorSets(m->device, &ai, &set) != VK_SUCCESS) {
         // Out of descriptors: carry on in a new batch, with the same constants.
         m->Submit();
-        b = &m->Rec();
+        if (!(b = m->Rec())) return;
         ai.descriptorPool = b->pool;
-        if (vkAllocateDescriptorSets(m->device, &ai, &set) != VK_SUCCESS) return;
+        if (vkAllocateDescriptorSets(m->device, &ai, &set) != VK_SUCCESS) {
+            m->Fail(E_OUTOFMEMORY, "no descriptor set even in a fresh batch");
+            return;
+        }
     }
     ++b->sets;
 
@@ -817,11 +884,9 @@ void Gpu::Dispatch(Kernel kernel, std::initializer_list<GpuRef> reads, std::init
         if (ref.buffer) {
             buffers.push_back({ref.buffer->buffer, 0, VK_WHOLE_SIZE});
             write(kBindWrite + i, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER).pBufferInfo = &buffers.back();
-        } else if (ref.image) {
+        } else {
             images.push_back({VK_NULL_HANDLE, ref.image->view, VK_IMAGE_LAYOUT_GENERAL});
             write(kBindWrite + i, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE).pImageInfo = &images.back();
-        } else {
-            return;  // a kernel always gets the images it writes
         }
         ++i;
     }
@@ -838,36 +903,37 @@ void Gpu::Unbind() {}
 
 void Gpu::CopyToReadback(GpuRef r, int slot)
 {
-    Impl::Batch& b = m->Rec();
+    Impl::Batch* b = m->Rec();
+    if (!b) return;
     if (r.image) {
         VkBufferImageCopy region = {};
         region.imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
         region.imageExtent = {r.image->width, r.image->height, 1};
-        vkCmdCopyImageToBuffer(b.cmd, r.image->image, VK_IMAGE_LAYOUT_GENERAL, r.image->readback[slot].buffer, 1, &region);
-        r.image->readbackBatch[slot] = b.serial;
+        vkCmdCopyImageToBuffer(b->cmd, r.image->image, VK_IMAGE_LAYOUT_GENERAL, r.image->readback[slot].buffer, 1, &region);
+        r.image->readbackBatch[slot] = b->serial;
     } else if (r.buffer) {
         VkBufferCopy region = {0, 0, r.buffer->bytes};
-        vkCmdCopyBuffer(b.cmd, r.buffer->buffer, r.buffer->readback[slot].buffer, 1, &region);
-        r.buffer->readbackBatch[slot] = b.serial;
+        vkCmdCopyBuffer(b->cmd, r.buffer->buffer, r.buffer->readback[slot].buffer, 1, &region);
+        r.buffer->readbackBatch[slot] = b->serial;
     }
-    Impl::HostBarrier(b.cmd);
-    Impl::Barrier(b.cmd);
+    Impl::HostBarrier(b->cmd);
+    Impl::Barrier(b->cmd);
 }
 
 void Gpu::BeginTiming(int slot)
 {
-    Impl::Batch& b = m->Rec();
+    Impl::Batch* b = m->Rec();
     m->timingWritten[slot] = false;
-    if (!m->queries) return;
-    vkCmdResetQueryPool(b.cmd, m->queries, uint32_t(slot) * 2, 2);
-    vkCmdWriteTimestamp(b.cmd, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, m->queries, uint32_t(slot) * 2);
+    if (!b || !m->queries) return;
+    vkCmdResetQueryPool(b->cmd, m->queries, uint32_t(slot) * 2, 2);
+    vkCmdWriteTimestamp(b->cmd, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, m->queries, uint32_t(slot) * 2);
 }
 
 void Gpu::EndTiming(int slot)
 {
-    Impl::Batch& b = m->Rec();
-    if (!m->queries) return;
-    vkCmdWriteTimestamp(b.cmd, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, m->queries, uint32_t(slot) * 2 + 1);
+    Impl::Batch* b = m->Rec();
+    if (!b || !m->queries) return;
+    vkCmdWriteTimestamp(b->cmd, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, m->queries, uint32_t(slot) * 2 + 1);
     m->timingWritten[slot] = true;
 }
 
@@ -882,6 +948,7 @@ HRESULT Gpu::Map(GpuRef r, int slot, GpuMapped* out)
     if (!rb || !rb->ptr) return E_INVALIDARG;
     const uint64_t serial = r.image ? r.image->readbackBatch[slot] : r.buffer->readbackBatch[slot];
     if (!m->WaitSerial(serial)) return kGpuDeviceLost;
+    if (FAILED(m->error)) return m->error;
     if (!rb->coherent) {
         VkMappedMemoryRange range = {VK_STRUCTURE_TYPE_MAPPED_MEMORY_RANGE};
         range.memory = rb->memory;

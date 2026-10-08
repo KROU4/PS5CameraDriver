@@ -7,6 +7,8 @@
 #include <wrl/client.h>
 
 #include <cstring>
+#include <cwctype>
+#include <string>
 #include <vector>
 
 #include "shaders/aggregate.h"
@@ -115,20 +117,27 @@ Gpu::~Gpu() = default;
 HRESULT Gpu::Initialize()
 {
     D3D_FEATURE_LEVEL levels[] = {D3D_FEATURE_LEVEL_11_1, D3D_FEATURE_LEVEL_11_0};
-    // PS5CAM_GPU picks an adapter by a part of its name (e.g. "Basic Render" for the software
-    // rasteriser), as on Vulkan; by default the system's default hardware adapter.
+    // PS5CAM_GPU picks an adapter by a part of its name, any case (e.g. "basic render" for the
+    // software rasteriser), as on Vulkan; without a match, or by default, the default hardware
+    // adapter (a variable left over from a test must not cost the camera its picture).
     ComPtr<IDXGIAdapter1> chosen;
     wchar_t wanted[128];
-    if (GetEnvironmentVariableW(L"PS5CAM_GPU", wanted, 128) && wanted[0]) {
+    const DWORD length = GetEnvironmentVariableW(L"PS5CAM_GPU", wanted, 128);
+    if (length > 0 && length < 128) {
+        auto lower = [](std::wstring s) {
+            for (wchar_t& c : s) c = towlower(c);
+            return s;
+        };
+        const std::wstring needle = lower(wanted);
         ComPtr<IDXGIFactory1> factory;
         if (SUCCEEDED(CreateDXGIFactory1(IID_PPV_ARGS(&factory)))) {
             ComPtr<IDXGIAdapter1> adapter;
             for (UINT i = 0; !chosen && factory->EnumAdapters1(i, &adapter) == S_OK; ++i) {
                 DXGI_ADAPTER_DESC1 desc;
-                if (SUCCEEDED(adapter->GetDesc1(&desc)) && wcsstr(desc.Description, wanted)) chosen = adapter;
+                if (SUCCEEDED(adapter->GetDesc1(&desc)) && lower(desc.Description).find(needle) != std::wstring::npos)
+                    chosen = adapter;
             }
         }
-        if (!chosen) return DXGI_ERROR_NOT_FOUND;
     }
     HRESULT hr = D3D11CreateDevice(chosen.Get(), chosen ? D3D_DRIVER_TYPE_UNKNOWN : D3D_DRIVER_TYPE_HARDWARE, nullptr, 0,
         levels, ARRAYSIZE(levels), D3D11_SDK_VERSION, &m->device, nullptr, &m->ctx);
@@ -263,7 +272,8 @@ void Gpu::SetConstants(const void* data, uint32_t bytes)
         cb.BindFlags = D3D11_BIND_CONSTANT_BUFFER;
         cb.CPUAccessFlags = D3D11_CPU_ACCESS_WRITE;
         m->constants.Reset();
-        if (FAILED(m->device->CreateBuffer(&cb, nullptr, &m->constants))) return;
+        m->constantBytes = 0;
+        if (FAILED(m->device->CreateBuffer(&cb, nullptr, &m->constants)) || !m->constants) return;
         m->constantBytes = cb.ByteWidth;
         ID3D11Buffer* cbs[] = {m->constants.Get()};
         m->ctx->CSSetConstantBuffers(0, 1, cbs);

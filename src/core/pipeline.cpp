@@ -497,6 +497,10 @@ HRESULT StereoPipeline::Process(const uint8_t* yuy2, uint32_t yuy2Pitch, const E
         GpuMapped m;
         HRESULT hr = g.Map(image, read, &m);
         if (FAILED(hr)) return hr;
+        if (m.rowPitch < rowBytes) {
+            g.Unmap(image, read);
+            return E_FAIL;
+        }
         for (uint32_t y = 0; y < rows; ++y)
             memcpy(out + size_t(y) * pitch, m.data + size_t(y) * m.rowPitch, rowBytes);
         g.Unmap(image, read);

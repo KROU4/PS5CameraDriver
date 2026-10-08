@@ -6,21 +6,14 @@
 #include <cstdint>
 #include <string>
 
+#include "../core/picture.h"
+
 namespace ps5cam {
 
-struct Settings {
-    uint32_t mode = 0;        // ViewMode
-    uint32_t blur = 60;       // 0..100
-    bool autoFocus = true;
-    uint32_t focus = 50;      // manual focus 0 (far) .. 100 (near)
+// The picture settings shared with Linux (mode, blur, focus, ... anti-flicker) and Windows' own.
+struct Settings : PictureSettings {
     bool prefer60 = true;     // list 60 fps media types first
     bool fullHdOnly = true;   // offer apps 1920x1080 at 60 fps only (else also 1280x720 and 30 fps)
-    uint32_t highlights = 150;  // bokeh highlight gain x100
-    uint32_t temporal = 40;   // temporal weight x100
-    bool autoBrightness = true;
-    uint32_t maxGain = 60;    // x10
-    uint32_t denoise = 70;    // temporal noise reduction 0 (off) .. 100
-    uint32_t antiFlicker = 0; // AntiFlicker: 0 auto, 1 50 Hz, 2 60 Hz, 3 off
     uint32_t blurStyle = 0;   // kBlurPortrait / kBlurStandard: what Windows' "Background effects" chose
     uint32_t mainsHz = 0;     // 50 / 60 by the signed-in user's region (tray, installer); 0 unknown
     bool depthCamera = false; // the "PS5 Camera Depth" virtual camera (the service registers it)

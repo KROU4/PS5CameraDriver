@@ -19,6 +19,7 @@
 #include <vector>
 
 #include "../common/depthpublish.h"
+#include "calibschedule.h"
 #include "engine.h"
 #include "flicker.h"
 #include "pipeline.h"
@@ -95,9 +96,7 @@ private:
     bool m_mains60 = false;
     int m_powerLineRequest = -1;  // control value to send (ApplyPendingPowerLine), -1 none
     std::vector<float> m_rowMeans;
-    bool m_calibPending = false;
-    uint32_t m_calibFailures = 0;
-    uint32_t m_nextCalibFrame = 10;
+    CalibrationSchedule m_calib;
     uint32_t m_frameCount = 0;
     uint32_t m_badFrames = 0;
     // Raw frames for tuning (ps5cam-ctl record N), written on the reader thread under m_lock.

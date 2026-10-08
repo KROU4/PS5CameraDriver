@@ -11,6 +11,7 @@
 #include <vector>
 
 #include "../common/depthpublish.h"
+#include "calibschedule.h"
 #include "cameramodes.h"
 #include "flicker.h"
 #include "pipeline.h"
@@ -54,9 +55,7 @@ private:
 
     EffectSettings m_effect;
     ULONGLONG m_settingsTick = 0;
-    bool m_calibPending = false;
-    uint32_t m_calibFailures = 0;
-    uint32_t m_nextCalibFrame = 10;
+    CalibrationSchedule m_calib;
     uint32_t m_frameCount = 0;
     LONGLONG m_lastTime = -1;  // time stamp of the frame the pipeline holds
 
