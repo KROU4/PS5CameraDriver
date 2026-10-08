@@ -1,9 +1,11 @@
 # Builds Release and assembles the installable packages: dist\PS5CameraDriver (Windows) and
-# dist\PS5CameraDriver-linux / -macos (firmware loader only), each with a .zip, and the Windows MSI
-# packages (dist\PS5CameraDriver.msi, -ru.msi) when the WiX tool is there (or -Msi demands them).
-# No package carries Sony's firmware: the installers build it from the original image and
-# firmware\ps5cam-firmware.json. The version comes from VERSION.
-param([switch]$NoBuild, [switch]$Msi, [switch]$NoMsi)
+# dist\PS5CameraDriver-linux / -macos (firmware loader; Linux also the bokeh daemon's installer),
+# each with a .zip, and the Windows MSI packages (dist\PS5CameraDriver.msi, -ru.msi) when the WiX
+# tool is there (or -Msi demands them). No package carries Sony's firmware: the installers build it
+# from the original image and firmware\ps5cam-firmware.json. The version comes from VERSION.
+#   -LinuxDaemon PATH  the ps5cam-bokehd binary built on Linux, put into the Linux package (CI adds
+#                      it to the release package itself)
+param([switch]$NoBuild, [switch]$Msi, [switch]$NoMsi, [string]$LinuxDaemon)
 $ErrorActionPreference = 'Stop'
 $root = $PSScriptRoot
 $version = (Get-Content (Join-Path $root 'VERSION') -TotalCount 1).Trim()
@@ -48,6 +50,7 @@ foreach ($os in 'linux', 'macos') {
     New-Item -ItemType Directory -Force $d | Out-Null
     Copy-Item (Join-Path $root "installer\$os\*") $d
     Copy-Item (Join-Path $root 'installer\unix\ps5cam_fwload.py'), $patch $d
+    if ($os -eq 'linux' -and $LinuxDaemon) { Copy-Item $LinuxDaemon (Join-Path $d 'ps5cam-bokehd') }
     $z = "$d.zip"
     if (Test-Path $z) { Remove-Item $z -Force }
     Compress-Archive -Path "$d\*" -DestinationPath $z

@@ -8,7 +8,7 @@
 [![Release](https://img.shields.io/github/v/release/KROU4/PS5CameraDriver)](https://github.com/KROU4/PS5CameraDriver/releases/latest)
 [![License: GPL-3.0](https://img.shields.io/badge/license-GPL--3.0-blue)](LICENSE)
 ![Windows 11](https://img.shields.io/badge/Windows-11-0078D4?logo=windows11&logoColor=white)
-![Linux](https://img.shields.io/badge/Linux-no%20bokeh-FCC624?logo=linux&logoColor=black)
+![Linux](https://img.shields.io/badge/Linux-bokeh%20on%20Vulkan%20(experimental)-FCC624?logo=linux&logoColor=black)
 ![macOS](https://img.shields.io/badge/macOS-no%20bokeh-000000?logo=apple&logoColor=white)
 
 **English** · [Русский](README.ru.md)
@@ -28,7 +28,9 @@ Telegram, OBS, browsers and any other program.
   Cameras → Background effects (standard or portrait blur). Noise reduction and automatic
   anti-flicker help in dim rooms. Optionally a second camera, "PS5 Camera Depth", shows the depth
   map or a matte of the person, e.g. for OBS.
-- **Linux and macOS:** the camera without bokeh, native 1920x1080 at 30 and 60 fps.
+- **Linux:** native 1920x1080 at 30 and 60 fps, and (experimental, x86_64) the same bokeh computed
+  on the GPU through Vulkan: a daemon reads the camera and feeds a v4l2loopback camera "PS5 Camera".
+- **macOS:** the camera without bokeh, native 1920x1080 at 30 and 60 fps.
 
 ## Install
 
@@ -48,7 +50,9 @@ PS5 Camera → Camera effects. Unattended installation:
 same without MSI. Details, modes, settings and troubleshooting:
 [installer/README.txt](installer/README.txt).
 
-**Linux** (systemd and udev required): `sudo bash install.sh` from `PS5CameraDriver-linux.zip`.
+**Linux** (systemd and udev required): `sudo bash install.sh` from `PS5CameraDriver-linux.zip`;
+`--bokeh on` adds the bokeh (x86_64, a GPU with Vulkan 1.1, v4l2loopback, which the installer
+installs), `--bokeh off` the plain camera. Details: [installer/linux/README.txt](installer/linux/README.txt).
 
 **macOS** (Command Line Tools required: `xcode-select --install`): `sudo bash install.sh` from
 `PS5CameraDriver-macos.zip`.
@@ -95,7 +99,8 @@ previous variant with a separate virtual camera is still available: `Install.cmd
 | [src/service](src/service) | service: uploads the firmware, attaches the effect to the camera on every plug-in |
 | [src/dmft](src/dmft) | Device MFT: the effect inside the camera |
 | [src/vcam](src/vcam) | virtual cameras: the `-VirtualCamera` variant and "PS5 Camera Depth" |
-| [src/core](src/core) | GPU pipeline, shaders in [src/core/shaders](src/core/shaders) |
+| [src/core](src/core) | GPU pipeline on Direct3D 11 (Windows) or Vulkan (Linux), shaders in [src/core/shaders](src/core/shaders) |
+| [src/linux](src/linux) | `ps5cam-bokehd`: bokeh on Linux (V4L2 capture → Vulkan → v4l2loopback) |
 | [src/ctl](src/ctl) | `ps5cam-ctl`: settings (`set mode 0` — bokeh, `set mode 1` — none), registration |
 | [src/tray](src/tray) | tray icon for development (`Install.cmd -Tray`) |
 | [installer](installer) | installers: MSI ([installer/msi](installer/msi)) and ZIP for Windows, Linux, macOS; winget manifests ([installer/winget](installer/winget)) |
@@ -117,6 +122,14 @@ Requires Windows 11, Visual Studio 2022 Build Tools (C++) and Windows SDK 10.0.2
 
 The MSI packages need the WiX Toolset 5 .NET tool: `dotnet tool install --global wix --version 5.0.2`.
 
+Linux (the bokeh daemon; Ubuntu 22.04 or newer): CMake 3.25+, Ninja, `libvulkan-dev` and `dxc` from
+the [DirectXShaderCompiler releases](https://github.com/microsoft/DirectXShaderCompiler/releases)
+(it compiles the same HLSL shaders to SPIR-V):
+
+```bash
+cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release && cmake --build build
+```
+
 [GitHub Actions](.github/workflows/build.yml) builds the same packages on every commit and
 publishes them as a release for `v*` tags.
 
@@ -124,8 +137,10 @@ publishes them as a release for `v*` tags.
 
 - One program uses the camera at a time, as with any webcam.
 - The camera measures depth from about half a metre: anything closer is blurred unevenly.
-- Bokeh is Windows-only. On macOS it would need a camera system extension, which macOS only runs
-  with an Apple developer signature.
+- Bokeh on Linux is experimental: the Vulkan pipeline gives the same picture as Windows on the
+  same GPU (checked frame by frame), but it has seen little use with the camera on Linux yet.
+- No bokeh on macOS: it would need a camera system extension, which macOS only runs with an Apple
+  developer signature.
 
 ## Contributing
 

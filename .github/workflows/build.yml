@@ -1,8 +1,10 @@
-# Builds the Windows (ZIP and MSI), Linux and macOS packages on every push and pull request. On a
-# v* tag (which must match VERSION) the Windows files are signed through SignPath.io (once the
-# project is set up there, see .signpath/README.md), all packages are published as a GitHub
-# release and the winget manifests for it are left as an artifact. Runs on demand too
-# (Actions → Build → Run workflow).
+# Builds the Windows (ZIP and MSI), Linux and macOS packages and the Linux bokeh daemon on every
+# push and pull request. On a v* tag (which must match VERSION) the Windows files are signed through
+# SignPath.io (once the project is set up there, see .signpath/README.md), the daemon goes into the
+# Linux package, all packages are published as a GitHub release with their SHA-256 sums and the
+# winget manifests for it are left as an artifact. Runs on demand too (Actions → Build → Run
+# workflow). Actions are pinned to full commit hashes (Dependabot keeps them current); only the
+# release job may write to the repository.
 name: Build
 
 on:
@@ -13,14 +15,18 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: write  # release upload
-  actions: read    # SignPath reads the build artifact and job details
+  contents: read
 
 jobs:
   build:
     runs-on: windows-2025
+    permissions:
+      contents: read
+      actions: read  # SignPath reads the build artifact and job details
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
+        with:
+          persist-credentials: false
 
       - name: Check the version
         if: startsWith(github.ref, 'refs/tags/v')
@@ -44,7 +50,7 @@ jobs:
         run: ./package.ps1 -NoBuild -Msi
 
       - name: Upload MSI packages
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4.6.2
         with:
           name: PS5CameraDriver-msi
           path: |
@@ -54,14 +60,14 @@ jobs:
 
       - name: Upload unsigned Windows package
         id: unsigned
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4.6.2
         with:
           name: PS5CameraDriver-windows-unsigned
           path: dist/PS5CameraDriver/
           if-no-files-found: error
 
       - name: Upload Linux and macOS packages
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4.6.2
         with:
           name: PS5CameraDriver-linux-macos
           path: |
@@ -74,7 +80,7 @@ jobs:
       - name: Sign Windows package (SignPath)
         id: sign
         if: startsWith(github.ref, 'refs/tags/v') && vars.SIGNPATH_ORGANIZATION_ID != ''
-        uses: signpath/github-action-submit-signing-request@v3
+        uses: signpath/github-action-submit-signing-request@f6d04783b4569d051e0c80105fe66e82819d0092  # v3.0
         with:
           api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
           organization-id: ${{ vars.SIGNPATH_ORGANIZATION_ID }}
@@ -89,10 +95,12 @@ jobs:
         if: steps.sign.outcome == 'success'
         shell: pwsh
         run: |
+          $signatures = Get-AuthenticodeSignature dist/signed/*.dll, dist/signed/*.exe, dist/signed/*.ps1
+          $signatures | Format-Table Status, @{n = 'File'; e = { Split-Path $_.Path -Leaf } } -AutoSize
+          $bad = $signatures | Where-Object Status -ne 'Valid'
+          if ($bad) { throw "not validly signed: $(($bad | ForEach-Object { Split-Path $_.Path -Leaf }) -join ', ')" }
           Remove-Item dist/PS5CameraDriver.zip -Force
           Compress-Archive -Path dist/signed/* -DestinationPath dist/PS5CameraDriver.zip
-          Get-AuthenticodeSignature dist/signed/*.dll, dist/signed/*.exe, dist/signed/*.ps1 |
-            Format-Table Status, @{n = 'File'; e = { Split-Path $_.Path -Leaf } } -AutoSize
           # The MSI packages again, now with the signed files inside. The .msi files themselves are
           # not signed yet: that needs a second signing request for them.
           ./installer/msi/build-msi.ps1 -Dist dist/signed
@@ -104,15 +112,105 @@ jobs:
 
       - name: Upload winget manifests
         if: startsWith(github.ref, 'refs/tags/v')
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4.6.2
         with:
           name: winget-manifests
           path: dist/winget/
           if-no-files-found: error
 
-      - name: Publish release
+      - name: Upload release files
         if: startsWith(github.ref, 'refs/tags/v')
-        uses: softprops/action-gh-release@v2
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4.6.2
+        with:
+          name: release-windows
+          path: |
+            dist/PS5CameraDriver.msi
+            dist/PS5CameraDriver-ru.msi
+            dist/PS5CameraDriver.zip
+            dist/PS5CameraDriver-linux.zip
+            dist/PS5CameraDriver-macos.zip
+          if-no-files-found: error
+
+  # Linux bokeh: the pipeline on Vulkan (shaders compiled by dxc) and ps5cam-bokehd. Built on the
+  # oldest supported Ubuntu for the widest glibc compatibility; the tests run it on lavapipe (a CPU
+  # Vulkan driver, chosen by name) under the Vulkan validation layers.
+  linux:
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: read
+    env:
+      DXC_URL: https://github.com/microsoft/DirectXShaderCompiler/releases/download/v1.8.2505/linux_dxc_2025_05_24.x86_64.tar.gz
+      DXC_SHA256: b99655f65215287825fcdd49102b17e2a1608eff79ffaf9457514c2676892aa5
+      PS5CAM_GPU: llvmpipe
+      PS5CAM_VK_VALIDATION: '1'
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
+        with:
+          persist-credentials: false
+
+      - name: Tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends ninja-build libvulkan-dev mesa-vulkan-drivers vulkan-validationlayers
+          curl -fsSL -o /tmp/dxc.tgz "$DXC_URL"
+          echo "$DXC_SHA256  /tmp/dxc.tgz" | sha256sum -c -
+          sudo mkdir -p /opt/dxc
+          sudo tar -xzf /tmp/dxc.tgz -C /opt/dxc
+          echo /opt/dxc/bin >> "$GITHUB_PATH"
+
+      - name: Build
+        run: |
+          cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+          cmake --build build
+
+      - name: Tests
+        run: ctest --test-dir build --output-on-failure
+
+      - name: Smoke test on lavapipe
+        run: |
+          # Three frames of noise in the camera's stereo format: no calibration, but every kernel runs,
+          # through both outputs; the first Process call only primes the pipeline.
+          head -c $((5326848 * 3)) /dev/urandom > /tmp/noise.clip
+          ./build/src/linux/ps5cam-bokehd --input /tmp/noise.clip --output /tmp/out.nv12 > /tmp/nv12.log 2>&1
+          ./build/src/linux/ps5cam-bokehd --input /tmp/noise.clip --output /tmp/out.yuy2 --format yuy2 --depthplane 1 > /tmp/yuy2.log 2>&1
+          cat /tmp/nv12.log /tmp/yuy2.log
+          test "$(stat -c %s /tmp/out.nv12)" -eq $((1920 * 1080 * 3 / 2 * 2))
+          test "$(stat -c %s /tmp/out.yuy2)" -eq $((1920 * 1080 * 2 * 2))
+          test "$(stat -c %s /tmp/out.yuy2.depth)" -eq $((1920 * 1080 * 2))
+          if grep -q 'Validation Error' /tmp/nv12.log /tmp/yuy2.log; then exit 1; fi
+
+      - name: Upload ps5cam-bokehd
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4.6.2
+        with:
+          name: ps5cam-bokehd
+          path: build/src/linux/ps5cam-bokehd
+          if-no-files-found: error
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [build, linux]
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: write  # the release
+    steps:
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093  # v4.3.0
+        with:
+          name: release-windows
+          path: dist
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093  # v4.3.0
+        with:
+          name: ps5cam-bokehd
+          path: bin
+
+      - name: Add the bokeh daemon to the Linux package
+        run: |
+          chmod 755 bin/ps5cam-bokehd
+          (cd bin && zip -X ../dist/PS5CameraDriver-linux.zip ps5cam-bokehd)
+          (cd dist && sha256sum PS5CameraDriver.msi PS5CameraDriver-ru.msi PS5CameraDriver.zip \
+            PS5CameraDriver-linux.zip PS5CameraDriver-macos.zip > SHA256SUMS && cat SHA256SUMS)
+
+      - name: Publish release
+        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65  # v2.6.2
         with:
           files: |
             dist/PS5CameraDriver.msi
@@ -120,4 +218,5 @@ jobs:
             dist/PS5CameraDriver.zip
             dist/PS5CameraDriver-linux.zip
             dist/PS5CameraDriver-macos.zip
+            dist/SHA256SUMS
           fail_on_unmatched_files: true

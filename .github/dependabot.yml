@@ -1,0 +1,10 @@
+# Keeps the actions in .github/workflows, pinned to commit hashes, up to date through pull requests.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: monthly
+    groups:
+      actions:
+        patterns: ['*']

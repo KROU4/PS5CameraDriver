@@ -8,7 +8,7 @@
 [![Релиз](https://img.shields.io/github/v/release/KROU4/PS5CameraDriver?label=%D1%80%D0%B5%D0%BB%D0%B8%D0%B7)](https://github.com/KROU4/PS5CameraDriver/releases/latest)
 [![Лицензия: GPL-3.0](https://img.shields.io/badge/%D0%BB%D0%B8%D1%86%D0%B5%D0%BD%D0%B7%D0%B8%D1%8F-GPL--3.0-blue)](LICENSE)
 ![Windows 11](https://img.shields.io/badge/Windows-11-0078D4?logo=windows11&logoColor=white)
-![Linux](https://img.shields.io/badge/Linux-%D0%B1%D0%B5%D0%B7%20%D0%B1%D0%BE%D0%BA%D0%B5-FCC624?logo=linux&logoColor=black)
+![Linux](https://img.shields.io/badge/Linux-%D0%B1%D0%BE%D0%BA%D0%B5%20%D0%BD%D0%B0%20Vulkan%20%28%D1%8D%D0%BA%D1%81%D0%BF%D0%B5%D1%80%D0%B8%D0%BC%D0%B5%D0%BD%D1%82%29-FCC624?logo=linux&logoColor=black)
 ![macOS](https://img.shields.io/badge/macOS-%D0%B1%D0%B5%D0%B7%20%D0%B1%D0%BE%D0%BA%D0%B5-000000?logo=apple&logoColor=white)
 
 [English](README.md) · **Русский**
@@ -28,7 +28,10 @@ Telegram, OBS, браузерах и любых других программа�
   (стандартное или портретное размытие). В тёмной комнате помогают шумоподавление и автоматическая
   защита от мерцания ламп. По желанию есть вторая камера «PS5 Camera Depth» с картой глубины или
   маской человека, например для OBS.
-- **Linux и macOS:** камера без боке, родные 1920x1080 при 30 и 60 к/с.
+- **Linux:** родные 1920x1080 при 30 и 60 к/с, а также (экспериментально, x86_64) то же боке, которое
+  считает видеокарта через Vulkan: служба читает камеру и отдаёт картинку в камеру v4l2loopback
+  «PS5 Camera».
+- **macOS:** камера без боке, родные 1920x1080 при 30 и 60 к/с.
 
 ## Установка
 
@@ -48,7 +51,9 @@ Telegram, OBS, браузерах и любых других программа�
 MSI. Подробности, режимы, настройки и решение проблем — в
 [installer/README.ru.txt](installer/README.ru.txt).
 
-**Linux** (нужны systemd и udev): `sudo bash install.sh` из `PS5CameraDriver-linux.zip`.
+**Linux** (нужны systemd и udev): `sudo bash install.sh` из `PS5CameraDriver-linux.zip`;
+`--bokeh on` добавляет боке (x86_64, видеокарта с Vulkan 1.1, v4l2loopback — его установщик поставит
+сам), `--bokeh off` — обычная камера. Подробности — в [installer/linux/README.ru.txt](installer/linux/README.ru.txt).
 
 **macOS** (нужны Command Line Tools: `xcode-select --install`): `sudo bash install.sh` из
 `PS5CameraDriver-macos.zip`.
@@ -95,7 +100,8 @@ Device MFT — штатный способ Windows добавить обрабо
 | [src/service](src/service) | служба: загрузка прошивки, подключение эффекта к камере при каждом подключении |
 | [src/dmft](src/dmft) | Device MFT: эффект внутри камеры |
 | [src/vcam](src/vcam) | виртуальные камеры: вариант `-VirtualCamera` и «PS5 Camera Depth» |
-| [src/core](src/core) | конвейер на видеокарте, шейдеры в [src/core/shaders](src/core/shaders) |
+| [src/core](src/core) | конвейер на видеокарте: Direct3D 11 (Windows) или Vulkan (Linux), шейдеры в [src/core/shaders](src/core/shaders) |
+| [src/linux](src/linux) | `ps5cam-bokehd`: боке на Linux (захват V4L2 → Vulkan → v4l2loopback) |
 | [src/ctl](src/ctl) | `ps5cam-ctl`: настройки (`set mode 0` — боке, `set mode 1` — без), регистрация |
 | [src/tray](src/tray) | значок в трее для разработки (`Install.cmd -Tray`) |
 | [installer](installer) | установщики: MSI ([installer/msi](installer/msi)) и ZIP для Windows, Linux, macOS; манифесты winget ([installer/winget](installer/winget)) |
@@ -117,6 +123,14 @@ Device MFT — штатный способ Windows добавить обрабо
 
 Для MSI нужен .NET-инструмент WiX Toolset 5: `dotnet tool install --global wix --version 5.0.2`.
 
+Linux (служба боке; Ubuntu 22.04 и новее): CMake 3.25+, Ninja, `libvulkan-dev` и `dxc` из
+[выпусков DirectXShaderCompiler](https://github.com/microsoft/DirectXShaderCompiler/releases) (он
+компилирует те же HLSL-шейдеры в SPIR-V):
+
+```bash
+cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release && cmake --build build
+```
+
 Те же пакеты собирает [GitHub Actions](.github/workflows/build.yml) на каждый коммит; на тег `v*`
 они выкладываются в релиз.
 
@@ -124,8 +138,10 @@ Device MFT — штатный способ Windows добавить обрабо
 
 - Камерой одновременно пользуется одно приложение, как и обычной веб-камерой.
 - Глубину камера различает примерно с полуметра: то, что ближе, размывается неровно.
-- Боке есть только на Windows. На macOS для него нужна системная камера-расширение, которую
-  macOS запускает только с подписью разработчика Apple.
+- Боке на Linux экспериментальное: конвейер на Vulkan даёт ту же картинку, что и на Windows на той же
+  видеокарте (проверено покадрово), но с камерой на Linux его пока почти не испытывали.
+- На macOS боке нет: для него нужна системная камера-расширение, которую macOS запускает только с
+  подписью разработчика Apple.
 
 ## Участие
 

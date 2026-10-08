@@ -26,6 +26,7 @@ if(NOT WIN32 OR PS5CAM_VULKAN)
         add_compile_options(-Wall -Wextra)
     endif()
     add_compile_definitions(PS5CAM_VERSION="${PS5CAM_VERSION}")
+    enable_testing()  # ctest from the build root runs the daemon's tests
     add_subdirectory(src/core)
     foreach(dir src/linux src/bench)
         if(EXISTS ${PROJECT_SOURCE_DIR}/${dir}/CMakeLists.txt AND (NOT WIN32 OR dir STREQUAL "src/bench"))
