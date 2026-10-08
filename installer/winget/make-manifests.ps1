@@ -15,16 +15,20 @@ if (-not $Dist) { $Dist = Join-Path $root 'dist' }
 if (-not $Out) { $Out = Join-Path $Dist 'winget' }
 $id = 'KROU4.PS5CameraDriver'
 $repo = 'https://github.com/KROU4/PS5CameraDriver'
-$manifestVersion = '1.6.0'
+$manifestVersion = '1.12.0'
 $upgradeCode = '{51A018EE-D582-4CF1-BDBA-D278E34380B4}'  # installer\msi\PS5Camera.wxs
 
 function Hash($file) { (Get-FileHash (Join-Path $Dist $file) -Algorithm SHA256).Hash }
 $dir = Join-Path $Out "manifests\k\KROU4\PS5CameraDriver\$Version"
 New-Item -ItemType Directory -Force $dir | Out-Null
 $utf8 = New-Object System.Text.UTF8Encoding($false)
-function Write-Manifest($name, $text) { [IO.File]::WriteAllText((Join-Path $dir $name), $text.Replace("`r`n", "`n"), $utf8) }
+# Each file starts with the schema of its type, as winget validate and the winget-pkgs checks expect.
+function Write-Manifest($name, $type, $text) {
+    $header = "# yaml-language-server: `$schema=https://aka.ms/winget-manifest.$type.$manifestVersion.schema.json`n`n"
+    [IO.File]::WriteAllText((Join-Path $dir $name), $header + $text.Replace("`r`n", "`n"), $utf8)
+}
 
-Write-Manifest "$id.yaml" @"
+Write-Manifest "$id.yaml" 'version' @"
 PackageIdentifier: $id
 PackageVersion: $Version
 DefaultLocale: en-US
@@ -32,7 +36,7 @@ ManifestType: version
 ManifestVersion: $manifestVersion
 "@
 
-Write-Manifest "$id.installer.yaml" @"
+Write-Manifest "$id.installer.yaml" 'installer' @"
 PackageIdentifier: $id
 PackageVersion: $Version
 MinimumOSVersion: 10.0.22000.0
@@ -59,7 +63,7 @@ ManifestType: installer
 ManifestVersion: $manifestVersion
 "@
 
-Write-Manifest "$id.locale.en-US.yaml" @"
+Write-Manifest "$id.locale.en-US.yaml" 'defaultLocale' @"
 PackageIdentifier: $id
 PackageVersion: $Version
 PackageLocale: en-US
@@ -89,7 +93,7 @@ ManifestType: defaultLocale
 ManifestVersion: $manifestVersion
 "@
 
-Write-Manifest "$id.locale.ru-RU.yaml" @"
+Write-Manifest "$id.locale.ru-RU.yaml" 'locale' @"
 PackageIdentifier: $id
 PackageVersion: $Version
 PackageLocale: ru-RU
