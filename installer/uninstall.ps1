@@ -1,18 +1,21 @@
 # PS5 HD Camera driver uninstaller. Elevates itself; talks Russian on a Russian Windows, else English.
 #   -FromMsi  run by the MSI package while it removes itself: it deletes its own files and its
 #             "Installed apps" entry, this script only what the installation made besides them
-param([switch]$NoPause, [switch]$FromMsi)
+#   -KeepInstallLog  leaves %ProgramData%\PS5Camera\install.log (the MSI undoing a failed installation)
+param([switch]$NoPause, [switch]$FromMsi, [switch]$KeepInstallLog)
 $ErrorActionPreference = 'Continue'
 if ($FromMsi) { $NoPause = $true }
 $russian = (Get-UICulture).TwoLetterISOLanguageName -eq 'ru'
 function T([string]$ru, [string]$en) { if ($script:russian) { $ru } else { $en } }
-$target = Join-Path $env:ProgramFiles 'PS5Camera'
+$target = if ($FromMsi) { $PSScriptRoot.TrimEnd('\') } else { Join-Path $env:ProgramFiles 'PS5Camera' }
 $ctl = Join-Path $target 'ps5cam-ctl.exe'
 
 $principal = New-Object Security.Principal.WindowsPrincipal([Security.Principal.WindowsIdentity]::GetCurrent())
 if (-not $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
     $argList = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', "`"$PSCommandPath`"")
     if ($NoPause) { $argList += '-NoPause' }
+    if ($FromMsi) { $argList += '-FromMsi' }
+    if ($KeepInstallLog) { $argList += '-KeepInstallLog' }
     Start-Process powershell.exe -Verb RunAs -ArgumentList $argList
     exit
 }
@@ -50,7 +53,13 @@ if ($FromMsi) {
 } else {
     Remove-Item $target -Recurse -Force -ErrorAction SilentlyContinue
 }
-Remove-Item (Join-Path $env:ProgramData 'PS5Camera') -Recurse -Force -ErrorAction SilentlyContinue
+$data = Join-Path $env:ProgramData 'PS5Camera'
+if ($KeepInstallLog) {
+    Get-ChildItem $data -Force -ErrorAction SilentlyContinue | Where-Object { $_.Name -ne 'install.log' } |
+        Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
+} else {
+    Remove-Item $data -Recurse -Force -ErrorAction SilentlyContinue
+}
 Write-Host (T 'PS5 Camera удалена вместе с драйвером загрузчика и его сертификатом; камера снова видна приложениям как обычная USB-камера.' `
     'PS5 Camera was removed together with the boot loader driver and its certificate; programs see the camera as a plain USB camera again.')
 if (-not $NoPause) { Read-Host (T 'Нажмите Enter, чтобы закрыть окно' 'Press Enter to close this window') | Out-Null }

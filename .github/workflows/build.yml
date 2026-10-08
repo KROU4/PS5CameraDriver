@@ -25,9 +25,11 @@ jobs:
       - name: Check the version
         if: startsWith(github.ref, 'refs/tags/v')
         shell: pwsh
+        env:
+          TAG: ${{ github.ref_name }}  # through the environment: a tag name is not script text
         run: |
           $version = (Get-Content VERSION -TotalCount 1).Trim()
-          if ("v$version" -ne '${{ github.ref_name }}') { throw "tag ${{ github.ref_name }} but VERSION $version" }
+          if ("v$version" -ne $env:TAG) { throw "tag $env:TAG but VERSION $version" }
 
       - name: Install WiX
         shell: pwsh
@@ -91,7 +93,8 @@ jobs:
           Compress-Archive -Path dist/signed/* -DestinationPath dist/PS5CameraDriver.zip
           Get-AuthenticodeSignature dist/signed/*.dll, dist/signed/*.exe, dist/signed/*.ps1 |
             Format-Table Status, @{n = 'File'; e = { Split-Path $_.Path -Leaf } } -AutoSize
-          # The MSI packages again, now with the signed files inside.
+          # The MSI packages again, now with the signed files inside. The .msi files themselves are
+          # not signed yet: that needs a second signing request for them.
           ./installer/msi/build-msi.ps1 -Dist dist/signed
 
       - name: winget manifests
