@@ -6,6 +6,8 @@
 #include <chrono>
 #include <cmath>
 
+#include "../common/camctl.h"
+#include "../common/camdefaults.h"
 #include "../common/log.h"
 #include "../common/settings.h"
 
@@ -478,6 +480,8 @@ STDMETHODIMP DeviceMft::ProcessInput(DWORD stream, IMFSample* sample, DWORD)
 {
     HRESULT hr = S_OK;
     bool haveOutput = false;
+    int powerLine = -1;
+    ComPtr<IKsControl> cameraKs;
     try {
         std::unique_lock lock(m_lock);
         Stream* s = m_shutdown ? nullptr : Find(stream);
@@ -485,6 +489,7 @@ STDMETHODIMP DeviceMft::ProcessInput(DWORD stream, IMFSample* sample, DWORD)
         else if (!s) hr = MF_E_INVALIDSTREAMNUMBER;
         else if (sample && s->outputState == DeviceStreamState_Run) {
             ComPtr<IMFSample> out = s->processor ? s->processor->Process(sample) : ComPtr<IMFSample>(sample);
+            if (s->processor && (powerLine = s->processor->TakePowerLineRequest()) >= 0) cameraKs = m_sourceKs;
             if (out) {
                 if (s->discontinuity) {
                     out->SetUINT32(MFSampleExtension_Discontinuity, TRUE);
@@ -516,6 +521,11 @@ STDMETHODIMP DeviceMft::ProcessInput(DWORD stream, IMFSample* sample, DWORD)
         hr = E_OUTOFMEMORY;
     }
     if (haveOutput) m_events->QueueEventParamVar(METransformHaveOutput, GUID_NULL, S_OK, nullptr);
+    if (cameraKs) {
+        const HRESULT plHr = SetPowerLineFrequency(cameraKs.Get(), powerLine);
+        Log(L"anti-flicker %ls (0x%08lX)", powerLine == 0 ? L"off" : powerLine == 1 ? L"50 Hz" : L"60 Hz",
+            static_cast<unsigned long>(plHr));
+    }
     // The device transform manager hands the sample over with one reference too many (a known
     // pipeline quirk, see Microsoft's SampleDeviceMFT): release it, or the camera's sample pool
     // runs dry after a few frames. Seen here: 3 references before, 2 after. Should a later Windows
@@ -660,8 +670,75 @@ HRESULT DeviceMft::CameraKs(ComPtr<IKsControl>& ks)
     return ks ? S_OK : MF_E_NOT_INITIALIZED;
 }
 
+namespace {
+
+constexpr ULONG kSegmentationSize = sizeof(KSCAMERA_EXTENDEDPROP_HEADER) + sizeof(KSCAMERA_EXTENDEDPROP_VALUE);
+constexpr ULONGLONG kSegmentationCaps =
+    KSCAMERA_EXTENDEDPROP_BACKGROUNDSEGMENTATION_BLUR | KSCAMERA_EXTENDEDPROP_BACKGROUNDSEGMENTATION_SHALLOWFOCUS;
+
+}  // namespace
+
+HRESULT DeviceMft::BackgroundSegmentation(PKSPROPERTY p, LPVOID d, ULONG dl, ULONG* r)
+{
+    *r = 0;
+    if (p->Flags & KSPROPERTY_TYPE_GET) {
+        if (dl < kSegmentationSize || !d) {
+            *r = kSegmentationSize;
+            return dl == 0 ? HRESULT_FROM_WIN32(ERROR_MORE_DATA) : HRESULT_FROM_WIN32(ERROR_INSUFFICIENT_BUFFER);
+        }
+        auto* h = static_cast<KSCAMERA_EXTENDEDPROP_HEADER*>(d);
+        h->Version = 1;  // the only version of this control
+        h->PinId = KSCAMERA_EXTENDEDPROP_FILTERSCOPE;
+        h->Size = kSegmentationSize;
+        h->Result = 0;
+        h->Flags = BackgroundEffectFlags(LoadSettings());
+        h->Capability = kSegmentationCaps;
+        reinterpret_cast<KSCAMERA_EXTENDEDPROP_VALUE*>(h + 1)->Value.ull = 0;
+        *r = kSegmentationSize;
+        return S_OK;
+    }
+    if (p->Flags & KSPROPERTY_TYPE_SET) {
+        if (dl < kSegmentationSize || !d) return HRESULT_FROM_WIN32(ERROR_INSUFFICIENT_BUFFER);
+        const auto* h = static_cast<const KSCAMERA_EXTENDEDPROP_HEADER*>(d);
+        const bool blur = (h->Flags & KSCAMERA_EXTENDEDPROP_BACKGROUNDSEGMENTATION_BLUR) != 0;
+        const bool shallow = (h->Flags & KSCAMERA_EXTENDEDPROP_BACKGROUNDSEGMENTATION_SHALLOWFOCUS) != 0;
+        // No mask metadata; shallow focus only together with blur (the control's contract).
+        if (h->Version != 1 || h->PinId != KSCAMERA_EXTENDEDPROP_FILTERSCOPE || (h->Flags & ~kSegmentationCaps) ||
+            (shallow && !blur))
+            return E_INVALIDARG;
+        // Settings are shared with the tray: a change here is a change of the camera's effect, and
+        // the frames follow within half a second (FrameProcessor::RefreshSettings), sensor mode too.
+        // Only the values concerned are written, so a tray change meanwhile is not undone.
+        Settings s = LoadSettings();
+        const ULONGLONG before = BackgroundEffectFlags(s);
+        if (blur) {
+            s.mode = 0;
+            s.blurStyle = shallow ? kBlurPortrait : kBlurStandard;
+        } else if (s.mode == 0) {
+            s.mode = 1;  // off; diagnostic views stay as they are
+        }
+        if (BackgroundEffectFlags(s) != before) {
+            if (!WriteSetting(L"Mode", s.mode) || !WriteSetting(L"BlurStyle", s.blurStyle)) return E_ACCESSDENIED;
+            Log(L"background effects set to 0x%llX by Windows or an app", static_cast<unsigned long long>(h->Flags));
+        }
+        return S_OK;
+    }
+    return HRESULT_FROM_WIN32(ERROR_NOT_SUPPORTED);
+}
+
 STDMETHODIMP DeviceMft::KsProperty(PKSPROPERTY p, ULONG pl, LPVOID d, ULONG dl, ULONG* r)
 {
+    if (p && pl >= sizeof(KSPROPERTY) && IsEqualGUID(p->Set, KSPROPERTYSETID_ExtendedCameraControl) &&
+        p->Id == KSPROPERTY_CAMERACONTROL_EXTENDED_BACKGROUNDSEGMENTATION)
+        return r ? BackgroundSegmentation(p, d, dl, r) : E_POINTER;
+    if (p && pl >= sizeof(KSPROPERTY) && IsEqualGUID(p->Set, PROPSETID_VIDCAP_VIDEOPROCAMP) &&
+        p->Id == KSPROPERTY_VIDEOPROCAMP_POWERLINE_FREQUENCY && (p->Flags & KSPROPERTY_TYPE_SET)) {
+        // An app (or Windows' saved default) chooses the anti-flicker itself: its choice stands for
+        // this stream, over Auto and over a fixed setting alike.
+        std::lock_guard lock(m_lock);
+        for (auto& s : m_streams)
+            if (s->processor) s->processor->HoldPowerLine();
+    }
     ComPtr<IKsControl> ks;
     HRESULT hr = CameraKs(ks);
     return SUCCEEDED(hr) ? ks->KsProperty(p, pl, d, dl, r) : hr;

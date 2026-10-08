@@ -6,8 +6,8 @@ ByteAddressBuffer Sum : register(t0);
 Texture2D<float> WorkMain : register(t1);
 Texture2D<uint2> CensusMain : register(t2);
 Texture2D<uint2> CensusSecond : register(t3);
-RWTexture2D<float> DispMain : register(u0);   // -1 = invalid
-RWTexture2D<float> DispSecond : register(u1);
+FORMAT("r32f") RWTexture2D<float> DispMain : register(u0);   // -1 = invalid
+FORMAT("r32f") RWTexture2D<float> DispSecond : register(u1);
 
 // The best cost must beat every other disparity by this share, or the match is ambiguous.
 static const uint kUniquenessPercent = 92;

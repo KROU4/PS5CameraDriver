@@ -3,8 +3,8 @@
 
 Texture2D<float> WorkMain : register(t0);
 Texture2D<float> WorkSecond : register(t1);
-RWTexture2D<uint2> CensusMain : register(u0);
-RWTexture2D<uint2> CensusSecond : register(u1);
+FORMAT("rg32ui") RWTexture2D<uint2> CensusMain : register(u0);
+FORMAT("rg32ui") RWTexture2D<uint2> CensusSecond : register(u1);
 
 uint2 Census(Texture2D<float> img, int2 p)
 {

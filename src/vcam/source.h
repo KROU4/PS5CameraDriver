@@ -1,8 +1,9 @@
 #pragma once
-// Frame Server custom media source for the "PS5 Camera" virtual camera.
+// Frame Server custom media source for the "PS5 Camera" and "PS5 Camera Depth" virtual cameras.
 //   Ps5Activate - registered COM class (IMFActivate); Frame Server calls ActivateObject.
 //   Ps5Source   - IMFMediaSourceEx with a single video stream.
-//   Ps5Stream   - IMFMediaStream2; answers RequestSample tokens with frames from CaptureEngine.
+//   Ps5Stream   - IMFMediaStream2; answers RequestSample tokens with frames from its engine
+//                 (CaptureEngine for the camera, DepthEngine for the depth camera).
 #include <windows.h>
 #include <mfapi.h>
 #include <mfidl.h>
@@ -14,6 +15,7 @@
 #include <wrl/implements.h>
 
 #include <deque>
+#include <memory>
 #include <mutex>
 #include <vector>
 
@@ -21,19 +23,22 @@
 
 namespace ps5cam {
 
+enum class SourceKind { Camera, Depth };
+
 class Ps5Source;
 
 class Ps5Stream
     : public Microsoft::WRL::RuntimeClass<Microsoft::WRL::RuntimeClassFlags<Microsoft::WRL::ClassicCom>,
           Microsoft::WRL::ChainInterfaces<IMFMediaStream2, IMFMediaStream, IMFMediaEventGenerator>> {
 public:
-    HRESULT RuntimeClassInitialize(Ps5Source* parent, bool prefer60, bool fullHdOnly);
+    HRESULT RuntimeClassInitialize(Ps5Source* parent, SourceKind kind, bool prefer60, bool fullHdOnly);
     HRESULT Start();  // StartEngine + MEStreamStarted
     HRESULT Stop();
     void Shutdown();
     IMFStreamDescriptor* Descriptor() { return m_descriptor.Get(); }
     IMFAttributes* Attributes() { return m_attributes.Get(); }
-    Microsoft::WRL::ComPtr<IUnknown> PhysicalSource() { return m_engine.PhysicalSource(); }
+    Microsoft::WRL::ComPtr<IUnknown> PhysicalSource() { return m_engine->PhysicalSource(); }
+    void HoldPowerLine() { m_engine->HoldPowerLine(); }
 
     // IMFMediaEventGenerator
     STDMETHODIMP BeginGetEvent(IMFAsyncCallback* cb, IUnknown* state) override;
@@ -68,7 +73,7 @@ private:
     std::deque<Microsoft::WRL::ComPtr<IUnknown>> m_tokens;
     Microsoft::WRL::ComPtr<IMFSample> m_pending;  // newest undelivered frame
     uint64_t m_epoch = 0;  // bumped on every start/stop; frames from older sessions are dropped
-    CaptureEngine m_engine;
+    std::unique_ptr<FrameEngine> m_engine;
 };
 
 class Ps5Source
@@ -76,7 +81,7 @@ class Ps5Source
           Microsoft::WRL::ChainInterfaces<IMFMediaSourceEx, IMFMediaSource, IMFMediaEventGenerator>, IMFGetService,
           IKsControl> {
 public:
-    HRESULT RuntimeClassInitialize(IMFAttributes* activateAttributes);
+    HRESULT RuntimeClassInitialize(IMFAttributes* activateAttributes, SourceKind kind);
     bool IsShutdown()
     {
         std::lock_guard lock(m_lock);
@@ -126,7 +131,7 @@ class Ps5Activate
     : public Microsoft::WRL::RuntimeClass<Microsoft::WRL::RuntimeClassFlags<Microsoft::WRL::ClassicCom>,
           Microsoft::WRL::ChainInterfaces<IMFActivate, IMFAttributes>> {
 public:
-    HRESULT RuntimeClassInitialize();
+    HRESULT RuntimeClassInitialize(SourceKind kind);
 
     STDMETHODIMP ActivateObject(REFIID riid, void** ppv) override;
     STDMETHODIMP ShutdownObject() override;
@@ -167,6 +172,7 @@ public:
 #undef FWD
 
 private:
+    SourceKind m_kind = SourceKind::Camera;
     Microsoft::WRL::ComPtr<IMFAttributes> m_attr;
     Microsoft::WRL::ComPtr<Ps5Source> m_source;
 };

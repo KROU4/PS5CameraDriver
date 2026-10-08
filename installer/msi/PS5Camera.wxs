@@ -1,0 +1,138 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  MSI package of the PS5 HD Camera driver (WiX Toolset 5, built by installer\msi\build-msi.ps1).
+  The package puts the files into Program Files\PS5Camera and then runs install.ps1 -FromMsi (as
+  SYSTEM, no console), which builds the camera firmware from Sony's original image, installs the
+  boot-mode WinUSB driver and the service and attaches the effect to the camera; on removal
+  uninstall.ps1 -FromMsi undoes that before the files go. Properties:
+    BOKEH=on|off|keep   keep (default): as before, on for a first installation
+    TRAY=1|0            the tray icon (from the next sign-in); not given: as before
+    SONYFIRMWARE=PATH   Sony's original firmware file instead of the download (an update with the
+                        same firmware changes reuses the image built before)
+  The installation log is %ProgramData%\PS5Camera\install.log.
+-->
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs"
+     xmlns:ui="http://wixtoolset.org/schemas/v4/wxs/ui">
+  <Package Name="PS5 HD Camera" Manufacturer="PS5CameraDriver" Version="$(var.Version)"
+           UpgradeCode="51A018EE-D582-4CF1-BDBA-D278E34380B4" Scope="perMachine" Compressed="yes"
+           Language="!(loc.Language)">
+    <SummaryInformation Description="PS5 HD Camera driver for Windows 11" />
+    <!-- A rebuild of the same version replaces the installed one too, instead of joining it. The
+         old version is removed inside this installation, so a failure brings its files back. -->
+    <MajorUpgrade DowngradeErrorMessage="!(loc.Downgrade)" AllowSameVersionUpgrades="yes"
+                  Schedule="afterInstallInitialize" />
+    <MediaTemplate EmbedCab="yes" />
+
+    <Property Id="BOKEH" Value="keep" Secure="yes" />
+    <Property Id="TRAY" Secure="yes" />
+    <Property Id="SONYFIRMWARE" Secure="yes" />
+    <Launch Condition="Installed OR BOKEH=&quot;on&quot; OR BOKEH=&quot;off&quot; OR BOKEH=&quot;keep&quot;"
+            Message="BOKEH must be on, off or keep." />
+    <Launch Condition="Installed OR NOT TRAY OR TRAY=&quot;0&quot; OR TRAY=&quot;1&quot;" Message="TRAY must be 0 or 1." />
+    <!-- A trailing backslash would swallow the closing quote of the command line below. -->
+    <Launch Condition="Installed OR NOT SONYFIRMWARE OR NOT (SONYFIRMWARE &gt;&gt; &quot;\&quot;)"
+            Message="SONYFIRMWARE must be the path of a file." />
+    <Property Id="ARPURLINFOABOUT" Value="https://github.com/KROU4/PS5CameraDriver" />
+    <Property Id="ARPHELPLINK" Value="https://github.com/KROU4/PS5CameraDriver/issues" />
+    <Property Id="ARPNOREPAIR" Value="1" />  <!-- ARPNOMODIFY comes with WixUI_Minimal -->
+
+    <StandardDirectory Id="ProgramFiles64Folder">
+      <Directory Id="INSTALLFOLDER" Name="PS5Camera">
+        <Directory Id="DRIVERFOLDER" Name="driver" />
+      </Directory>
+    </StandardDirectory>
+
+    <!-- The binaries carry version resources. Files without one that an installation from the ZIP
+         package left there may look modified to Windows Installer, which then keeps them: they are
+         removed first. -->
+    <ComponentGroup Id="Payload" Directory="INSTALLFOLDER">
+      <Component><File Source="$(var.Dist)\ps5cam-dmft.dll" /></Component>
+      <Component><File Source="$(var.Dist)\ps5cam-vcam.dll" /></Component>
+      <Component><File Source="$(var.Dist)\ps5cam-svc.exe" /></Component>
+      <Component><File Source="$(var.Dist)\ps5cam-ctl.exe" /></Component>
+      <Component><File Source="$(var.Dist)\ps5cam-tray.exe" /></Component>
+      <Component>
+        <File Source="$(var.Dist)\ps5cam-firmware.json" />
+        <RemoveFile Id="OldFirmwareJson" Name="ps5cam-firmware.json" On="install" />
+      </Component>
+      <Component>
+        <File Source="$(var.Dist)\install.ps1" />
+        <RemoveFile Id="OldInstallPs1" Name="install.ps1" On="install" />
+      </Component>
+      <Component>
+        <File Source="$(var.Dist)\uninstall.ps1" />
+        <RemoveFile Id="OldUninstallPs1" Name="uninstall.ps1" On="install" />
+      </Component>
+      <Component>
+        <File Source="$(var.Dist)\version.txt" />
+        <RemoveFile Id="OldVersionTxt" Name="version.txt" On="install" />
+      </Component>
+      <Component>
+        <File Source="$(var.Dist)\README.txt" />
+        <RemoveFile Id="OldReadme" Name="README.txt" On="install" />
+      </Component>
+      <Component>
+        <File Source="$(var.Dist)\README.ru.txt" />
+        <RemoveFile Id="OldReadmeRu" Name="README.ru.txt" On="install" />
+      </Component>
+      <Component Directory="DRIVERFOLDER">
+        <File Source="$(var.Dist)\driver\ps5cam-boot.inf" />
+        <RemoveFile Id="OldBootInf" Name="ps5cam-boot.inf" On="install" />
+      </Component>
+    </ComponentGroup>
+
+    <Feature Id="Main" Title="PS5 HD Camera">
+      <ComponentGroupRef Id="Payload" />
+    </Feature>
+
+    <!-- The commands run hidden through WixQuietExec, which writes their output to the MSI log. -->
+    <SetProperty Id="PS5CamStop" Sequence="execute" Before="PS5CamStop"
+                 Value="&quot;[System64Folder]WindowsPowerShell\v1.0\powershell.exe&quot; -NoProfile -ExecutionPolicy Bypass -Command &quot;Get-Process ps5cam-tray -EA 0 | Stop-Process -Force; Stop-Service PS5CameraService, FrameServerMonitor, FrameServer -Force -EA 0&quot;" />
+    <CustomAction Id="PS5CamStop" BinaryRef="Wix4UtilCA_X64" DllEntry="WixQuietExec" Execute="deferred"
+                  Impersonate="no" Return="ignore" />
+
+    <SetProperty Id="PS5CamUnconfigure" Sequence="execute" Before="PS5CamUnconfigure"
+                 Value="&quot;[System64Folder]WindowsPowerShell\v1.0\powershell.exe&quot; -NoProfile -ExecutionPolicy Bypass -File &quot;[INSTALLFOLDER]uninstall.ps1&quot; -FromMsi" />
+    <CustomAction Id="PS5CamUnconfigure" BinaryRef="Wix4UtilCA_X64" DllEntry="WixQuietExec" Execute="deferred"
+                  Impersonate="no" Return="ignore" />
+
+    <SetProperty Id="PS5CamConfigure" Sequence="execute" Before="PS5CamConfigure"
+                 Value="&quot;[System64Folder]WindowsPowerShell\v1.0\powershell.exe&quot; -NoProfile -ExecutionPolicy Bypass -File &quot;[INSTALLFOLDER]install.ps1&quot; -FromMsi -Bokeh [BOKEH] -MsiTray &quot;[TRAY]&quot; -MsiOriginal &quot;[SONYFIRMWARE]&quot; -Log &quot;[CommonAppDataFolder]PS5Camera\install.log&quot;" />
+    <CustomAction Id="PS5CamConfigure" BinaryRef="Wix4UtilCA_X64" DllEntry="WixQuietExec" Execute="deferred"
+                  Impersonate="no" Return="check" />
+
+    <!-- Rollback: a first installation that fails while setting up undoes what it set up (the files
+         are still there when this runs); a removal cancelled after the setup was undone sets it up
+         again. An update that fails gets the old version's files back at the same paths, where the
+         service, the camera registrations and the firmware already point; so does an installation
+         over one made from the ZIP package (SCRIPTINSTALL), which this one replaces. -->
+    <Property Id="SCRIPTINSTALL">
+      <RegistrySearch Root="HKLM" Key="SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\PS5Camera"
+                      Name="DisplayVersion" Type="raw" Bitness="always64" />
+    </Property>
+    <SetProperty Id="PS5CamConfigureRollback" Sequence="execute" Before="PS5CamConfigureRollback"
+                 Value="&quot;[System64Folder]WindowsPowerShell\v1.0\powershell.exe&quot; -NoProfile -ExecutionPolicy Bypass -File &quot;[INSTALLFOLDER]uninstall.ps1&quot; -FromMsi -KeepInstallLog" />
+    <CustomAction Id="PS5CamConfigureRollback" BinaryRef="Wix4UtilCA_X64" DllEntry="WixQuietExec"
+                  Execute="rollback" Impersonate="no" Return="ignore" />
+    <SetProperty Id="PS5CamUnconfigureRollback" Sequence="execute" Before="PS5CamUnconfigureRollback"
+                 Value="&quot;[System64Folder]WindowsPowerShell\v1.0\powershell.exe&quot; -NoProfile -ExecutionPolicy Bypass -File &quot;[INSTALLFOLDER]install.ps1&quot; -FromMsi -Bokeh keep" />
+    <CustomAction Id="PS5CamUnconfigureRollback" BinaryRef="Wix4UtilCA_X64" DllEntry="WixQuietExec"
+                  Execute="rollback" Impersonate="no" Return="ignore" />
+
+    <InstallExecuteSequence>
+      <!-- A full removal (not the removal of the old version during an update) undoes the setup. -->
+      <Custom Action="PS5CamUnconfigureRollback" Before="PS5CamUnconfigure"
+              Condition="REMOVE=&quot;ALL&quot; AND NOT UPGRADINGPRODUCTCODE" />
+      <Custom Action="PS5CamUnconfigure" Before="PS5CamStop" Condition="REMOVE=&quot;ALL&quot; AND NOT UPGRADINGPRODUCTCODE" />
+      <!-- Frame Server and the service hold the DLLs: stopped before files are replaced or removed. -->
+      <Custom Action="PS5CamStop" Before="RemoveFiles" />
+      <Custom Action="PS5CamConfigureRollback" After="InstallFiles" Condition="NOT REMOVE AND NOT WIX_UPGRADE_DETECTED AND NOT SCRIPTINSTALL" />
+      <Custom Action="PS5CamConfigure" After="PS5CamConfigureRollback" Condition="NOT REMOVE" />
+    </InstallExecuteSequence>
+
+    <UI>
+      <ui:WixUI Id="WixUI_Minimal" />
+    </UI>
+    <WixVariable Id="WixUILicenseRtf" Value="$(var.LicenseRtf)" />
+  </Package>
+</Wix>

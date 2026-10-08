@@ -1,15 +1,18 @@
 // Final pass: blends the sharp main image with the half-resolution bokeh layer (or renders a
 // diagnostic view) and writes NV12 planes. One thread per 2x2 output block.
 #include "common.hlsli"
+#define SUBJECT_REGISTER t7
 #include "depthsample.hlsli"
 
 Texture2D<float4> BokehHalf : register(t2);
 Texture2D<float4> SecondYuv : register(t3);
-Texture2D<float> DispRaw : register(t4);     // debug views 5 and 6 (work resolution, -1 = invalid)
+// Debug views (work resolution, -1 = invalid): 5 raw, 6 checked and occlusion-filled, 7 hole-filled.
+Texture2D<float> DispRaw : register(t4);
 Texture2D<float> DispFilled : register(t5);
-RWTexture2D<unorm float> OutY : register(u0);
-RWTexture2D<unorm float2> OutUV : register(u1);
-RWTexture2D<unorm float4> OutYuy2 : register(u2);  // outSize.x/2 x outSize.y texels: Y0 U Y1 V
+Texture2D<float> DispHoles : register(t6);
+FORMAT("r8") RWTexture2D<unorm float> OutY : register(u0);
+FORMAT("rg8") RWTexture2D<unorm float2> OutUV : register(u1);
+FORMAT("rgba8") RWTexture2D<unorm float4> OutYuy2 : register(u2);  // outSize.x/2 x outSize.y texels: Y0 U Y1 V
 
 float3 Turbo(float t)
 {
@@ -33,13 +36,34 @@ float3 RgbToYuv(float3 c)
     return float3(y, (c.b - y) * 0.564 + 0.5, (c.r - y) * 0.713 + 0.5);
 }
 
+// The main sensor picture with its luma sharpened: an unsharp mask over a cross of four samples
+// 1.2 pixels away (output pixels when the output is smaller than the eye image, so that what it
+// brings out survives the downscale), whose detail up to sharpenCore (the noise's size) is left
+// alone, so that edges gain contrast and grain does not.
+float3 SharpMain(float2 uv)
+{
+    float3 c = MainYuv.SampleLevel(LinearClamp, uv, 0).xyz;
+    if (sharpen <= 0)
+        return c;
+    const float2 eyePerOut = crop.zw / float2(outSize);
+    const float2 o = 1.2 * max(eyePerOut, 1.0) / float2(eyeSize);
+    float around = 0.25 * (MainYuv.SampleLevel(LinearClamp, uv + float2(o.x, 0), 0).x +
+                           MainYuv.SampleLevel(LinearClamp, uv - float2(o.x, 0), 0).x +
+                           MainYuv.SampleLevel(LinearClamp, uv + float2(0, o.y), 0).x +
+                           MainYuv.SampleLevel(LinearClamp, uv - float2(0, o.y), 0).x);
+    float detail = c.x - around;
+    detail = sign(detail) * max(abs(detail) - sharpenCore, 0);
+    c.x = saturate(c.x + 1.2 * sharpen * detail);
+    return c;
+}
+
 float3 Shade(float2 outPx)
 {
     float2 uv = EyeUvFromOutput(outPx);
     float3 result;
     if (mode == 1)
     {
-        result = MainYuv.SampleLevel(LinearClamp, uv, 0).xyz;
+        result = SharpMain(uv);
     }
     else if (mode == 2)
     {
@@ -49,12 +73,21 @@ float3 Shade(float2 outPx)
     {
         result = RgbToYuv(Turbo(DisparityAt(uv) / 64.0));
     }
-    else if (mode == 5 || mode == 6)
+    else if (mode == 8)
+    {
+        result = float3(DisparityAt(uv) / 64.0, 0.5, 0.5);  // for measurements: Y = 16 + 219 d / 64
+    }
+    else if (mode == 9)
+    {
+        // For measurements: the bokeh's blend weight, Y = 16 + 219 w (0 sharp, 1 blurred).
+        result = float3(smoothstep(0.5, 2.5, CircleOfConfusion(DisparityAt(uv), SubjectAt(uv))), 0.5, 0.5);
+    }
+    else if (mode >= 5 && mode <= 7)
     {
         // Nearest work pixel, black where invalid.
         float2 workUv = depthMirror != 0 ? float2(1.0 - uv.x, uv.y) : uv;
         int2 wp = min(int2(workUv * float2(workSize)), int2(workSize) - 1);
-        float d = mode == 5 ? DispRaw[wp] : DispFilled[wp];
+        float d = mode == 5 ? DispRaw[wp] : mode == 6 ? DispFilled[wp] : DispHoles[wp];
         result = d < 0 ? float3(0, 0.5, 0.5) : RgbToYuv(Turbo(d / 64.0));
     }
     else if (mode == 4)
@@ -68,14 +101,14 @@ float3 Shade(float2 outPx)
     }
     else
     {
-        float3 sharp = MainYuv.SampleLevel(LinearClamp, uv, 0).xyz;
-        float coc = CircleOfConfusion(DisparityAt(uv));
+        float3 sharp = SharpMain(uv);
+        float coc = CircleOfConfusion(DisparityAt(uv), SubjectAt(uv));
         float3 blurred = BokehHalf.SampleLevel(LinearClamp, outPx / float2(outSize), 0).xyz;
         result = lerp(sharp, blurred, smoothstep(0.5, 2.5, coc));
     }
     // Digital exposure for dim rooms: linear gain with a soft shoulder so highlights do not clip
     // hard; chroma follows the luma ratio so colours keep their saturation.
-    if (lumaGain > 1.01 && mode != 3)
+    if (lumaGain > 1.01 && mode != 3 && mode < 8)
     {
         float y = result.x * lumaGain;
         const float knee = 0.75;

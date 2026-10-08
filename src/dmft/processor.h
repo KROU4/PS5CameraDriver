@@ -8,8 +8,12 @@
 
 #include <memory>
 #include <string>
+#include <vector>
 
+#include "../common/depthpublish.h"
+#include "calibschedule.h"
 #include "cameramodes.h"
+#include "flicker.h"
 #include "pipeline.h"
 
 namespace ps5cam {
@@ -27,6 +31,11 @@ public:
     const wchar_t* WantedKey();
     const wchar_t* InputKey() const { return m_configured ? m_mode.key : L""; }
     bool Configured() const { return m_configured; }
+    // The anti-flicker value the camera should get now (see flicker.h), or -1; each request once.
+    int TakePowerLineRequest();
+    // An app set the anti-flicker (before or during its stream): none of ours until the stream ends
+    // or the setting changes.
+    void HoldPowerLine();
 
 private:
     bool EnsurePipeline();
@@ -46,11 +55,19 @@ private:
 
     EffectSettings m_effect;
     ULONGLONG m_settingsTick = 0;
-    bool m_calibPending = false;
-    uint32_t m_calibFailures = 0;
-    uint32_t m_nextCalibFrame = 10;
+    CalibrationSchedule m_calib;
     uint32_t m_frameCount = 0;
     LONGLONG m_lastTime = -1;  // time stamp of the frame the pipeline holds
+
+    DepthPublisher m_depth;  // for the "PS5 Camera Depth" camera
+    FlickerGuard m_flicker;
+    bool m_flickerStarted = false;  // since the stream started
+    bool m_powerLineHeld = false;   // see HoldPowerLine
+    bool m_settingsLoaded = false;
+    uint32_t m_antiFlicker = 0;     // the setting it runs with
+    bool m_mains60 = false;
+    int m_powerLineRequest = -1;
+    std::vector<float> m_rowMeans;
 
     ULONGLONG m_statusTick = 0;
     uint32_t m_framesInWindow = 0;

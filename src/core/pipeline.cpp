@@ -5,29 +5,23 @@
 #include <cstring>
 #include <vector>
 
-#include "shaders/aggregate.h"
-#include "shaders/bokeh.h"
-#include "shaders/census.h"
-#include "shaders/composite.h"
-#include "shaders/downscale.h"
-#include "shaders/guided_box.h"
-#include "shaders/guided_coef.h"
-#include "shaders/guided_prep.h"
-#include "shaders/histogram.h"
-#include "shaders/holefill.h"
-#include "shaders/lrfill.h"
-#include "shaders/lumastats.h"
-#include "shaders/score.h"
-#include "shaders/unpack.h"
-#include "shaders/wta.h"
-
-using Microsoft::WRL::ComPtr;
+#include "gpu.h"
 
 namespace ps5cam {
 
 namespace {
 
 constexpr uint32_t kNumDisp = 64;
+constexpr float kRangeDisparity = 24;  // EffectSettings::focusRange and subjectRange hold at this disparity
+constexpr float kDefaultFocus = 16;    // the focus plane until the autofocus has one
+constexpr uint32_t kNoiseBins = 128;  // shaders/denoise.hlsl: bins of 1/4096 of the 3x3-mean change
+constexpr float kNoiseBinWidth = 1.0f / 4096;
+constexpr uint32_t kMotionBlock = 32;  // shaders/motion.hlsl: pixels per motion vector, each way
+// shaders/meter.hlsl: cells across and down the picture, samples per cell, three floats per cell.
+constexpr uint32_t kMeterCellsX = 32, kMeterCellsY = 18, kMeterSamples = 64;
+// Mean luma the auto brightness aims at: of the picture, and with depth of the subject's head.
+constexpr double kFrameTarget = 0.42;
+constexpr double kSubjectTarget = 0.42;
 
 // Mirrors cbuffer Constants in shaders/common.hlsli.
 struct GpuConstants {
@@ -44,55 +38,59 @@ struct GpuConstants {
     float highlightGain;
     uint32_t outFormat;
     float lumaGain;
-    float pad;
+    uint32_t depthView;
     uint32_t secondW, secondH, secondFolded, depthMirror;
+    float noiseLevel, denoiseKeep;
+    uint32_t denoiseHistory;
+    float denoiseSpatial;
+    float sharpen, sharpenCore;
+    float subjectRange;
+    float pad;
 };
-static_assert(sizeof(GpuConstants) == 160, "constant buffer layout");
+static_assert(sizeof(GpuConstants) == 192, "constant buffer layout");
 // kNumDisp mirrors MAX_DISP in shaders/common.hlsli.
 
 uint32_t DivUp(uint32_t a, uint32_t b) { return (a + b - 1) / b; }
 
-struct Tex {
-    ComPtr<ID3D11Texture2D> tex;
-    ComPtr<ID3D11ShaderResourceView> srv;
-    ComPtr<ID3D11UnorderedAccessView> uav;
-};
-
 }  // namespace
 
 struct StereoPipeline::Impl {
-    ComPtr<ID3D11Buffer> constants;
-    ComPtr<ID3D11SamplerState> linearClamp;
-    ComPtr<ID3D11ComputeShader> unpack, downscale, census, aggregate, wta, lrfill, holefill, guidedPrep, guidedBox, guidedCoef,
-        histogram, bokeh, composite, score, lumastats;
+    GpuImage* packed = nullptr;                          // R8G8B8A8_UINT, YUY2 texels
+    GpuImage *mainYuv = nullptr, *secondYuv = nullptr;   // each sensor at its own size (eyeWidth x eyeHeight, SecondWidth x SecondHeight)
+    GpuImage* clean[2] = {};                             // denoised main sensor, ping-pong (this frame / history)
+    // Motion of the picture against the history (motion.hlsl): 4x-downscaled luma of this frame and
+    // of the history (R32_FLOAT), coarse and refined vectors per 32x32 block (R32G32_UINT; the
+    // refined ones ping-pong, as the noise reduction checks them against the previous frame's).
+    GpuImage *smallCur = nullptr, *smallPrev = nullptr, *motionCoarse = nullptr, *motion[2] = {};
+    uint32_t motionIndex = 0;  // which motion holds the latest vectors
+    GpuImage *workMain = nullptr, *workSecond = nullptr; // R32_FLOAT work res
+    GpuImage *censusMain = nullptr, *censusSecond = nullptr;  // R32G32_UINT work res
+    GpuImage *dispMain = nullptr, *dispSecond = nullptr;      // R32_FLOAT work res
+    GpuImage* dispFill = nullptr;   // after the LR check and the fill of short gaps, -1 = still unknown
+    GpuImage* dispHist[2] = {};     // filled disparity, ping-pong for temporal smoothing
+    GpuImage* leftValid = nullptr;
+    GpuImage *gfA = nullptr, *gfB = nullptr, *gfC = nullptr;  // R32G32B32A32_FLOAT work res
+    // The subject's silhouette (subject.hlsl), R32_FLOAT work res: the guided disparity, the cost of
+    // reaching each pixel from the focus plane (ping-pong), the subject's share (R8_UNORM) the blur passes read.
+    GpuImage *subjDisp = nullptr, *subjCost[2] = {}, *subjShare[2] = {};
+    uint32_t shareIndex = 0;  // which subjShare is this frame's
+    GpuImage* Share() const { return subjShare[shareIndex]; }
+    GpuImage* bokehHalf = nullptr;                           // R16G16B16A16_FLOAT out/2
+    GpuImage *outY = nullptr, *outUV = nullptr;              // R8 / R8G8 out res (read back)
+    GpuImage* outYuy2 = nullptr;                             // R8G8B8A8 out/2 x out (packed YUY2, read back)
+    GpuImage* depthPlane = nullptr;                          // R8 out res: the depth camera's picture (depthout.hlsl)
 
-    Tex packed;                    // R8G8B8A8_UINT, YUY2 texels
-    Tex mainYuv, secondYuv;        // each sensor at its own size (eyeWidth x eyeHeight, SecondWidth x SecondHeight)
-    Tex workMain, workSecond;      // R32_FLOAT work res
-    Tex censusMain, censusSecond;  // R32G32_UINT work res
-    Tex dispMain, dispSecond;      // R32_FLOAT work res
-    Tex dispFill;                  // after the LR check and the fill of short gaps, -1 = still unknown
-    Tex dispHist[2];               // filled disparity, ping-pong for temporal smoothing
-    Tex leftValid;
-    Tex gfA, gfB, gfC;             // R32G32B32A32_FLOAT work res
-    Tex bokehHalf;                 // R16G16B16A16_FLOAT out/2
-    Tex outY, outUV;               // R8 / R8G8 out res
-    Tex outYuy2;                   // R8G8B8A8 out/2 x out (packed YUY2)
+    GpuBuffer* sum = nullptr;  // uint16 per (pixel, disparity)
+    GpuBuffer *hist = nullptr, *scoreBuf = nullptr, *lumaHist = nullptr, *noiseHist = nullptr;  // read back
+    GpuBuffer* meter = nullptr;  // the subject's light per cell (meter.hlsl), read back
+
     // Readback ring: the GPU fills slot N while the CPU reads slot N-1.
-    ComPtr<ID3D11Texture2D> outYStaging[2], outUVStaging[2], outYuy2Staging[2];
-
-    ComPtr<ID3D11Buffer> sum;  // raw, uint16 per (pixel, disparity)
-    ComPtr<ID3D11UnorderedAccessView> sumUav;
-    ComPtr<ID3D11ShaderResourceView> sumSrv;
-    ComPtr<ID3D11Buffer> hist, histStaging[2], scoreBuf, scoreStaging, lumaHist, lumaHistStaging[2];
-    ComPtr<ID3D11UnorderedAccessView> histUav, scoreUav, lumaHistUav;
-
-    ComPtr<ID3D11Query> disjoint[2], tsBegin[2], tsEnd[2];
     struct Slot {
-        bool depth = false, brightness = false;
+        bool depth = false, brightness = false, denoise = false, depthPlane = false, meter = false;
     } slots[2];
     int pending = -1;  // slot holding a submitted frame that has not been read back yet
     uint32_t histIndex = 0;  // which dispHist is current
+    uint32_t cleanIndex = 0;  // which clean texture holds the last denoised frame
     GpuConstants c = {};
 };
 
@@ -102,79 +100,6 @@ StereoPipeline::~StereoPipeline()
 {
     delete m_impl;
 }
-
-namespace {
-
-HRESULT MakeTex(ID3D11Device* dev, uint32_t w, uint32_t h, DXGI_FORMAT fmt, bool uav, Tex& out)
-{
-    D3D11_TEXTURE2D_DESC d = {};
-    d.Width = w;
-    d.Height = h;
-    d.MipLevels = 1;
-    d.ArraySize = 1;
-    d.Format = fmt;
-    d.SampleDesc.Count = 1;
-    d.Usage = D3D11_USAGE_DEFAULT;
-    d.BindFlags = D3D11_BIND_SHADER_RESOURCE | (uav ? D3D11_BIND_UNORDERED_ACCESS : 0);
-    HRESULT hr = dev->CreateTexture2D(&d, nullptr, &out.tex);
-    if (FAILED(hr)) return hr;
-    hr = dev->CreateShaderResourceView(out.tex.Get(), nullptr, &out.srv);
-    if (FAILED(hr)) return hr;
-    if (uav) hr = dev->CreateUnorderedAccessView(out.tex.Get(), nullptr, &out.uav);
-    return hr;
-}
-
-HRESULT MakeStaging(ID3D11Device* dev, uint32_t w, uint32_t h, DXGI_FORMAT fmt, ComPtr<ID3D11Texture2D>& out)
-{
-    D3D11_TEXTURE2D_DESC d = {};
-    d.Width = w;
-    d.Height = h;
-    d.MipLevels = 1;
-    d.ArraySize = 1;
-    d.Format = fmt;
-    d.SampleDesc.Count = 1;
-    d.Usage = D3D11_USAGE_STAGING;
-    d.CPUAccessFlags = D3D11_CPU_ACCESS_READ;
-    return dev->CreateTexture2D(&d, nullptr, &out);
-}
-
-HRESULT MakeRawBuffer(ID3D11Device* dev, uint32_t bytes, bool srv, ComPtr<ID3D11Buffer>& buf,
-    ComPtr<ID3D11UnorderedAccessView>& uav, ComPtr<ID3D11ShaderResourceView>* srvOut, ComPtr<ID3D11Buffer>* staging)
-{
-    D3D11_BUFFER_DESC d = {};
-    d.ByteWidth = bytes;
-    d.Usage = D3D11_USAGE_DEFAULT;
-    d.BindFlags = D3D11_BIND_UNORDERED_ACCESS | (srv ? D3D11_BIND_SHADER_RESOURCE : 0);
-    d.MiscFlags = D3D11_RESOURCE_MISC_BUFFER_ALLOW_RAW_VIEWS;
-    HRESULT hr = dev->CreateBuffer(&d, nullptr, &buf);
-    if (FAILED(hr)) return hr;
-    D3D11_UNORDERED_ACCESS_VIEW_DESC u = {};
-    u.Format = DXGI_FORMAT_R32_TYPELESS;
-    u.ViewDimension = D3D11_UAV_DIMENSION_BUFFER;
-    u.Buffer.NumElements = bytes / 4;
-    u.Buffer.Flags = D3D11_BUFFER_UAV_FLAG_RAW;
-    hr = dev->CreateUnorderedAccessView(buf.Get(), &u, &uav);
-    if (FAILED(hr)) return hr;
-    if (srvOut) {
-        D3D11_SHADER_RESOURCE_VIEW_DESC s = {};
-        s.Format = DXGI_FORMAT_R32_TYPELESS;
-        s.ViewDimension = D3D11_SRV_DIMENSION_BUFFEREX;
-        s.BufferEx.NumElements = bytes / 4;
-        s.BufferEx.Flags = D3D11_BUFFEREX_SRV_FLAG_RAW;
-        hr = dev->CreateShaderResourceView(buf.Get(), &s, &*srvOut);
-        if (FAILED(hr)) return hr;
-    }
-    if (staging) {
-        D3D11_BUFFER_DESC sd = {};
-        sd.ByteWidth = bytes;
-        sd.Usage = D3D11_USAGE_STAGING;
-        sd.CPUAccessFlags = D3D11_CPU_ACCESS_READ;
-        hr = dev->CreateBuffer(&sd, nullptr, &*staging);
-    }
-    return hr;
-}
-
-}  // namespace
 
 HRESULT StereoPipeline::Initialize(const StereoFormat& stereo, const OutputFormat& output)
 {
@@ -187,27 +112,30 @@ HRESULT StereoPipeline::Initialize(const StereoFormat& stereo, const OutputForma
     m_workW = stereo.eyeWidth / factor;
     m_workH = stereo.eyeHeight / factor;
 
-    D3D_FEATURE_LEVEL levels[] = {D3D_FEATURE_LEVEL_11_1, D3D_FEATURE_LEVEL_11_0};
-    HRESULT hr = D3D11CreateDevice(nullptr, D3D_DRIVER_TYPE_HARDWARE, nullptr, 0, levels, ARRAYSIZE(levels),
-        D3D11_SDK_VERSION, &m_device, nullptr, &m_ctx);
-    if (FAILED(hr)) return hr;
-    ComPtr<ID3D10Multithread> mt;
-    if (SUCCEEDED(m_ctx.As(&mt))) mt->SetMultithreadProtected(TRUE);
     delete m_impl;
-    m_impl = new Impl();
-    hr = CreateResources();
+    m_impl = nullptr;
+    m_gpu = std::make_unique<Gpu>();
+    HRESULT hr = m_gpu->Initialize();
+    if (SUCCEEDED(hr)) {
+        m_impl = new Impl();
+        hr = CreateResources();
+    }
     if (FAILED(hr)) {
         delete m_impl;
         m_impl = nullptr;
-        m_ctx.Reset();
-        m_device.Reset();
+        m_gpu.reset();
     }
     return hr;
 }
 
+std::string StereoPipeline::GpuName() const
+{
+    return m_gpu ? m_gpu->DeviceName() : std::string();
+}
+
 HRESULT StereoPipeline::CreateResources()
 {
-    auto* dev = m_device.Get();
+    auto& g = *m_gpu;
     auto& d = *m_impl;
     HRESULT hr = S_OK;
 #define TRY(x)               \
@@ -215,92 +143,56 @@ HRESULT StereoPipeline::CreateResources()
         hr = (x);            \
         if (FAILED(hr)) return hr; \
     } while (0)
-#define CS(name, blob) TRY(dev->CreateComputeShader(blob, sizeof(blob), nullptr, &d.name))
-    CS(unpack, g_unpack);
-    CS(downscale, g_downscale);
-    CS(census, g_census);
-    CS(aggregate, g_aggregate);
-    CS(wta, g_wta);
-    CS(lrfill, g_lrfill);
-    CS(holefill, g_holefill);
-    CS(guidedPrep, g_guided_prep);
-    CS(guidedBox, g_guided_box);
-    CS(guidedCoef, g_guided_coef);
-    CS(histogram, g_histogram);
-    CS(bokeh, g_bokeh);
-    CS(composite, g_composite);
-    CS(score, g_score);
-    CS(lumastats, g_lumastats);
-#undef CS
-
-    D3D11_BUFFER_DESC cb = {};
-    cb.ByteWidth = sizeof(GpuConstants);
-    cb.Usage = D3D11_USAGE_DYNAMIC;
-    cb.BindFlags = D3D11_BIND_CONSTANT_BUFFER;
-    cb.CPUAccessFlags = D3D11_CPU_ACCESS_WRITE;
-    TRY(dev->CreateBuffer(&cb, nullptr, &d.constants));
-
-    D3D11_SAMPLER_DESC sd = {};
-    sd.Filter = D3D11_FILTER_MIN_MAG_MIP_LINEAR;
-    sd.AddressU = sd.AddressV = sd.AddressW = D3D11_TEXTURE_ADDRESS_CLAMP;
-    sd.MaxLOD = D3D11_FLOAT32_MAX;
-    TRY(dev->CreateSamplerState(&sd, &d.linearClamp));
-
+    const unsigned rw = Gpu::kStorage;
+    const unsigned rwBack = Gpu::kStorage | Gpu::kReadback;
     const uint32_t ew = m_stereo.eyeWidth, eh = m_stereo.eyeHeight;
     const uint32_t ww = m_workW, wh = m_workH;
     const uint32_t ow = m_output.width, oh = m_output.height;
     // One R8G8B8A8 texel per YUY2 pair: PackedWidth pixels = PackedWidth / 2 texels.
-    TRY(MakeTex(dev, m_stereo.PackedWidth() / 2, m_stereo.PackedHeight(), DXGI_FORMAT_R8G8B8A8_UINT, false, d.packed));
-    TRY(MakeTex(dev, ew, eh, DXGI_FORMAT_R8G8B8A8_UNORM, true, d.mainYuv));
-    TRY(MakeTex(dev, m_stereo.SecondWidth(), m_stereo.SecondHeight(), DXGI_FORMAT_R8G8B8A8_UNORM, true, d.secondYuv));
+    TRY(g.CreateImage(m_stereo.PackedWidth() / 2, m_stereo.PackedHeight(), GpuFormat::RGBA8_UINT, 0, &d.packed));
+    TRY(g.CreateImage(ew, eh, GpuFormat::RGBA8_UNORM, rw, &d.mainYuv));
+    TRY(g.CreateImage(m_stereo.SecondWidth(), m_stereo.SecondHeight(), GpuFormat::RGBA8_UNORM, rw, &d.secondYuv));
+    TRY(g.CreateImage(ew, eh, GpuFormat::RGBA8_UNORM, rw, &d.clean[0]));
+    TRY(g.CreateImage(ew, eh, GpuFormat::RGBA8_UNORM, rw, &d.clean[1]));
+    TRY(g.CreateImage(ew / 4, eh / 4, GpuFormat::R32_FLOAT, rw, &d.smallCur));
+    TRY(g.CreateImage(ew / 4, eh / 4, GpuFormat::R32_FLOAT, rw, &d.smallPrev));
+    TRY(g.CreateImage(DivUp(ew, kMotionBlock), DivUp(eh, kMotionBlock), GpuFormat::RG32_UINT, rw, &d.motionCoarse));
+    TRY(g.CreateImage(DivUp(ew, kMotionBlock), DivUp(eh, kMotionBlock), GpuFormat::RG32_UINT, rw, &d.motion[0]));
+    TRY(g.CreateImage(DivUp(ew, kMotionBlock), DivUp(eh, kMotionBlock), GpuFormat::RG32_UINT, rw, &d.motion[1]));
     // Depth resources (~45 MB): a single-sensor pipeline never computes depth, so it skips them;
-    // Process binds their (null) views only to shaders that do not sample them in Main view.
+    // Process binds them (as none) only to kernels that do not read them in Main view.
     if (!m_stereo.mono) {
-        TRY(MakeTex(dev, ww, wh, DXGI_FORMAT_R32_FLOAT, true, d.workMain));
-        TRY(MakeTex(dev, ww, wh, DXGI_FORMAT_R32_FLOAT, true, d.workSecond));
-        TRY(MakeTex(dev, ww, wh, DXGI_FORMAT_R32G32_UINT, true, d.censusMain));
-        TRY(MakeTex(dev, ww, wh, DXGI_FORMAT_R32G32_UINT, true, d.censusSecond));
-        TRY(MakeTex(dev, ww, wh, DXGI_FORMAT_R32_FLOAT, true, d.dispMain));
-        TRY(MakeTex(dev, ww, wh, DXGI_FORMAT_R32_FLOAT, true, d.dispSecond));
-        TRY(MakeTex(dev, ww, wh, DXGI_FORMAT_R32_FLOAT, true, d.dispFill));
-        TRY(MakeTex(dev, ww, wh, DXGI_FORMAT_R32_FLOAT, true, d.dispHist[0]));
-        TRY(MakeTex(dev, ww, wh, DXGI_FORMAT_R32_FLOAT, true, d.dispHist[1]));
-        TRY(MakeTex(dev, ww, wh, DXGI_FORMAT_R32_FLOAT, true, d.leftValid));
-        TRY(MakeTex(dev, ww, wh, DXGI_FORMAT_R32G32B32A32_FLOAT, true, d.gfA));
-        TRY(MakeTex(dev, ww, wh, DXGI_FORMAT_R32G32B32A32_FLOAT, true, d.gfB));
-        TRY(MakeTex(dev, ww, wh, DXGI_FORMAT_R32G32B32A32_FLOAT, true, d.gfC));
-        TRY(MakeRawBuffer(dev, ww * wh * kNumDisp * 2, true, d.sum, d.sumUav, &d.sumSrv, nullptr));
+        TRY(g.CreateImage(ww, wh, GpuFormat::R32_FLOAT, rw, &d.workMain));
+        TRY(g.CreateImage(ww, wh, GpuFormat::R32_FLOAT, rw, &d.workSecond));
+        TRY(g.CreateImage(ww, wh, GpuFormat::RG32_UINT, rw, &d.censusMain));
+        TRY(g.CreateImage(ww, wh, GpuFormat::RG32_UINT, rw, &d.censusSecond));
+        TRY(g.CreateImage(ww, wh, GpuFormat::R32_FLOAT, rw, &d.dispMain));
+        TRY(g.CreateImage(ww, wh, GpuFormat::R32_FLOAT, rw, &d.dispSecond));
+        TRY(g.CreateImage(ww, wh, GpuFormat::R32_FLOAT, rw, &d.dispFill));
+        TRY(g.CreateImage(ww, wh, GpuFormat::R32_FLOAT, rw, &d.dispHist[0]));
+        TRY(g.CreateImage(ww, wh, GpuFormat::R32_FLOAT, rw, &d.dispHist[1]));
+        TRY(g.CreateImage(ww, wh, GpuFormat::R32_FLOAT, rw, &d.leftValid));
+        TRY(g.CreateImage(ww, wh, GpuFormat::RGBA32_FLOAT, rw, &d.gfA));
+        TRY(g.CreateImage(ww, wh, GpuFormat::RGBA32_FLOAT, rw, &d.gfB));
+        TRY(g.CreateImage(ww, wh, GpuFormat::RGBA32_FLOAT, rw, &d.gfC));
+        TRY(g.CreateImage(ww, wh, GpuFormat::R32_FLOAT, rw, &d.subjDisp));
+        TRY(g.CreateImage(ww, wh, GpuFormat::R32_FLOAT, rw, &d.subjCost[0]));
+        TRY(g.CreateImage(ww, wh, GpuFormat::R32_FLOAT, rw, &d.subjCost[1]));
+        TRY(g.CreateImage(ww, wh, GpuFormat::R8_UNORM, rw, &d.subjShare[0]));
+        TRY(g.CreateImage(ww, wh, GpuFormat::R8_UNORM, rw, &d.subjShare[1]));
+        TRY(g.CreateBuffer(ww * wh * kNumDisp * 2, false, &d.sum));
+        TRY(g.CreateBuffer(kMeterCellsX * kMeterCellsY * 12, true, &d.meter));
     }
-    TRY(MakeTex(dev, ow / 2, oh / 2, DXGI_FORMAT_R16G16B16A16_FLOAT, true, d.bokehHalf));
-    TRY(MakeTex(dev, ow, oh, DXGI_FORMAT_R8_UNORM, true, d.outY));
-    TRY(MakeTex(dev, ow / 2, oh / 2, DXGI_FORMAT_R8G8_UNORM, true, d.outUV));
-    for (int i = 0; i < 2; ++i) {
-        TRY(MakeStaging(dev, ow, oh, DXGI_FORMAT_R8_UNORM, d.outYStaging[i]));
-        TRY(MakeStaging(dev, ow / 2, oh / 2, DXGI_FORMAT_R8G8_UNORM, d.outUVStaging[i]));
-        TRY(MakeStaging(dev, ow / 2, oh, DXGI_FORMAT_R8G8B8A8_UNORM, d.outYuy2Staging[i]));
-    }
-    TRY(MakeTex(dev, ow / 2, oh, DXGI_FORMAT_R8G8B8A8_UNORM, true, d.outYuy2));
+    TRY(g.CreateImage(ow / 2, oh / 2, GpuFormat::RGBA16_FLOAT, rw, &d.bokehHalf));
+    TRY(g.CreateImage(ow, oh, GpuFormat::R8_UNORM, rwBack, &d.outY));
+    TRY(g.CreateImage(ow / 2, oh / 2, GpuFormat::RG8_UNORM, rwBack, &d.outUV));
+    TRY(g.CreateImage(ow / 2, oh, GpuFormat::RGBA8_UNORM, rwBack, &d.outYuy2));
+    if (!m_stereo.mono) TRY(g.CreateImage(ow, oh, GpuFormat::R8_UNORM, rwBack, &d.depthPlane));
 
-
-    TRY(MakeRawBuffer(dev, kNumDisp * 4, false, d.hist, d.histUav, nullptr, &d.histStaging[0]));
-    TRY(MakeRawBuffer(dev, 16, false, d.scoreBuf, d.scoreUav, nullptr, &d.scoreStaging));
-    TRY(MakeRawBuffer(dev, kNumDisp * 4, false, d.lumaHist, d.lumaHistUav, nullptr, &d.lumaHistStaging[0]));
-    {
-        D3D11_BUFFER_DESC sd2 = {};
-        sd2.ByteWidth = kNumDisp * 4;
-        sd2.Usage = D3D11_USAGE_STAGING;
-        sd2.CPUAccessFlags = D3D11_CPU_ACCESS_READ;
-        TRY(dev->CreateBuffer(&sd2, nullptr, &d.histStaging[1]));
-        TRY(dev->CreateBuffer(&sd2, nullptr, &d.lumaHistStaging[1]));
-    }
-
-    for (int i = 0; i < 2; ++i) {
-        D3D11_QUERY_DESC q = {D3D11_QUERY_TIMESTAMP_DISJOINT, 0};
-        TRY(dev->CreateQuery(&q, &d.disjoint[i]));
-        q.Query = D3D11_QUERY_TIMESTAMP;
-        TRY(dev->CreateQuery(&q, &d.tsBegin[i]));
-        TRY(dev->CreateQuery(&q, &d.tsEnd[i]));
-    }
+    TRY(g.CreateBuffer(kNumDisp * 4, true, &d.hist));
+    TRY(g.CreateBuffer(16, true, &d.scoreBuf));
+    TRY(g.CreateBuffer(kNumDisp * 4, true, &d.lumaHist));
+    TRY(g.CreateBuffer(kNoiseBins * 4, true, &d.noiseHist));
 #undef TRY
     return S_OK;
 }
@@ -309,10 +201,10 @@ void StereoPipeline::Reset()
 {
     std::lock_guard lock(m_lock);
     m_haveHistory = false;
+    m_haveClean = false;
+    m_noise = -1;  // another stream may run at another gain
     m_focus = -1;
-    m_focusPeak = -1;
-    m_focusCandidate = -1;
-    m_focusCandidateFrames = 0;
+    RestartFocus();
     if (m_impl) m_impl->pending = -1;
 }
 
@@ -324,7 +216,7 @@ void StereoPipeline::SetRectification(const Rectification& r)
 
 void StereoPipeline::Upload(const uint8_t* yuy2, uint32_t pitch)
 {
-    m_ctx->UpdateSubresource(m_impl->packed.tex.Get(), 0, nullptr, yuy2, pitch, pitch * m_stereo.PackedHeight());
+    m_gpu->Upload(m_impl->packed, yuy2, pitch);
 }
 
 void StereoPipeline::UpdateConstants(const EffectSettings* s, uint32_t pathDir)
@@ -381,97 +273,111 @@ void StereoPipeline::UpdateConstants(const EffectSettings* s, uint32_t pathDir)
         c.blurScale = (0.08f + 0.5f * strength) * workToOut;
         c.maxCoC = (6.0f + 26.0f * strength) * outScale;
         c.fgScale = std::clamp(s->foregroundBlur, 0.0f, 1.0f);
-        c.focusRange = std::max(0.0f, s->focusRange);
+        // The sharp zone is a depth in centimetres, which in disparity grows with the square of the
+        // subject's disparity: the ranges are set for a subject at kRangeDisparity (~70 cm away).
+        // (Within 0.3..2.5 of that: disparities ~13..38, ~1.3 m to ~45 cm.)
+        const float focus = m_focus >= 0 ? m_focus : kDefaultFocus;
+        const float depthScale = std::clamp(focus * focus / (kRangeDisparity * kRangeDisparity), 0.3f, 2.5f);
+        c.focusRange = std::max(0.0f, s->focusRange) * depthScale;
+        c.subjectRange = std::max(0.0f, s->subjectRange) * depthScale;
         c.temporalAlpha = m_haveHistory ? std::clamp(s->temporal, 0.05f, 1.0f) : 1.0f;
         c.highlightGain = std::max(0.0f, s->highlights);
         c.mode = static_cast<uint32_t>(s->mode);
-        c.focusDisp = m_focus >= 0 ? m_focus : 16.0f;
+        c.focusDisp = focus;
         c.outFormat = static_cast<uint32_t>(o.format);
         c.lumaGain = s->autoBrightness ? m_gain : 1.0f;
+        c.depthView = s->depthView;
+        // Strongest setting: a still pixel keeps 12% of each new frame (noise std / ~4 once settled).
+        const float denoise = std::clamp(s->denoise, 0.0f, 1.0f);
+        c.denoiseKeep = 1.0f - 0.88f * denoise;
+        c.denoiseSpatial = denoise;
+        c.denoiseHistory = !m_haveClean ? 0 : m_motionReady ? 2 : 1;
+        c.noiseLevel = m_noise >= 0 ? m_noise : 0.0f;
+        // Sharpening leaves alone detail no larger than the noise left in the picture, so that it
+        // brings out edges rather than grain: ~2.5 noiseLevel after a full noise reduction (~2
+        // levels in daylight, ~9 in a dim room, where it all but stops), up to 5 without one. While
+        // the noise is not known (the noise reduction off or just started), so much that it hardly
+        // sharpens.
+        c.sharpen = std::clamp(s->sharpen, 0.0f, 1.0f);
+        c.sharpenCore = m_noise >= 0 ? m_noise * (5.0f - 2.5f * denoise) : 0.03f;
     }
-
-    D3D11_MAPPED_SUBRESOURCE m;
-    if (SUCCEEDED(m_ctx->Map(m_impl->constants.Get(), 0, D3D11_MAP_WRITE_DISCARD, 0, &m))) {
-        memcpy(m.pData, &c, sizeof(c));
-        m_ctx->Unmap(m_impl->constants.Get(), 0);
-    }
+    m_gpu->SetConstants(&c, sizeof(c));
 }
-
-namespace {
-
-void Bind(ID3D11DeviceContext* ctx, ID3D11ComputeShader* cs, std::initializer_list<ID3D11ShaderResourceView*> srvs,
-    std::initializer_list<ID3D11UnorderedAccessView*> uavs)
-{
-    ID3D11ShaderResourceView* nullSrv[8] = {};
-    ID3D11UnorderedAccessView* nullUav[4] = {};
-    ctx->CSSetShaderResources(0, 8, nullSrv);
-    ctx->CSSetUnorderedAccessViews(0, 4, nullUav, nullptr);
-    ctx->CSSetShader(cs, nullptr, 0);
-    std::vector<ID3D11ShaderResourceView*> s(srvs);
-    std::vector<ID3D11UnorderedAccessView*> u(uavs);
-    if (!s.empty()) ctx->CSSetShaderResources(0, static_cast<UINT>(s.size()), s.data());
-    if (!u.empty()) ctx->CSSetUnorderedAccessViews(0, static_cast<UINT>(u.size()), u.data(), nullptr);
-}
-
-}  // namespace
 
 void StereoPipeline::RunDepth(const EffectSettings& s)
 {
-    auto* ctx = m_ctx.Get();
+    auto& g = *m_gpu;
     auto& d = *m_impl;
     const uint32_t ww = m_workW, wh = m_workH;
 
-    Bind(ctx, d.downscale.Get(), {d.mainYuv.srv.Get(), d.secondYuv.srv.Get()}, {d.workMain.uav.Get(), d.workSecond.uav.Get()});
-    ctx->Dispatch(DivUp(ww, 16), DivUp(wh, 8), 1);
-    Bind(ctx, d.census.Get(), {d.workMain.srv.Get(), d.workSecond.srv.Get()},
-        {d.censusMain.uav.Get(), d.censusSecond.uav.Get()});
-    ctx->Dispatch(DivUp(ww, 16), DivUp(wh, 8), 1);
+    g.Dispatch(Kernel::Downscale, {d.mainYuv, d.secondYuv}, {d.workMain, d.workSecond}, DivUp(ww, 16), DivUp(wh, 8));
+    g.Dispatch(Kernel::Census, {d.workMain, d.workSecond}, {d.censusMain, d.censusSecond}, DivUp(ww, 16), DivUp(wh, 8));
 
     for (uint32_t dir = 0; dir < 4; ++dir) {
         UpdateConstants(&s, dir);
-        Bind(ctx, d.aggregate.Get(), {d.censusMain.srv.Get(), d.censusSecond.srv.Get(), d.workMain.srv.Get()},
-            {d.sumUav.Get()});
-        ctx->Dispatch(dir < 2 ? wh : ww, 1, 1);
+        g.Dispatch(Kernel::Aggregate, {d.censusMain, d.censusSecond, d.workMain}, {d.sum}, dir < 2 ? wh : ww, 1);
     }
 
-    Bind(ctx, d.wta.Get(), {d.sumSrv.Get(), d.workMain.srv.Get(), d.censusMain.srv.Get(), d.censusSecond.srv.Get()},
-        {d.dispMain.uav.Get(), d.dispSecond.uav.Get()});
-    ctx->Dispatch(DivUp(ww, 16), DivUp(wh, 8), 1);
+    g.Dispatch(Kernel::Wta, {d.sum, d.workMain, d.censusMain, d.censusSecond}, {d.dispMain, d.dispSecond}, DivUp(ww, 16),
+        DivUp(wh, 8));
 
     uint32_t cur = d.histIndex ^ 1, prev = d.histIndex;
-    if (!m_haveHistory) {
-        const float minusOne[4] = {-1, -1, -1, -1};
-        ctx->ClearUnorderedAccessViewFloat(d.dispHist[prev].uav.Get(), minusOne);
-    }
-    Bind(ctx, d.lrfill.Get(), {d.dispMain.srv.Get(), d.dispSecond.srv.Get()}, {d.dispFill.uav.Get(), d.leftValid.uav.Get()});
-    ctx->Dispatch(DivUp(wh, 64), 1, 1);
-    Bind(ctx, d.holefill.Get(), {d.dispFill.srv.Get(), d.dispHist[prev].srv.Get(), d.workMain.srv.Get()},
-        {d.dispHist[cur].uav.Get()});
-    ctx->Dispatch(DivUp(ww, 16), DivUp(wh, 8), 1);
+    const bool hadHistory = m_haveHistory;
+    if (!m_haveHistory) g.ClearFloat(d.dispHist[prev], -1);
+    g.Dispatch(Kernel::LrFill, {d.dispMain, d.dispSecond}, {d.dispFill, d.leftValid}, DivUp(wh, 64), 1);
+    g.Dispatch(Kernel::HoleFill, {d.dispFill, d.dispHist[prev], d.workMain}, {d.dispHist[cur]}, DivUp(ww, 16),
+        DivUp(wh, 8));
     d.histIndex = cur;
     m_haveHistory = true;
 
     // Guided filter: means of (I, p, I^2, Ip) -> coefficients (a, b) -> their means.
-    Bind(ctx, d.guidedPrep.Get(), {d.workMain.srv.Get(), d.dispHist[cur].srv.Get()}, {d.gfA.uav.Get()});
-    ctx->Dispatch(DivUp(ww, 16), DivUp(wh, 8), 1);
-    auto box = [&](Tex& src, Tex& tmp) {
+    g.Dispatch(Kernel::GuidedPrep, {d.workMain, d.dispHist[cur]}, {d.gfA}, DivUp(ww, 16), DivUp(wh, 8));
+    auto box = [&](GpuImage* src, GpuImage* tmp) {
         UpdateConstants(&s, 0);
-        Bind(ctx, d.guidedBox.Get(), {src.srv.Get()}, {tmp.uav.Get()});
-        ctx->Dispatch(DivUp(ww, 16), DivUp(wh, 8), 1);
+        g.Dispatch(Kernel::GuidedBox, {src}, {tmp}, DivUp(ww, 16), DivUp(wh, 8));
         UpdateConstants(&s, 1);
-        Bind(ctx, d.guidedBox.Get(), {tmp.srv.Get()}, {src.uav.Get()});
-        ctx->Dispatch(DivUp(ww, 16), DivUp(wh, 8), 1);
+        g.Dispatch(Kernel::GuidedBox, {tmp}, {src}, DivUp(ww, 16), DivUp(wh, 8));
     };
     box(d.gfA, d.gfB);
-    Bind(ctx, d.guidedCoef.Get(), {d.gfA.srv.Get()}, {d.gfC.uav.Get()});
-    ctx->Dispatch(DivUp(ww, 16), DivUp(wh, 8), 1);
+    g.Dispatch(Kernel::GuidedCoef, {d.gfA}, {d.gfC}, DivUp(ww, 16), DivUp(wh, 8));
     box(d.gfC, d.gfB);
+
+    // The subject's silhouette: two rounds of the four scan directions (each from one cost image
+    // into the other; an even count ends in subjCost[0]), then its share, blended with the previous
+    // frame's while the depth history goes on.
+    if (s.subjectRange > 0) {
+        UpdateConstants(&s, 0);
+        g.Dispatch(Kernel::SubjectSeed, {d.workMain, d.gfC}, {d.subjDisp, d.subjCost[0]}, DivUp(ww, 16), DivUp(wh, 8));
+        for (uint32_t sweep = 0; sweep < 8; ++sweep) {
+            const uint32_t dir = sweep % 4;
+            UpdateConstants(&s, dir);
+            g.Dispatch(Kernel::SubjectSweep, {d.subjDisp, d.subjCost[sweep % 2]}, {d.subjCost[(sweep + 1) % 2]},
+                DivUp(dir < 2 ? wh : ww, 64), 1);
+        }
+        const bool blend = hadHistory && m_frame == m_lastShareFrame + 1;
+        UpdateConstants(&s, blend ? 1 : 0);
+        const uint32_t share = d.shareIndex ^ 1;
+        g.Dispatch(Kernel::SubjectShare, {d.subjCost[0], d.subjShare[d.shareIndex]}, {d.subjShare[share]},
+            DivUp(ww, 16), DivUp(wh, 8));
+        d.shareIndex = share;
+        m_lastShareFrame = m_frame;
+        UpdateConstants(&s, 0);
+    }
+}
+
+void StereoPipeline::RestartFocus()
+{
+    m_focusFrames = 0;
+    m_focusPeak = -1;
+    m_focusCandidate = -1;
+    m_focusCandidateFrames = 0;
 }
 
 void StereoPipeline::UpdateFocus(const uint32_t* histogram, const EffectSettings& s)
 {
     if (!s.autoFocus) {
         m_focus = std::clamp(s.manualFocus, 0.0f, 1.0f) * (kNumDisp - 1);
+        RestartFocus();  // autofocus switched back on acquires the subject anew
         return;
     }
     // Bins 0-1 collect unmatched pixels and are ignored.
@@ -483,6 +389,11 @@ void StereoPipeline::UpdateFocus(const uint32_t* histogram, const EffectSettings
                     0.25f * histogram[i + 1 < kNumDisp ? i + 1 : i];
     }
     if (total < 50) return;
+    // While a stream starts, the depth of a person (less texture than a wall, noisier in a dim
+    // room) settles over the first frames, and the first pick may be the wall behind: during
+    // acquisition the focus follows the pick at once, without the hold and the glide below.
+    const bool acquiring = m_focusFrames < kFocusAcquireFrames;
+    if (acquiring) ++m_focusFrames;
     auto share = [&](int i) {
         double mass = 0;
         for (int k = std::max(2, i - 2); k <= std::min<int>(kNumDisp - 1, i + 2); ++k) mass += histogram[k];
@@ -499,7 +410,7 @@ void StereoPipeline::UpdateFocus(const uint32_t* histogram, const EffectSettings
     if (pick < 0) pick = globalMax;
     // While the subject being followed is still there, another peak (a hand raised towards the
     // camera, a share hovering around the threshold) takes over only after kFocusSwitchFrames.
-    if (m_focusPeak >= 2 && std::abs(pick - m_focusPeak) > 2 && share(m_focusPeak) >= 0.05) {
+    if (!acquiring && m_focusPeak >= 2 && std::abs(pick - m_focusPeak) > 2 && share(m_focusPeak) >= 0.05) {
         if (std::abs(pick - m_focusCandidate) <= 2) ++m_focusCandidateFrames;
         else m_focusCandidateFrames = 1;
         m_focusCandidate = pick;
@@ -516,13 +427,55 @@ void StereoPipeline::UpdateFocus(const uint32_t* histogram, const EffectSettings
     }
     float target = wsum > 0 ? float(dsum / wsum) : float(pick);
     m_focusPeak = static_cast<int>(std::lround(target));  // follows the subject moving closer or away
-    if (m_focus < 0)
+    if (m_focus < 0 || acquiring)
         m_focus = target;
     else if (std::fabs(target - m_focus) > 0.6f)
         m_focus += (target - m_focus) * 0.15f;  // glide, like a lens refocusing
 }
 
-void StereoPipeline::UpdateGain(const uint32_t* h, const EffectSettings& s)
+StereoPipeline::SubjectLight StereoPipeline::MeasureSubject(const float* cells)
+{
+    // The subject is what the bokeh keeps sharp; its head is the top of it: the rows from the first
+    // one it covers to 40% of the way down to its last (head and shoulders, as a webcam frames a
+    // person), at least two rows.
+    SubjectLight light;
+    float rowWeight[kMeterCellsY] = {};
+    float total = 0;
+    for (uint32_t y = 0; y < kMeterCellsY; ++y) {
+        for (uint32_t x = 0; x < kMeterCellsX; ++x) rowWeight[y] += cells[(y * kMeterCellsX + x) * 3];
+        total += rowWeight[y];
+    }
+    const float coverage = total / float(kMeterCellsX * kMeterCellsY * kMeterSamples);
+    const float rowMin = 0.08f * kMeterCellsX * kMeterSamples;  // ~2.5 cells of a row
+    int top = -1, bottom = -1;
+    for (uint32_t y = 0; y < kMeterCellsY; ++y) {
+        if (rowWeight[y] < rowMin) continue;
+        if (top < 0) top = int(y);
+        bottom = int(y);
+    }
+    if (top < 0 || coverage < 0.02f) return light;
+    const int headRows = std::max(2, int(std::lround(0.4 * (bottom - top + 1))));
+    double weight = 0, luma = 0;
+    for (int y = top; y < std::min<int>(top + headRows, kMeterCellsY); ++y) {
+        for (uint32_t x = 0; x < kMeterCellsX; ++x) {
+            weight += cells[(y * kMeterCellsX + x) * 3];
+            luma += cells[(y * kMeterCellsX + x) * 3 + 1];
+        }
+    }
+    if (weight <= 0) return light;
+    light.valid = true;
+    light.headLuma = float(luma / weight);
+    // A small subject (far away, or the focus on a patch of wall) counts less, and so does one
+    // filling most of the picture (an empty room or a wall in focus, not a person).
+    auto smooth = [](float a, float b, float x) {
+        const float t = std::clamp((x - a) / (b - a), 0.0f, 1.0f);
+        return t * t * (3 - 2 * t);
+    };
+    light.confidence = smooth(0.02f, 0.06f, coverage) * (1 - smooth(0.5f, 0.8f, coverage));
+    return light;
+}
+
+void StereoPipeline::UpdateGain(const uint32_t* h, const EffectSettings& s, const SubjectLight& subject)
 {
     double total = 0, mean = 0;
     for (uint32_t i = 0; i < kNumDisp; ++i) {
@@ -542,79 +495,155 @@ void StereoPipeline::UpdateGain(const uint32_t* h, const EffectSettings& s)
         }
     }
     double whiteLevel = (white + 1.0) / kNumDisp;
-    double target = std::min({1.0 / whiteLevel, 0.42 / std::max(mean, 1e-3), double(std::max(1.0f, s.maxGain))});
+    const double maxGain = std::max(1.0f, s.maxGain);
+    double target = std::min({1.0 / whiteLevel, kFrameTarget / std::max(mean, 1e-3), maxGain});
+    // With depth the exposure is the subject's: its head at kSubjectTarget whatever the rest of the
+    // picture does, so a face against a bright window is not left dark (the window goes white under
+    // the soft shoulder of composite.hlsl) and a face lit by a screen in a dark room is not blown out.
+    if (subject.valid) {
+        const double onSubject = std::min(kSubjectTarget / std::max<double>(subject.headLuma, 1e-3), maxGain);
+        target += (onSubject - target) * subject.confidence;
+    }
     target = std::max(1.0, target);
     m_gain += float(target - m_gain) * 0.08f;  // like a camera AE: settle over about half a second
 }
 
+void StereoPipeline::UpdateNoise(const uint32_t* h)
+{
+    // The still scene's change from the lower quarter of the distribution (for the half-normal
+    // distribution of noise the 25th percentile is 0.32 sigma and the median, which the shader works
+    // with, 0.67), so that motion in part of the picture raises it little: a quarter of the picture
+    // moving by ~1.4x, half of it by ~2x. When even the lower quarter is in the last bin, nearly
+    // everything changed (a pan, an exposure step): no measurement. The level rises slowly and falls
+    // quickly, so a moment of such change does not make the filter blend motion into the history.
+    double total = 0;
+    for (uint32_t i = 0; i < kNoiseBins; ++i) total += h[i];
+    if (total < 1000) return;
+    const double want = total * 0.25;
+    double acc = 0;
+    float quartile = -1;
+    for (uint32_t i = 0; i + 1 < kNoiseBins; ++i) {
+        if (acc + h[i] >= want) {
+            quartile = i + float((want - acc) / h[i]);
+            break;
+        }
+        acc += h[i];
+    }
+    if (quartile < 0) return;
+    const float level = quartile * kNoiseBinWidth * (0.674f / 0.319f);
+    m_noise = m_noise < 0 ? level : m_noise + (level - m_noise) * (level > m_noise ? 0.05f : 0.2f);
+}
+
 HRESULT StereoPipeline::Process(const uint8_t* yuy2, uint32_t yuy2Pitch, const EffectSettings& requested, uint8_t* dst,
-    uint8_t* dstUV, uint32_t dstPitch, FrameStats* stats)
+    uint8_t* dstUV, uint32_t dstPitch, FrameStats* stats, DepthPlane* depth)
 {
     std::lock_guard lock(m_lock);
+    if (depth) depth->written = false;
     if (!m_impl) return E_NOT_VALID_STATE;
     EffectSettings s = requested;
     if (m_stereo.mono) s.mode = ViewMode::Main;  // no second sensor: no depth, no side-by-side
-    auto* ctx = m_ctx.Get();
+    auto& g = *m_gpu;
     auto& d = *m_impl;
     const uint32_t ow = m_output.width, oh = m_output.height;
     const int slot = (d.pending == 0) ? 1 : 0;
+    // The second sensor view shows no main sensor image to clean up.
+    const bool denoise = s.denoise > 0.0f && s.mode != ViewMode::Second;
+    if (denoise && m_frame != m_lastDenoiseFrame + 1) m_haveClean = false;  // it was off: history is stale
+    // Motion compensation needs this frame's vectors and the previous frame's to check them against.
+    m_motionReady = denoise && m_haveClean && s.motionCompensation && m_frame == m_lastMotionFrame + 1;
+    // The noise is measured by the noise reduction only: without it a level measured earlier, in
+    // other light, would mislead the sharpening.
+    if (!denoise) m_noise = -1;
 
-    ctx->Begin(d.disjoint[slot].Get());
-    ctx->End(d.tsBegin[slot].Get());
+    g.BeginTiming(slot);
 
     Upload(yuy2, yuy2Pitch);
     UpdateConstants(&s, 0);
-    ID3D11Buffer* cbs[] = {d.constants.Get()};
-    ctx->CSSetConstantBuffers(0, 1, cbs);
-    ID3D11SamplerState* samplers[] = {d.linearClamp.Get()};
-    ctx->CSSetSamplers(0, 1, samplers);
 
-    Bind(ctx, d.unpack.Get(), {d.packed.srv.Get()}, {d.mainYuv.uav.Get(), d.secondYuv.uav.Get()});
-    ctx->Dispatch(DivUp(m_stereo.eyeWidth / 2, 16), DivUp(m_stereo.eyeHeight, 8), 1);
+    g.Dispatch(Kernel::Unpack, {d.packed}, {d.mainYuv, d.secondYuv}, DivUp(m_stereo.eyeWidth / 2, 16),
+        DivUp(m_stereo.eyeHeight, 8));
     d.slots[slot].brightness = s.autoBrightness;
     if (s.autoBrightness) {
-        const UINT zeros[4] = {};
-        ctx->ClearUnorderedAccessViewUint(d.lumaHistUav.Get(), zeros);
-        Bind(ctx, d.lumastats.Get(), {d.mainYuv.srv.Get()}, {d.lumaHistUav.Get()});
-        ctx->Dispatch(DivUp(m_stereo.eyeWidth / 8, 16), DivUp(m_stereo.eyeHeight / 8, 8), 1);
-        ctx->CopyResource(d.lumaHistStaging[slot].Get(), d.lumaHist.Get());
+        g.ClearUint(d.lumaHist);
+        g.Dispatch(Kernel::LumaStats, {d.mainYuv}, {d.lumaHist}, DivUp(m_stereo.eyeWidth / 8, 16),
+            DivUp(m_stereo.eyeHeight / 8, 8));
+        g.CopyToReadback(d.lumaHist, slot);
+    }
+    // What the picture is made of: the denoised main sensor image, or the raw one. Stereo matching
+    // keeps the raw image (census does not mind the noise, and a history there would lag behind
+    // motion); the full-resolution guide of the disparity (DisparityAt) is the picture, whose
+    // edges are where the blur has to follow, and its smaller noise only steadies the disparity.
+    GpuImage* image = d.mainYuv;
+    d.slots[slot].denoise = denoise && m_haveClean;  // only then the shader fills the noise histogram
+    if (denoise) {
+        const uint32_t cur = d.cleanIndex ^ 1;
+        const uint32_t ew = m_stereo.eyeWidth, eh = m_stereo.eyeHeight;
+        const uint32_t motionCur = d.motionIndex ^ 1;
+        if (m_haveClean && s.motionCompensation) {
+            g.Dispatch(Kernel::MotionDown, {d.mainYuv, d.clean[d.cleanIndex]}, {d.smallCur, d.smallPrev},
+                DivUp(ew / 4, 16), DivUp(eh / 4, 8));
+            g.Dispatch(Kernel::MotionSearch, {d.smallCur, d.smallPrev}, {d.motionCoarse}, DivUp(ew, kMotionBlock),
+                DivUp(eh, kMotionBlock));
+            g.Dispatch(Kernel::MotionRefine, {d.mainYuv, d.clean[d.cleanIndex], d.motionCoarse},
+                {d.motion[motionCur]}, DivUp(ew, kMotionBlock), DivUp(eh, kMotionBlock));
+            d.motionIndex = motionCur;
+            m_lastMotionFrame = m_frame;
+        }
+        g.ClearUint(d.noiseHist);
+        g.Dispatch(Kernel::Denoise, {d.mainYuv, d.clean[d.cleanIndex], d.motion[motionCur], d.motion[motionCur ^ 1]},
+            {d.clean[cur], d.noiseHist}, DivUp(ew, 16), DivUp(eh, 8));
+        if (d.slots[slot].denoise) g.CopyToReadback(d.noiseHist, slot);
+        d.cleanIndex = cur;
+        m_haveClean = true;
+        m_lastDenoiseFrame = m_frame;
+        image = d.clean[cur];
     }
 
     const bool needDepth = s.mode == ViewMode::Bokeh || s.mode == ViewMode::Depth || s.mode == ViewMode::DebugRaw ||
-                           s.mode == ViewMode::DebugFilled;
+                           s.mode == ViewMode::DebugFilled || s.mode == ViewMode::DebugHoles ||
+                           s.mode == ViewMode::DebugGrey || s.mode == ViewMode::DebugBlend ||
+                           (s.depthPlane && !m_stereo.mono);
     d.slots[slot].depth = needDepth;
     if (needDepth) {
-        if (m_frame != m_lastDepthFrame + 1) m_haveHistory = false;  // depth was off: history is stale
+        if (m_frame != m_lastDepthFrame + 1) {  // depth was off: its history and the focus are stale
+            m_haveHistory = false;
+            RestartFocus();
+        }
         m_lastDepthFrame = m_frame;
         RunDepth(s);
         UpdateConstants(&s, 0);
-        const UINT zero[4] = {};
-        ctx->ClearUnorderedAccessViewUint(d.histUav.Get(), zero);
-        Bind(ctx, d.histogram.Get(), {d.mainYuv.srv.Get(), d.gfC.srv.Get()}, {d.histUav.Get()});
-        ctx->Dispatch(DivUp(ow / 4, 16), DivUp(oh / 4, 8), 1);
-        ctx->CopyResource(d.histStaging[slot].Get(), d.hist.Get());
+        g.ClearUint(d.hist);
+        g.Dispatch(Kernel::Histogram, {image, d.gfC}, {d.hist}, DivUp(ow / 4, 16), DivUp(oh / 4, 8));
+        g.CopyToReadback(d.hist, slot);
     }
-    if (s.mode == ViewMode::Bokeh) {
-        Bind(ctx, d.bokeh.Get(), {d.mainYuv.srv.Get(), d.gfC.srv.Get()}, {d.bokehHalf.uav.Get()});
-        ctx->Dispatch(DivUp(ow / 2, 16), DivUp(oh / 2, 8), 1);
+    // With depth the auto brightness meters the subject (meter.hlsl: 32x18 cells, 8x8 per group).
+    d.slots[slot].meter = needDepth && s.autoBrightness;
+    if (d.slots[slot].meter) {
+        g.Dispatch(Kernel::Meter, {image, d.gfC, d.Share()}, {d.meter}, DivUp(kMeterCellsX, 8),
+            DivUp(kMeterCellsY, 8));
+        g.CopyToReadback(d.meter, slot);
     }
+    if (s.mode == ViewMode::Bokeh)
+        g.Dispatch(Kernel::Bokeh, {image, d.gfC, d.Share()}, {d.bokehHalf}, DivUp(ow / 2, 16), DivUp(oh / 2, 8));
     const bool packedOut = m_output.format == PixelFormat::YUY2;
-    Bind(ctx, d.composite.Get(),
-        {d.mainYuv.srv.Get(), d.gfC.srv.Get(), d.bokehHalf.srv.Get(), d.secondYuv.srv.Get(), d.dispMain.srv.Get(),
-            d.dispFill.srv.Get()},
-        {d.outY.uav.Get(), d.outUV.uav.Get(), d.outYuy2.uav.Get()});
-    ctx->Dispatch(DivUp(ow / 2, 16), DivUp(oh / 2, 8), 1);
-    Bind(ctx, nullptr, {}, {});
+    g.Dispatch(Kernel::Composite,
+        {image, d.gfC, d.bokehHalf, d.secondYuv, d.dispMain, d.dispFill, d.dispHist[d.histIndex], d.Share()},
+        {d.outY, d.outUV, d.outYuy2}, DivUp(ow / 2, 16), DivUp(oh / 2, 8));
+    d.slots[slot].depthPlane = s.depthPlane && !m_stereo.mono;
+    if (d.slots[slot].depthPlane) {
+        g.Dispatch(Kernel::DepthOut, {image, d.gfC, d.Share()}, {d.depthPlane}, DivUp(ow, 16), DivUp(oh, 8));
+        g.CopyToReadback(d.depthPlane, slot);
+    }
+    g.Unbind();
 
     if (packedOut) {
-        ctx->CopyResource(d.outYuy2Staging[slot].Get(), d.outYuy2.tex.Get());
+        g.CopyToReadback(d.outYuy2, slot);
     } else {
-        ctx->CopyResource(d.outYStaging[slot].Get(), d.outY.tex.Get());
-        ctx->CopyResource(d.outUVStaging[slot].Get(), d.outUV.tex.Get());
+        g.CopyToReadback(d.outY, slot);
+        g.CopyToReadback(d.outUV, slot);
     }
-    ctx->End(d.tsEnd[slot].Get());
-    ctx->End(d.disjoint[slot].Get());
-    ctx->Flush();  // start the GPU now; it runs while we read back the previous frame
+    g.EndTiming(slot);
+    g.Flush();  // start the GPU now; it runs while we read back the previous frame
 
     // Deliver the previous frame (normally finished long ago). The very first frame only primes
     // the ring, so the caller gets S_FALSE once.
@@ -623,71 +652,77 @@ HRESULT StereoPipeline::Process(const uint8_t* yuy2, uint32_t yuy2Pitch, const E
     ++m_frame;
     if (read < 0) return S_FALSE;
 
-    auto readPlane = [&](ID3D11Texture2D* staging, uint8_t* out, uint32_t rows, uint32_t rowBytes) {
-        D3D11_MAPPED_SUBRESOURCE m;
-        HRESULT hr = ctx->Map(staging, 0, D3D11_MAP_READ, 0, &m);
+    auto readPlane = [&](GpuImage* image, uint8_t* out, uint32_t rows, uint32_t rowBytes, uint32_t pitch) {
+        GpuMapped m;
+        HRESULT hr = g.Map(image, read, &m);
         if (FAILED(hr)) return hr;
+        if (m.rowPitch < rowBytes) {
+            g.Unmap(image, read);
+            return E_FAIL;
+        }
         for (uint32_t y = 0; y < rows; ++y)
-            memcpy(out + size_t(y) * dstPitch, static_cast<const uint8_t*>(m.pData) + size_t(y) * m.RowPitch, rowBytes);
-        ctx->Unmap(staging, 0);
+            memcpy(out + size_t(y) * pitch, m.data + size_t(y) * m.rowPitch, rowBytes);
+        g.Unmap(image, read);
         return S_OK;
     };
-    HRESULT hr = packedOut ? readPlane(d.outYuy2Staging[read].Get(), dst, oh, ow * 2)
-                           : readPlane(d.outYStaging[read].Get(), dst, oh, ow);
-    if (SUCCEEDED(hr) && !packedOut) hr = readPlane(d.outUVStaging[read].Get(), dstUV, oh / 2, ow);
+    HRESULT hr = packedOut ? readPlane(d.outYuy2, dst, oh, ow * 2, dstPitch) : readPlane(d.outY, dst, oh, ow, dstPitch);
+    if (SUCCEEDED(hr) && !packedOut) hr = readPlane(d.outUV, dstUV, oh / 2, ow, dstPitch);
     if (FAILED(hr)) return hr;
+    if (depth && depth->data && depth->pitch >= ow && d.slots[read].depthPlane &&
+        SUCCEEDED(readPlane(d.depthPlane, depth->data, oh, ow, depth->pitch)))
+        depth->written = true;
 
-    if (d.slots[read].brightness) {
-        D3D11_MAPPED_SUBRESOURCE lm;
-        if (SUCCEEDED(ctx->Map(d.lumaHistStaging[read].Get(), 0, D3D11_MAP_READ, 0, &lm))) {
-            UpdateGain(static_cast<const uint32_t*>(lm.pData), s);
-            ctx->Unmap(d.lumaHistStaging[read].Get(), 0);
+    auto withHistogram = [&](GpuBuffer* buffer, auto use) {
+        GpuMapped m;
+        if (SUCCEEDED(g.Map(buffer, read, &m))) {
+            use(reinterpret_cast<const uint32_t*>(m.data));
+            g.Unmap(buffer, read);
+        }
+    };
+    SubjectLight subject;
+    if (d.slots[read].meter) {
+        GpuMapped m;
+        if (SUCCEEDED(g.Map(d.meter, read, &m))) {
+            subject = MeasureSubject(reinterpret_cast<const float*>(m.data));
+            g.Unmap(d.meter, read);
         }
     }
-    if (d.slots[read].depth) {
-        D3D11_MAPPED_SUBRESOURCE hm;
-        if (SUCCEEDED(ctx->Map(d.histStaging[read].Get(), 0, D3D11_MAP_READ, 0, &hm))) {
-            UpdateFocus(static_cast<const uint32_t*>(hm.pData), s);
-            ctx->Unmap(d.histStaging[read].Get(), 0);
-        }
-    }
+    m_subjectLuma = subject.valid ? subject.headLuma : 0.0f;
+    if (d.slots[read].brightness) withHistogram(d.lumaHist, [&](const uint32_t* h) { UpdateGain(h, s, subject); });
+    if (d.slots[read].depth) withHistogram(d.hist, [&](const uint32_t* h) { UpdateFocus(h, s); });
+    if (d.slots[read].denoise) withHistogram(d.noiseHist, [&](const uint32_t* h) { UpdateNoise(h); });
 
     if (stats) {
-        D3D11_QUERY_DATA_TIMESTAMP_DISJOINT dj = {};
-        UINT64 t0 = 0, t1 = 0;
-        if (ctx->GetData(d.disjoint[read].Get(), &dj, sizeof(dj), D3D11_ASYNC_GETDATA_DONOTFLUSH) == S_OK &&
-            !dj.Disjoint && dj.Frequency &&
-            ctx->GetData(d.tsBegin[read].Get(), &t0, sizeof(t0), D3D11_ASYNC_GETDATA_DONOTFLUSH) == S_OK &&
-            ctx->GetData(d.tsEnd[read].Get(), &t1, sizeof(t1), D3D11_ASYNC_GETDATA_DONOTFLUSH) == S_OK)
-            stats->gpuMs = float(double(t1 - t0) * 1000.0 / dj.Frequency);
+        float ms = 0;
+        if (g.TimingMs(read, &ms)) stats->gpuMs = ms;
         stats->focusDisparity = m_focus;
         stats->gain = s.autoBrightness ? m_gain : 1.0f;
+        stats->noise = std::max(m_noise, 0.0f);
+        stats->subjectLuma = m_subjectLuma;
     }
     return S_OK;
 }
+
 float StereoPipeline::ScoreAlignment(float dy, float rotationDeg)
 {
-    auto* ctx = m_ctx.Get();
+    auto& g = *m_gpu;
     auto& d = *m_impl;
     m_rect.dy = dy;
     m_rect.rotation = rotationDeg;
     UpdateConstants(nullptr, 0);
-    Bind(ctx, d.downscale.Get(), {d.mainYuv.srv.Get(), d.secondYuv.srv.Get()}, {d.workMain.uav.Get(), d.workSecond.uav.Get()});
-    ctx->Dispatch(DivUp(m_workW, 16), DivUp(m_workH, 8), 1);
-    Bind(ctx, d.census.Get(), {d.workMain.srv.Get(), d.workSecond.srv.Get()},
-        {d.censusMain.uav.Get(), d.censusSecond.uav.Get()});
-    ctx->Dispatch(DivUp(m_workW, 16), DivUp(m_workH, 8), 1);
-    const UINT zero[4] = {};
-    ctx->ClearUnorderedAccessViewUint(d.scoreUav.Get(), zero);
-    Bind(ctx, d.score.Get(), {d.censusMain.srv.Get(), d.censusSecond.srv.Get()}, {d.scoreUav.Get()});
-    ctx->Dispatch(DivUp(m_workW, 16), DivUp(m_workH, 8), 1);
-    Bind(ctx, nullptr, {}, {});
-    ctx->CopyResource(d.scoreStaging.Get(), d.scoreBuf.Get());
-    D3D11_MAPPED_SUBRESOURCE m;
-    if (FAILED(ctx->Map(d.scoreStaging.Get(), 0, D3D11_MAP_READ, 0, &m))) return 1e9f;
-    const uint32_t* v = static_cast<const uint32_t*>(m.pData);
+    g.Dispatch(Kernel::Downscale, {d.mainYuv, d.secondYuv}, {d.workMain, d.workSecond}, DivUp(m_workW, 16),
+        DivUp(m_workH, 8));
+    g.Dispatch(Kernel::Census, {d.workMain, d.workSecond}, {d.censusMain, d.censusSecond}, DivUp(m_workW, 16),
+        DivUp(m_workH, 8));
+    g.ClearUint(d.scoreBuf);
+    g.Dispatch(Kernel::Score, {d.censusMain, d.censusSecond}, {d.scoreBuf}, DivUp(m_workW, 16), DivUp(m_workH, 8));
+    g.Unbind();
+    g.CopyToReadback(d.scoreBuf, 0);
+    GpuMapped m;
+    if (FAILED(g.Map(d.scoreBuf, 0, &m))) return 1e9f;
+    const uint32_t* v = reinterpret_cast<const uint32_t*>(m.data);
     float score = v[1] > 500 ? float(v[0]) / v[1] : 1e9f;
-    ctx->Unmap(d.scoreStaging.Get(), 0);
+    g.Unmap(d.scoreBuf, 0);
     return score;
 }
 
@@ -695,17 +730,12 @@ HRESULT StereoPipeline::Calibrate(const uint8_t* yuy2, uint32_t yuy2Pitch, Recti
 {
     std::lock_guard lock(m_lock);
     if (!m_impl || m_stereo.mono) return E_NOT_VALID_STATE;
-    auto* ctx = m_ctx.Get();
     auto& d = *m_impl;
     Rectification saved = m_rect;
     Upload(yuy2, yuy2Pitch);
     UpdateConstants(nullptr, 0);
-    ID3D11Buffer* cbs[] = {d.constants.Get()};
-    ctx->CSSetConstantBuffers(0, 1, cbs);
-    ID3D11SamplerState* samplers[] = {d.linearClamp.Get()};
-    ctx->CSSetSamplers(0, 1, samplers);
-    Bind(ctx, d.unpack.Get(), {d.packed.srv.Get()}, {d.mainYuv.uav.Get(), d.secondYuv.uav.Get()});
-    ctx->Dispatch(DivUp(m_stereo.eyeWidth / 2, 16), DivUp(m_stereo.eyeHeight, 8), 1);
+    m_gpu->Dispatch(Kernel::Unpack, {d.packed}, {d.mainYuv, d.secondYuv}, DivUp(m_stereo.eyeWidth / 2, 16),
+        DivUp(m_stereo.eyeHeight, 8));
 
     // Bail out cheaply on dark or featureless frames.
     if (ScoreAlignment(0, 0) >= 1e8f) {
@@ -739,6 +769,7 @@ HRESULT StereoPipeline::Calibrate(const uint8_t* yuy2, uint32_t yuy2Pitch, Recti
     }
     m_rect = {bestDy, bestRot, best};
     m_haveHistory = false;
+    RestartFocus();  // the disparities shift with the new alignment
     if (result) *result = m_rect;
     return S_OK;
 }

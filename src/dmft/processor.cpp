@@ -6,6 +6,7 @@
 #include <algorithm>
 #include <cmath>
 
+#include "../common/effect.h"
 #include "../common/log.h"
 #include "../common/settings.h"
 
@@ -65,13 +66,35 @@ bool FrameProcessor::Configure(IMFMediaType* input, IMFMediaType* output)
     m_formatText = text;
     RefreshSettings(true);
     Log(L"processing %ux%u@%u (%ls) into %ls", inW, inH, inFps, mode.key, text);
+    if (!m_flickerStarted) {  // not again when the effect only switches the sensor mode
+        m_flickerStarted = true;
+        if (m_powerLineHeld) m_flicker.Hold();  // the app chose before starting
+        else m_powerLineRequest = m_flicker.Start(static_cast<AntiFlicker>(m_antiFlicker), m_mains60);
+    }
     return true;
+}
+
+void FrameProcessor::HoldPowerLine()
+{
+    if (!m_powerLineHeld) Log(L"an app set the anti-flicker itself: it stands for this stream");
+    m_powerLineHeld = true;
+    m_flicker.Hold();
+    m_powerLineRequest = -1;
+}
+
+int FrameProcessor::TakePowerLineRequest()
+{
+    const int v = m_powerLineRequest;
+    m_powerLineRequest = -1;
+    return v;
 }
 
 void FrameProcessor::Reset()
 {
     m_pipeline.reset();  // releases the GPU device and its ~65 MB while nobody streams
     m_lastTime = -1;
+    m_flickerStarted = false;
+    m_powerLineHeld = false;
     if (!m_configured) return;  // a transform that never streamed: another one may be streaming now
     m_configured = false;
     Status st;
@@ -82,7 +105,8 @@ void FrameProcessor::Reset()
 const wchar_t* FrameProcessor::WantedKey()
 {
     RefreshSettings(false);
-    return ps5cam::WantedKey(m_effect.mode);
+    // The depth camera needs the second sensor even when the picture does not.
+    return m_depth.Wanted() ? kHalfKey : ps5cam::WantedKey(m_effect.mode);
 }
 
 void FrameProcessor::RefreshSettings(bool force)
@@ -91,20 +115,20 @@ void FrameProcessor::RefreshSettings(bool force)
     if (!force && now - m_settingsTick < 500) return;
     m_settingsTick = now;
     Settings s = LoadSettings();
-    m_effect.mode = static_cast<ViewMode>(s.mode);
-    m_effect.blurStrength = s.blur / 100.0f;
-    m_effect.autoFocus = s.autoFocus;
-    m_effect.manualFocus = s.focus / 100.0f;
-    m_effect.highlights = s.highlights / 100.0f;
-    m_effect.temporal = s.temporal / 100.0f;
-    m_effect.autoBrightness = s.autoBrightness;
-    m_effect.maxGain = s.maxGain / 10.0f;
-    // The tray bumps Request; Handled records the last one served.
-    if (LoadCalibrationRequest() != LoadCalibrationHandled() && !m_calibPending) {
-        m_calibPending = true;
-        m_calibFailures = 0;
-        m_nextCalibFrame = m_frameCount + 10;
+    ApplySettings(s, m_effect);
+    const bool mains60 = Mains60(s);
+    if (!m_settingsLoaded) {
+        m_settingsLoaded = true;  // the first reading is no change of the setting
+        m_antiFlicker = s.antiFlicker;
+        m_mains60 = mains60;
+    } else if (s.antiFlicker != m_antiFlicker || mains60 != m_mains60) {
+        m_antiFlicker = s.antiFlicker;
+        m_mains60 = mains60;
+        m_powerLineHeld = false;  // the user's choice now
+        if (m_flickerStarted) m_powerLineRequest = m_flicker.Start(static_cast<AntiFlicker>(m_antiFlicker), m_mains60);
     }
+    // The tray bumps Request; Handled records the last one served.
+    if (LoadCalibrationRequest() != LoadCalibrationHandled()) m_calib.Request(m_frameCount);
 }
 
 bool FrameProcessor::EnsurePipeline()
@@ -128,28 +152,23 @@ bool FrameProcessor::EnsurePipeline()
         StoredCalibration full = LoadCalibration(L"1080");
         if (full.valid) p->SetRectification({-full.dy, -full.rotation, 0});
     }
-    m_calibPending = !m_stereo.mono && (!cal.valid || LoadCalibrationRequest() != LoadCalibrationHandled());
-    m_calibFailures = 0;
-    m_nextCalibFrame = m_frameCount + 10;
+    m_calib.Start(!m_stereo.mono && (!cal.valid || LoadCalibrationRequest() != LoadCalibrationHandled()), m_frameCount);
     m_pipeline = std::move(p);
     return true;
 }
 
 void FrameProcessor::Calibrate(const uint8_t* yuy2, uint32_t pitch)
 {
-    if (!m_calibPending || m_stereo.mono || m_frameCount < m_nextCalibFrame) return;
+    if (m_stereo.mono || !m_calib.Due(m_frameCount)) return;
     Rectification r;
     uint32_t request = LoadCalibrationRequest();
     if (SUCCEEDED(m_pipeline->Calibrate(yuy2, pitch, &r))) {
-        m_calibPending = false;
-        m_calibFailures = 0;
+        m_calib.Succeeded();
         SaveCalibration(m_mode.key, {true, r.dy, r.rotation});
         SaveCalibrationHandled(request);
         Log(L"calibrated %ls: dy %.2f roll %.2f (score %.2f)", m_mode.key, r.dy, r.rotation, r.quality);
     } else {
-        // Dark or featureless scene: back off (1 s, 2 s, 4 s ... up to 16 s at 30 fps).
-        m_calibFailures = std::min<uint32_t>(m_calibFailures + 1, 5);
-        m_nextCalibFrame = m_frameCount + (30u << (m_calibFailures - 1)) * std::max<uint32_t>(m_fps / 30, 1);
+        m_calib.Failed(m_frameCount, m_fps);  // dark or featureless scene
     }
 }
 
@@ -205,14 +224,24 @@ ComPtr<IMFSample> FrameProcessor::Process(IMFSample* input)
     if (!otherMode && pitch >= static_cast<LONG>(rowBytes) && available >= size_t(pitch) * (rows - 1) + rowBytes) {
         ++m_frameCount;
         Calibrate(scan0, static_cast<uint32_t>(pitch));
+        MainRowMeans(scan0, static_cast<uint32_t>(pitch), m_stereo, m_rowMeans);
+        if (const int pl = m_flicker.Update(m_rowMeans); pl >= 0) {
+            m_powerLineRequest = pl;
+            Log(pl == kPowerLineOff ? L"dim scene: anti-flicker off for a longer exposure"
+                                    : L"lamp flicker seen (score %.4f): anti-flicker back to 50 Hz",
+                m_flicker.Score());
+        }
         BYTE* dst = nullptr;
         LONG dstPitch = 0;
         ComPtr<IMF2DBuffer2> lock;
         out.Attach(NewOutputSample(&dst, &dstPitch, lock));
         if (out) {
             FrameStats st;
-            HRESULT hr = m_pipeline->Process(scan0, static_cast<uint32_t>(pitch), m_effect, dst,
-                dst + size_t(dstPitch) * m_output.height, static_cast<uint32_t>(dstPitch), &st);
+            DepthPlane* plane = m_depth.Plane(m_output.width, m_output.height);
+            EffectSettings effect = m_effect;
+            effect.depthPlane = plane != nullptr;
+            HRESULT hr = m_pipeline->Process(scan0, static_cast<uint32_t>(pitch), effect, dst,
+                dst + size_t(dstPitch) * m_output.height, static_cast<uint32_t>(dstPitch), &st, plane);
             lock->Unlock2D();
             LONGLONG time = 0, previous = m_lastTime;
             m_lastTime = SUCCEEDED(input->GetSampleTime(&time)) ? time : MFGetSystemTime();
@@ -230,6 +259,7 @@ ComPtr<IMFSample> FrameProcessor::Process(IMFSample* input)
                 m_lastGpuMs = st.gpuMs;
                 m_lastFocus = st.focusDisparity;
                 out->SetSampleTime(previous);
+                m_depth.Publish(previous);
                 out->SetSampleDuration(10'000'000LL / std::max<uint32_t>(m_fps, 1));
                 ++m_framesInWindow;
                 PublishStatus();

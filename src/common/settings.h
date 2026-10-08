@@ -6,20 +6,28 @@
 #include <cstdint>
 #include <string>
 
+#include "../core/picture.h"
+
 namespace ps5cam {
 
-struct Settings {
-    uint32_t mode = 0;        // ViewMode
-    uint32_t blur = 60;       // 0..100
-    bool autoFocus = true;
-    uint32_t focus = 50;      // manual focus 0 (far) .. 100 (near)
+// The picture settings shared with Linux (mode, blur, focus, ... anti-flicker) and Windows' own.
+struct Settings : PictureSettings {
     bool prefer60 = true;     // list 60 fps media types first
     bool fullHdOnly = true;   // offer apps 1920x1080 at 60 fps only (else also 1280x720 and 30 fps)
-    uint32_t highlights = 150;  // bokeh highlight gain x100
-    uint32_t temporal = 40;   // temporal weight x100
-    bool autoBrightness = true;
-    uint32_t maxGain = 60;    // x10
+    uint32_t blurStyle = 0;   // kBlurPortrait / kBlurStandard: what Windows' "Background effects" chose
+    uint32_t mainsHz = 0;     // 50 / 60 by the signed-in user's region (tray, installer); 0 unknown
+    bool depthCamera = false; // the "PS5 Camera Depth" virtual camera (the service registers it)
+    uint32_t depthView = 0;   // what it shows: 0 depth (near = bright), 1 subject matte
 };
+
+// Mains frequency (50 or 60) where the account running this lives, by the country Windows is set
+// to. In Frame Server (LOCAL SERVICE) that is not the user's: there Settings::mainsHz counts.
+uint32_t RegionMainsHz();
+inline bool Mains60(const Settings& s) { return (s.mainsHz ? s.mainsHz : RegionMainsHz()) == 60; }
+
+// Windows' camera effects: "Portrait blur" is our bokeh as it is, "Standard blur" the strongest.
+constexpr uint32_t kBlurPortrait = 0;
+constexpr uint32_t kBlurStandard = 1;
 
 struct Status {
     bool streaming = false;
@@ -38,6 +46,9 @@ struct StoredCalibration {
 
 Settings LoadSettings();
 bool SaveSettings(const Settings& s);
+// One value (its registry name, e.g. L"Mode"), for writers that change a single thing while the
+// tray may be saving others.
+bool WriteSetting(const wchar_t* name, uint32_t value);
 void SaveStatus(const Status& s);
 Status LoadStatus();
 // sensorKey distinguishes sensor modes, e.g. L"1080" or L"800".

@@ -13,26 +13,41 @@ cbuffer Constants : register(b0)
     float  blurScale;     // output-pixel CoC per unit of disparity difference
     float  maxCoC;        // CoC clamp in output pixels
     float  fgScale;       // CoC multiplier for things nearer than the focus plane
-    float  focusRange;    // disparity half-width of the sharp zone
+    float  focusRange;    // disparity half-width of the sharp zone (off the subject's own surface)
     float  temporalAlpha; // weight of the new disparity in the temporal filter
     float  p1;            // SGM small-step penalty
     float  p2;            // SGM large-step penalty
     uint   mode;          // 0 bokeh, 1 main sensor, 2 second sensor, 3 depth view, 4 side by side,
-                          // 5/6 raw / checked disparity (bench only)
+                          // bench only: 5/6/7 raw / checked / hole-filled disparity, 8 disparity in grey,
+                          // 9 the bokeh's blend weight in grey
     float  guidedEps;     // guided filter regulariser
     uint   secondOffsetTexels; // texel x where the second sensor starts in the packed frame
     uint   mainOffsetTexels;   // texel x where the main sensor starts
     float  highlightGain; // bokeh highlight emphasis
     uint   outFormat;     // 0 NV12 planes, 1 packed YUY2
     float  lumaGain;      // digital exposure compensation applied to the output (1 = off)
-    float  pad;
+    uint   depthView;     // depthout.hlsl: 0 disparity, 1 subject matte
     uint2  secondSize;    // second sensor image as stored in the packed frame (half size on e9)
     uint   secondFolded;  // 1: each second-sensor row spans two frame lines, starting at line 1
     uint   depthMirror;   // 1: work images are mirrored, so the second sensor's match lies at x - d
                           //    although the main sensor is the left stream (see downscale.hlsl)
+    float  noiseLevel;    // typical frame-to-frame change of a 3x3 luma mean in a still scene
+    float  denoiseKeep;   // share of the new frame kept where nothing moves (1 = no temporal denoise)
+    uint   denoiseHistory; // 0: no previous frame to blend with, 1: blend in place, 2: along the motion
+    float  denoiseSpatial; // share of the spatially smoothed luma where something moves (0..1)
+    float  sharpen;        // composite.hlsl: unsharp-mask amount on the sharp picture (0 off .. 1)
+    float  sharpenCore;    // detail up to this size is noise and left alone (luma 0..1)
+    float  subjectRange;   // subject.hlsl: widening of the sharp zone over the subject's own surface
 };
 
 SamplerState LinearClamp : register(s0);
+
+// The format of a written image as SPIR-V needs it (dxc -spirv for Vulkan); fxc does without.
+#ifdef __spirv__
+#define FORMAT(f) [[vk::image_format(f)]]
+#else
+#define FORMAT(f)
+#endif
 
 static const uint kCensusW = 9;
 static const uint kCensusH = 7;

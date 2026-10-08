@@ -4,8 +4,8 @@
 #include "common.hlsli"
 
 Texture2D<uint4> Packed : register(t0);             // R8G8B8A8_UINT: Y0 U Y1 V
-RWTexture2D<unorm float4> MainYuv : register(u0);   // eyeSize
-RWTexture2D<unorm float4> SecondYuv : register(u1); // secondSize
+FORMAT("rgba8") RWTexture2D<unorm float4> MainYuv : register(u0);   // eyeSize
+FORMAT("rgba8") RWTexture2D<unorm float4> SecondYuv : register(u1); // secondSize
 
 void Write(RWTexture2D<unorm float4> dst, uint2 p0, uint4 t)
 {

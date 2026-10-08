@@ -16,6 +16,8 @@
 #include <string>
 #include <vector>
 
+#include "../common/camctl.h"
+#include "../common/effect.h"
 #include "../common/log.h"
 #include "cameramodes.h"
 
@@ -112,6 +114,15 @@ ComPtr<IUnknown> CaptureEngine::PhysicalSource()
     return m_source;
 }
 
+void CaptureEngine::HoldPowerLine()
+{
+    std::lock_guard lock(m_lock);
+    if (!m_powerLineHeld) Log(L"an app set the anti-flicker itself: it stands for this stream");
+    m_powerLineHeld = true;
+    m_flicker.Hold();
+    m_powerLineRequest = -1;
+}
+
 void CaptureEngine::SetError(const wchar_t* text)
 {
     std::lock_guard lock(m_errorLock);
@@ -133,6 +144,8 @@ HRESULT CaptureEngine::Start(const OutputRequest& req, FrameSink sink)
     m_sink = std::move(sink);
     m_frameCount = 0;
     m_framesInWindow = 0;
+    m_flickerStarted = false;
+    m_powerLineHeld = false;
     m_statusTick = GetTickCount64();
     SetError(L"");
     wchar_t fmt[64];
@@ -176,30 +189,46 @@ void CaptureEngine::StopLocked()
     Log(L"capture stop");
 }
 
+void CaptureEngine::ApplyPendingPowerLine()
+{
+    // A USB control request: sent without m_lock, which the reader thread and app control requests
+    // forwarded through PhysicalSource() wait for.
+    int value = -1;
+    bool flickerSeen = false;
+    ComPtr<IMFMediaSource> source;
+    {
+        std::lock_guard lock(m_lock);
+        std::swap(value, m_powerLineRequest);
+        flickerSeen = m_flicker.FlickerSeen();
+        source = m_source;
+    }
+    if (value < 0 || !source) return;
+    const HRESULT hr = SetPowerLineFrequency(source.Get(), value);
+    Log(L"anti-flicker %ls%ls (0x%08lX)", value == kPowerLineOff ? L"off" : value == kPowerLine50 ? L"50 Hz" : L"60 Hz",
+        flickerSeen && value == kPowerLine50 ? L", lamp flicker seen" : L"", static_cast<unsigned long>(hr));
+}
+
 void CaptureEngine::RefreshSettings(bool force)
 {
     ULONGLONG now = GetTickCount64();
     if (!force && now - m_settingsTick < 500) return;
     m_settingsTick = now;
     Settings s = LoadSettings();
-    m_effect.mode = static_cast<ViewMode>(s.mode);
-    m_effect.blurStrength = s.blur / 100.0f;
-    m_effect.autoFocus = s.autoFocus;
-    m_effect.manualFocus = s.focus / 100.0f;
-    m_effect.highlights = s.highlights / 100.0f;
-    m_effect.temporal = s.temporal / 100.0f;
-    m_effect.autoBrightness = s.autoBrightness;
-    m_effect.maxGain = s.maxGain / 10.0f;
+    ApplySettings(s, m_effect);
+    if (s.antiFlicker != m_antiFlicker || Mains60(s) != m_mains60) {
+        m_antiFlicker = s.antiFlicker;
+        m_mains60 = Mains60(s);
+        if (m_flickerStarted) {  // a change by the user while streaming wins over an app's choice
+            m_powerLineHeld = false;
+            m_powerLineRequest = m_flicker.Start(static_cast<AntiFlicker>(m_antiFlicker), m_mains60);
+        }
+    }
     // Taken only while frames flow, so the file is named after the sensor mode actually streaming.
     if (m_readerAlive && !m_recordLeft)
         if (uint32_t frames = TakeRecordRequest()) StartRecording(frames);
     // The tray bumps Request; Handled records the last one we served, so a request made while the
     // camera was idle is honoured at the next stream start.
-    if (LoadCalibrationRequest() != LoadCalibrationHandled() && !m_calibPending) {
-        m_calibPending = true;
-        m_calibFailures = 0;
-        m_nextCalibFrame = m_frameCount + 10;
-    }
+    if (LoadCalibrationRequest() != LoadCalibrationHandled()) m_calib.Request(m_frameCount);
 }
 
 void CaptureEngine::StartRecording(uint32_t frames)
@@ -266,9 +295,7 @@ bool CaptureEngine::EnsurePipeline()
         }
     }
     // A single sensor has nothing to align; a pending request waits for the next stereo stream.
-    m_calibPending = !m_stereo.mono && (!cal.valid || LoadCalibrationRequest() != LoadCalibrationHandled());
-    m_calibFailures = 0;
-    m_nextCalibFrame = m_frameCount + 10;
+    m_calib.Start(!m_stereo.mono && (!cal.valid || LoadCalibrationRequest() != LoadCalibrationHandled()), m_frameCount);
     m_pipeline = std::move(p);
     return true;
 }
@@ -281,7 +308,8 @@ HRESULT CaptureEngine::OpenCamera()
         // the effect may have changed since, and it decides the sensor mode.
         std::lock_guard lock(m_lock);
         RefreshSettings(true);
-        view = m_effect.mode;
+        // The depth camera needs the second sensor even when the picture does not.
+        view = m_depth.Wanted() && m_effect.mode == ViewMode::Main ? ViewMode::Bokeh : m_effect.mode;
     }
     const std::vector<SensorMode> modes = SensorModes(m_req.fps, view);
     const wchar_t* wantedKey = WantedKey(view);
@@ -383,7 +411,18 @@ HRESULT CaptureEngine::OpenCamera()
         if (m_pipeline) m_pipeline->Reset();
         EnsurePipeline();
         m_source = source;
+        // Once per stream; a reopen for another sensor mode keeps what the guard found, on the new
+        // source. An app's own choice stands.
+        if (m_powerLineHeld) {
+            m_flicker.Hold();
+        } else if (!m_flickerStarted) {
+            m_flickerStarted = true;
+            m_powerLineRequest = m_flicker.Start(static_cast<AntiFlicker>(m_antiFlicker), m_mains60);
+        } else {
+            m_powerLineRequest = m_flicker.Value();
+        }
     }
+    ApplyPendingPowerLine();
     {
         std::lock_guard lock(readerLink->m);
         readerLink->engine = this;
@@ -440,6 +479,12 @@ bool CaptureEngine::OnReadSample(HRESULT hr, DWORD flags, IMFSample* sample)
 }
 
 void CaptureEngine::ProcessFrame(IMFSample* sample)
+{
+    HandleFrame(sample);
+    ApplyPendingPowerLine();
+}
+
+void CaptureEngine::HandleFrame(IMFSample* sample)
 {
     ComPtr<IMFMediaBuffer> buf;
     if (FAILED(sample->GetBufferByIndex(0, &buf))) return;
@@ -516,24 +561,24 @@ void CaptureEngine::Deliver(const uint8_t* yuy2, uint32_t pitch)
 {
     // Called with m_lock held and m_pipeline present.
     RefreshSettings(false);
-    if (wcscmp(WantedKey(m_effect.mode), m_wantedKey) != 0 && !m_modeChange.exchange(true))
+    const wchar_t* wanted = m_depth.Wanted() ? kHalfKey : WantedKey(m_effect.mode);
+    if (wcscmp(wanted, m_wantedKey) != 0 && !m_modeChange.exchange(true))
         SetEvent(m_wake);  // e.g. blur switched on while streaming one sensor: the supervisor reopens
     ++m_frameCount;
-    if (m_calibPending && !m_stereo.mono && m_frameCount >= m_nextCalibFrame) {
+    if (!m_stereo.mono && m_calib.Due(m_frameCount)) {
         Rectification r;
         uint32_t request = LoadCalibrationRequest();
         if (SUCCEEDED(m_pipeline->Calibrate(yuy2, pitch, &r))) {
-            m_calibPending = false;
-            m_calibFailures = 0;
+            m_calib.Succeeded();
             SaveCalibration(m_sensorKey, {true, r.dy, r.rotation});
             SaveCalibrationHandled(request);
             Log(L"calibrated %ls: dy %.2f roll %.2f (score %.2f)", m_sensorKey, r.dy, r.rotation, r.quality);
         } else {
-            // Dark or featureless scene: back off (1 s, 2 s, 4 s ... up to 16 s at 30 fps).
-            m_calibFailures = std::min<uint32_t>(m_calibFailures + 1, 5);
-            m_nextCalibFrame = m_frameCount + (30u << (m_calibFailures - 1)) * std::max<uint32_t>(m_req.fps / 30, 1);
+            m_calib.Failed(m_frameCount, m_req.fps);  // dark or featureless scene
         }
     }
+    MainRowMeans(yuy2, pitch, m_stereo, m_rowMeans);
+    if (const int pl = m_flicker.Update(m_rowMeans); pl >= 0) m_powerLineRequest = pl;
     BYTE* scan0 = nullptr;
     LONG outPitch = 0;
     ComPtr<IMF2DBuffer2> lock;
@@ -541,8 +586,11 @@ void CaptureEngine::Deliver(const uint8_t* yuy2, uint32_t pitch)
     out.Attach(NewOutputSample(&scan0, &outPitch, lock));
     if (!out) return;
     FrameStats st;
-    HRESULT hr = m_pipeline->Process(yuy2, pitch, m_effect, scan0, scan0 + size_t(outPitch) * m_req.height,
-        static_cast<uint32_t>(outPitch), &st);
+    DepthPlane* plane = m_depth.Plane(m_req.width, m_req.height);
+    EffectSettings effect = m_effect;
+    effect.depthPlane = plane != nullptr;
+    HRESULT hr = m_pipeline->Process(yuy2, pitch, effect, scan0, scan0 + size_t(outPitch) * m_req.height,
+        static_cast<uint32_t>(outPitch), &st, plane);
     lock->Unlock2D();
     if (FAILED(hr)) {
         // A lost device (driver update, TDR) never recovers by itself: rebuild the pipeline.
@@ -558,7 +606,9 @@ void CaptureEngine::Deliver(const uint8_t* yuy2, uint32_t pitch)
     if (hr == S_FALSE) return;  // first frame primes the GPU pipeline
     m_lastGpuMs = st.gpuMs;
     m_lastFocus = st.focusDisparity;
-    out->SetSampleTime(MFGetSystemTime());
+    const LONGLONG now = MFGetSystemTime();
+    m_depth.Publish(now);
+    out->SetSampleTime(now);
     out->SetSampleDuration(10'000'000LL / m_req.fps);
     ++m_framesInWindow;
     PublishStatus();

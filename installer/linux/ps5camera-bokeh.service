@@ -1,0 +1,64 @@
+[Unit]
+Description=PS5 HD Camera bokeh (the "PS5 Camera" device)
+# v4l2loopback is loaded from /etc/modules-load.d; the service also waits for the device itself.
+After=systemd-modules-load.service
+# The writer side of "PS5 Camera" is ours before anyone logs in: with Type=notify the service
+# counts as started once it holds the device (or found none), and logins wait for that.
+Before=systemd-user-sessions.service
+# A crash that repeats at every start gives up after 5 starts in 2 minutes (systemctl status shows
+# it; systemctl restart tries again). The default 5 in 10 s would never trip with RestartSec=5. The
+# daemon itself exits after 5 GPU losses in a row, which its back-off (2 + 4 + 8 + 16 s) stretches
+# over half a minute: a GPU that keeps failing gets a fresh process about every 40 s, under the limit.
+StartLimitIntervalSec=120
+StartLimitBurst=5
+
+[Service]
+Type=notify
+ExecStart=/opt/ps5camera/ps5cam-bokehd
+# Settings are re-read when /etc/ps5cam/bokeh.conf changes; "systemctl reload" forces it.
+ExecReload=/bin/kill -HUP $MAINPID
+Restart=on-failure
+RestartSec=5
+
+# A throwaway unprivileged user. video opens /dev/video* (camera and loopback), render the GPU's
+# /dev/dri/renderD*; NVIDIA's /dev/nvidia* are open to everyone.
+DynamicUser=yes
+SupplementaryGroups=video render
+# The calibration, kept in /var/lib/ps5cam ($STATE_DIRECTORY).
+StateDirectory=ps5cam
+# Vulkan drivers keep their compiled shaders under XDG_CACHE_HOME; the dynamic user has no home.
+CacheDirectory=ps5cam
+Environment=XDG_CACHE_HOME=%C/ps5cam
+UMask=0077
+
+NoNewPrivileges=yes
+CapabilityBoundingSet=
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateNetwork=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectHostname=yes
+RestrictAddressFamilies=AF_UNIX
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+ProtectProc=invisible
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+# A refused call fails (and shows in the log) instead of killing the service.
+SystemCallErrorNumber=EPERM
+# No PrivateDevices: it would hide the camera, the loopback device and the GPU. No ProtectClock:
+# it adds DeviceAllow=char-rtc, and any DeviceAllow turns on an allow-list that shuts out
+# /dev/video*, /dev/dri/* and /dev/nvidia*. No DevicePolicy=closed with DeviceAllow= for those
+# either: device groups such as char-video4linux are resolved when the unit starts, so NVIDIA's
+# nodes or a module loaded later would stay shut out. No ProcSubset=pid: NVIDIA's driver reads
+# /proc/driver/nvidia. No MemoryDenyWriteExecute: the CPU Vulkan driver (lavapipe) and some GPU
+# drivers generate machine code at run time.
+
+[Install]
+WantedBy=multi-user.target

@@ -54,23 +54,57 @@ HKEY Open(const wchar_t* sub, bool write)
 
 }  // namespace
 
+uint32_t RegionMainsHz()
+{
+    // ISO 3166 codes of the countries on 60 Hz mains (Japan, half and half, is left at 50 Hz).
+    static const wchar_t* const k60[] = {L"US", L"CA", L"MX", L"GT", L"BZ", L"SV", L"HN", L"NI", L"CR", L"PA",
+        L"CO", L"VE", L"EC", L"PE", L"BR", L"SR", L"GY", L"CU", L"DO", L"HT", L"PR", L"BS", L"BM", L"KY", L"TC",
+        L"VG", L"VI", L"AG", L"KN", L"LC", L"TT", L"AW", L"MS", L"KR", L"TW", L"PH", L"SA", L"LR", L"GU", L"AS",
+        L"MP", L"FM", L"MH", L"PW"};
+    wchar_t iso[8] = {};
+    const GEOID geo = GetUserGeoID(GEOCLASS_NATION);
+    if (geo == GEOID_NOT_AVAILABLE || !GetGeoInfoW(geo, GEO_ISO2, iso, 8, 0)) return 50;
+    for (const wchar_t* c : k60)
+        if (wcscmp(iso, c) == 0) return 60;
+    return 50;
+}
+
 Settings LoadSettings()
 {
     Settings s;
     HKEY key = Open(L"", false);
     if (!key) return s;
-    s.mode = std::min<DWORD>(ReadDword(key, L"Mode", s.mode), 4);
-    s.blur = std::min<DWORD>(ReadDword(key, L"Blur", s.blur), 100);
+    s.mode = ReadDword(key, L"Mode", s.mode);
+    s.blur = ReadDword(key, L"Blur", s.blur);
     s.autoFocus = ReadDword(key, L"AutoFocus", s.autoFocus) != 0;
-    s.focus = std::min<DWORD>(ReadDword(key, L"Focus", s.focus), 100);
+    s.focus = ReadDword(key, L"Focus", s.focus);
     s.prefer60 = ReadDword(key, L"Prefer60", s.prefer60) != 0;
     s.fullHdOnly = ReadDword(key, L"FullHdOnly", s.fullHdOnly) != 0;
-    s.highlights = std::min<DWORD>(ReadDword(key, L"Highlights", s.highlights), 400);
-    s.temporal = std::clamp<DWORD>(ReadDword(key, L"Temporal", s.temporal), 5, 100);
+    s.highlights = ReadDword(key, L"Highlights", s.highlights);
+    s.temporal = ReadDword(key, L"Temporal", s.temporal);
     s.autoBrightness = ReadDword(key, L"AutoBrightness", s.autoBrightness) != 0;
-    s.maxGain = std::clamp<DWORD>(ReadDword(key, L"MaxGain", s.maxGain), 10, 160);
+    s.maxGain = ReadDword(key, L"MaxGain", s.maxGain);
+    s.denoise = ReadDword(key, L"Denoise", s.denoise);
+    s.sharpen = ReadDword(key, L"Sharpen", s.sharpen);
+    s.antiFlicker = ReadDword(key, L"AntiFlicker", s.antiFlicker);
+    ClampPicture(s);
+    s.blurStyle = ReadDword(key, L"BlurStyle", s.blurStyle) == kBlurStandard ? kBlurStandard : kBlurPortrait;
+    s.mainsHz = ReadDword(key, L"MainsHz", s.mainsHz);
+    if (s.mainsHz != 50 && s.mainsHz != 60) s.mainsHz = 0;
+    s.depthCamera = ReadDword(key, L"DepthCamera", s.depthCamera) != 0;
+    s.depthView = ReadDword(key, L"DepthView", s.depthView) == 1 ? 1 : 0;
     RegCloseKey(key);
     return s;
+}
+
+bool WriteSetting(const wchar_t* name, uint32_t value)
+{
+    HKEY key = Open(L"", true);
+    if (!key) return false;
+    const DWORD v = value;
+    const bool ok = RegSetValueExW(key, name, 0, REG_DWORD, reinterpret_cast<const BYTE*>(&v), sizeof(v)) == ERROR_SUCCESS;
+    RegCloseKey(key);
+    return ok;
 }
 
 bool SaveSettings(const Settings& s)
@@ -87,6 +121,13 @@ bool SaveSettings(const Settings& s)
     WriteDword(key, L"Temporal", s.temporal);
     WriteDword(key, L"AutoBrightness", s.autoBrightness);
     WriteDword(key, L"MaxGain", s.maxGain);
+    WriteDword(key, L"Denoise", s.denoise);
+    WriteDword(key, L"Sharpen", s.sharpen);
+    WriteDword(key, L"AntiFlicker", s.antiFlicker);
+    WriteDword(key, L"BlurStyle", s.blurStyle);
+    WriteDword(key, L"MainsHz", s.mainsHz);
+    WriteDword(key, L"DepthCamera", s.depthCamera);
+    WriteDword(key, L"DepthView", s.depthView);
     RegCloseKey(key);
     return true;
 }
