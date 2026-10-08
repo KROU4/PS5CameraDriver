@@ -1,22 +1,23 @@
-name: Ошибка
-description: Камера не работает или работает не так
+name: Bug report / Ошибка
+description: The camera does not work or works wrong / Камера не работает или работает не так
 labels: [bug]
 body:
   - type: markdown
     attributes:
       value: |
-        Спасибо, что сообщаете! Чем подробнее, тем быстрее найдём причину.
+        Thanks for reporting! The more details, the faster we find the cause. English or Russian is fine.
+        Спасибо, что сообщаете! Чем подробнее, тем быстрее найдём причину. Можно по-русски.
   - type: textarea
     id: what
     attributes:
-      label: Что случилось
-      description: Что вы делали, что ожидали и что получилось. Если есть сообщение об ошибке — приложите его.
+      label: What happened / Что случилось
+      description: What you did, what you expected and what happened. Attach any error message.
     validations:
       required: true
   - type: dropdown
     id: os
     attributes:
-      label: Система
+      label: System / Система
       options:
         - Windows 11
         - Linux
@@ -26,29 +27,29 @@ body:
   - type: input
     id: version
     attributes:
-      label: Версия драйвера и системы
-      placeholder: "драйвер v1.0.0, Windows 11 24H2 (Win+R → winver)"
+      label: Driver and system version / Версия драйвера и системы
+      placeholder: "driver v1.0.0, Windows 11 24H2 (Win+R → winver)"
     validations:
       required: true
   - type: input
     id: hardware
     attributes:
-      label: Видеокарта и порт USB
-      placeholder: "RTX 3060, USB 3.2 на задней панели"
+      label: Graphics card and USB port / Видеокарта и порт USB
+      placeholder: "RTX 3060, rear-panel USB 3.2"
   - type: input
     id: app
     attributes:
-      label: Программа, в которой открывали камеру
-      placeholder: "Zoom, Discord, OBS, браузер…"
+      label: Program that opened the camera / Программа, в которой открывали камеру
+      placeholder: "Zoom, Discord, OBS, browser…"
   - type: textarea
     id: status
     attributes:
-      label: Вывод ps5cam-ctl status (Windows)
+      label: Output of ps5cam-ctl status (Windows)
       description: '"C:\Program Files\PS5Camera\ps5cam-ctl.exe" status'
       render: text
   - type: textarea
     id: logs
     attributes:
-      label: Журналы
-      description: Windows — файлы из %ProgramData%\PS5Camera (dmft.log, vcam.log, service\service.log); Linux — journalctl -u ps5camera-fwload.
+      label: Logs / Журналы
+      description: Windows — files in %ProgramData%\PS5Camera (dmft.log, vcam.log, service\service.log); Linux — journalctl -u ps5camera-fwload.
       render: text

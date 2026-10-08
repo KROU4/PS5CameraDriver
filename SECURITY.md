@@ -1,14 +1,15 @@
-# Безопасность
+# Security policy
 
-Драйвер работает с правами системы: служба `ps5cam-svc` — от имени LocalSystem, видеоэффект —
-внутри службы Windows Camera Frame Server. Поэтому сообщения об уязвимостях особенно важны.
+The driver runs with system privileges: the `ps5cam-svc` service runs as LocalSystem, and the video
+effect runs inside the Windows Camera Frame Server service. Vulnerability reports are therefore
+especially important.
 
-## Как сообщить
+## Reporting a vulnerability
 
-Не публикуйте подробности уязвимости в открытом Issue. Воспользуйтесь закрытой формой GitHub:
+Please do not disclose vulnerability details in a public issue. Use GitHub's private form:
 [Report a vulnerability](https://github.com/KROU4/PS5CameraDriver/security/advisories/new).
-Опишите проблему, версию драйвера и шаги воспроизведения.
+Describe the problem, the driver version and the steps to reproduce it.
 
-## Поддерживаемые версии
+## Supported versions
 
-Исправления выходят для последнего релиза.
+Fixes are released for the latest release.

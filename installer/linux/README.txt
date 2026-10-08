@@ -1,22 +1,24 @@
-PS5 HD Camera для Linux
+PS5 HD Camera for Linux
 =======================
+(Русская версия: README.ru.txt)
 
-Камера PlayStation 5 (CFI-ZEY1) без прошивки не работает как веб-камера: при каждом подключении
-в неё нужно загрузить прошивку. Этот пакет ставит загрузчик, который делает это сам.
+Without firmware the PlayStation 5 camera (CFI-ZEY1) does not work as a webcam: the firmware has to
+be uploaded on every plug-in. This package installs a loader that does that by itself.
 
-Установка
----------
+Install
+-------
     sudo bash install.sh
 
-Скрипт спросит режим. Боке (размытие фона по глубине) пока есть только в версии для Windows,
-поэтому на Linux ставится обычная камера: родные 1920x1080, 30 и 60 к/с.
+The script asks for the mode. Bokeh (depth-based background blur) is Windows-only for now, so
+Linux gets a plain camera: native 1920x1080 at 30 and 60 fps.
 
-Нужны systemd, udev и python3 с pyusb (пакет python3-usb / python3-pyusb); установщик ставит
-pyusb сам через apt, dnf, pacman или zypper.
+Requires systemd, udev and python3 with pyusb (package python3-usb / python3-pyusb); the installer
+installs pyusb itself through apt, dnf, pacman or zypper.
 
-После установки подключите камеру в порт USB 3 (в USB 2.0 она отдаёт только 640x400): через пару секунд она появится как /dev/video* под именем
-"USB Camera-OV580". В приложении выберите формат 1920x1080 (30 или 60 к/с). Широкие форматы
-вроде 3840x1080 и 2448x1088 — это два сенсора рядом, для обычных звонков они не нужны.
+After installing, plug the camera into a USB 3 port (on USB 2.0 it only delivers 640x400): within a
+couple of seconds it appears as /dev/video* named "USB Camera-OV580". Choose the 1920x1080 format
+(30 or 60 fps) in your program. Wide formats such as 3840x1080 and 2448x1088 are both sensors side by
+side; ordinary calls do not need them.
 
-Журнал загрузки прошивки: journalctl -u ps5camera-fwload
-Удаление:                 sudo bash /opt/ps5camera/uninstall.sh
+Firmware loader log: journalctl -u ps5camera-fwload
+Uninstall:           sudo bash /opt/ps5camera/uninstall.sh

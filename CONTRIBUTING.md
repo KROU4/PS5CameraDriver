@@ -1,32 +1,36 @@
-# Как помочь проекту
+# Contributing
 
-Спасибо за интерес! Сообщения об ошибках, идеи и pull request приветствуются.
+Thanks for your interest! Bug reports, ideas and pull requests are welcome. Issues and discussions
+may be written in English or Russian.
 
-## Ошибки и идеи
+## Bugs and ideas
 
-Открывайте [Issue](https://github.com/KROU4/PS5CameraDriver/issues/new/choose) по шаблону. Для
-ошибки приложите:
-- версию Windows (Win+R → `winver`), видеокарту и порт USB, в который включена камера;
-- вывод `"C:\Program Files\PS5Camera\ps5cam-ctl.exe" status`;
-- журналы из `%ProgramData%\PS5Camera` (`dmft.log`, `vcam.log`, `service\service.log`).
+Open an [issue](https://github.com/KROU4/PS5CameraDriver/issues/new/choose) using a template. For a
+bug, please include:
+- your Windows version (Win+R → `winver`), graphics card and the USB port the camera is plugged into;
+- the output of `"C:\Program Files\PS5Camera\ps5cam-ctl.exe" status`;
+- the logs from `%ProgramData%\PS5Camera` (`dmft.log`, `vcam.log`, `service\service.log`).
 
-## Pull request
+Questions about setup and usage go to [Discussions](https://github.com/KROU4/PS5CameraDriver/discussions).
 
-- Одна задача — один pull request; опишите, что меняется и как вы это проверили.
-- Сборка: `.\build.ps1`, пакеты: `.\package.ps1` (нужны VS 2022 Build Tools и Windows SDK 10.0.26100).
-  Те же шаги выполняет проверка GitHub Actions.
-- Стиль кода — как в окружающем коде: C++20, комментарии объясняют «почему», а не «что».
-- Не добавляйте в репозиторий прошивку Sony и другие чужие бинарные файлы.
+## Pull requests
 
-## Лицензия вклада
+- One topic per pull request; describe what changes and how you tested it.
+- Build with `.\build.ps1`, package with `.\package.ps1` (requires VS 2022 Build Tools and Windows SDK
+  10.0.26100). The GitHub Actions check runs the same steps.
+- Follow the style of the surrounding code: C++20, comments explain *why* rather than *what*.
+- Do not add Sony's firmware or any other third-party binaries to the repository.
 
-Проект распространяется под [GNU GPL 3.0](LICENSE). Отправляя pull request, вы подтверждаете, что
-вклад — ваша собственная работа (или вы вправе его передать) и что вы лицензируете его под той же
-GPL-3.0.
+## License of contributions
 
-## Подпись релизов
+The project is licensed under the [GNU GPL 3.0](LICENSE). By submitting a pull request you confirm
+that the contribution is your own work (or that you have the right to submit it) and that you
+license it under the same GPL-3.0.
 
-Файлы релизов подписываются через SignPath.io (см. раздел «Code signing policy» в
-[README](README.md#code-signing-policy)). Каждый pull request проверяет участник с правом записи, и
-особое внимание — к сценариям сборки (`build.ps1`, `package.ps1`, `.github/workflows`): подписанный
-файл подтверждает, что он собран из кода этого репозитория.
+## Release signing
+
+Release files are signed through SignPath.io (see the
+[Code signing policy](README.md#code-signing-policy)). Every pull request is reviewed by a team
+member with write access, with particular attention to the build scripts (`build.ps1`,
+`package.ps1`, `.github/workflows`): a signed file certifies that it was built from this
+repository's code.

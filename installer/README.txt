@@ -1,88 +1,91 @@
-﻿PS5 HD Camera для Windows 11
+PS5 HD Camera for Windows 11
 ============================
+(Русская версия: README.ru.txt)
 
-Камера PlayStation 5 (CFI-ZEY1) работает как одна обычная веб-камера «PS5 Camera».
-Всё устроено так, как у PS5: основной сенсор даёт картинку, второй сенсор вместе
-с первым меряет глубину сцены, а видеокарта по этой глубине размывает фон (боке).
+The PlayStation 5 camera (CFI-ZEY1) works as one regular webcam, "PS5 Camera".
+It works the way the PS5 does: the main sensor gives the picture, the second sensor
+measures the depth of the scene together with the first, and the graphics card blurs
+the background by that depth (bokeh).
 
-Установка
+Install
+-------
+1. Plug the camera into a USB 3 port.
+2. Run Install.cmd and confirm the administrator rights prompt.
+   The installer asks for the mode: 1 — with bokeh (background always blurred),
+   2 — without bokeh (a plain camera). Without the question: Install.cmd -Bokeh on
+   or Install.cmd -Bokeh off.
+   Before installing it lists what it will change in the system and asks to confirm
+   (to skip that: Install.cmd -Bokeh on -Yes).
+3. In Zoom, Discord, Teams, Telegram, OBS, a browser or the Camera app choose
+   "PS5 Camera". Programs that were open during the installation see it after a restart.
+
+Nothing else needs to be started: on every plug-in the service uploads the firmware
+to the camera and the camera appears in the system.
+
+The effect runs inside the camera itself (the Windows "Device MFT" component, with no
+kernel driver and no test mode): it is the same USB camera, just named "PS5 Camera" and
+with bokeh. The previous way — a separate virtual camera "PS5 Camera (Windows Virtual
+Camera)" with the USB camera itself hidden: Install.cmd -VirtualCamera.
+
+To change the mode later, run Install.cmd again or run in a command prompt (cmd)
+  "C:\Program Files\PS5Camera\ps5cam-ctl.exe" set mode 0   (with bokeh)
+  "C:\Program Files\PS5Camera\ps5cam-ctl.exe" set mode 1   (without bokeh)
+(in PowerShell put & before the command).
+
+Tray icon (for development: Install.cmd -Tray)
 ---------
-1. Подключите камеру в порт USB 3.
-2. Запустите Install.cmd и подтвердите запрос прав администратора.
-   Установщик спросит режим: 1 — с боке (фон всегда размыт), 2 — без боке (обычная камера).
-   Без вопроса: Install.cmd -Bokeh on  или  Install.cmd -Bokeh off.
-   Перед установкой он перечислит, что изменит в системе, и попросит подтверждения
-   (без него: Install.cmd -Bokeh on -Yes).
-3. В Zoom, Discord, Teams, Telegram, OBS, браузере или приложении «Камера» выберите
-   «PS5 Camera». Приложения, открытые во время установки, увидят её после перезапуска.
+- A click on the icon turns bokeh on and off. Blue lenses on the icon mean bokeh is on,
+  grey — off. A right click opens the menu.
+- Mode: portrait (depth bokeh), plain camera, second sensor, depth map, both sensors
+  side by side (in these views the second sensor comes at 960x540).
+- Background blur: light, medium, strong, maximum.
+- Focus: autofocus on the person or fixed (near, middle, far).
+- Bokeh highlights, auto brightness for a dark room.
+- "Full HD 60 fps only": programs see a single format, 1920x1080@60 (the default).
+  Without it — 1080p and 720p at 30 and 60 fps, and "Prefer 60 fps" decides which
+  mode programs see first.
+Changes apply immediately; there is no need to reselect the camera in the program.
 
-Дальше ничего запускать не нужно: при каждом подключении служба сама загружает
-прошивку в камеру, а камера появляется в системе.
-
-Эффект работает внутри самой камеры (компонент Windows «Device MFT», без драйвера ядра
-и без тестового режима): это та же USB-камера, только с именем «PS5 Camera» и боке.
-Прежний способ — отдельная виртуальная камера «PS5 Camera (Виртуальная камера Windows)»,
-а сама USB-камера скрыта: Install.cmd -VirtualCamera.
-
-Сменить режим потом: запустите Install.cmd ещё раз или выполните в командной строке (cmd)
-  "C:\Program Files\PS5Camera\ps5cam-ctl.exe" set mode 0   (с боке)
-  "C:\Program Files\PS5Camera\ps5cam-ctl.exe" set mode 1   (без боке)
-(в PowerShell перед командой нужен знак &).
-
-Значок в трее (для разработки: Install.cmd -Tray)
--------------
-- Клик по значку включает и выключает боке. Синие линзы на значке — боке включено,
-  серые — выключено. Правый клик открывает меню.
-- Режим: портрет (боке по глубине), обычная камера, второй сенсор, карта глубины,
-  оба сенсора рядом (второй сенсор в этих видах приходит в 960x540).
-- Размытие фона: лёгкое, среднее, сильное, максимальное.
-- Фокус: автофокус на человеке или фиксированный (близко, средне, далеко).
-- Блики боке, автояркость для тёмной комнаты.
-- «Только Full HD 60 к/с»: приложения видят один формат 1920x1080@60 (по умолчанию). Без этой
-  галочки — 1080p и 720p при 30 и 60 к/с, и тогда «Предпочитать 60 к/с» решает, какой режим
-  приложения увидят первым.
-Изменения применяются сразу, переключать камеру в программе не нужно.
-
-Режимы
-------
-- Режим «обычная камера»: родные 1920x1080 с одного сенсора, полный угол обзора,
-  и 30, и 60 к/с. 60 к/с даёт прошивка драйвера (у Sony 1080p ограничен 30 к/с).
-- Портрет (боке), 30 и 60 к/с: картинка — те же родные 1920x1080 с того же сенсора,
-  полный угол обзора, без масштабирования. Второй сенсор приходит вместе с ней
-  уменьшенным до 960x540 (его аппаратно уменьшает мост камеры) и нужен только для
-  глубины: глубина всё равно считается в 640x360. Нейросети не используются.
-- Форматы для приложений: по умолчанию только 1920x1080 при 60 к/с (NV12 и YUY2), поэтому
-  любая программа получает Full HD 60, даже браузер, который сам по себе берёт 1280x720@30.
-  Программа, которой нужно меньше, уменьшает картинку сама. Если старая программа требует
-  именно 1280x720 или 30 к/с и не запускается, верните полный список (1920x1080 и 1280x720,
-  30 и 60 к/с):
+Modes
+-----
+- Plain camera: native 1920x1080 from one sensor, full field of view, at both 30 and
+  60 fps. 60 fps comes from the driver's firmware (Sony limits 1080p to 30 fps).
+- Portrait (bokeh), 30 and 60 fps: the picture is the same native 1920x1080 from the
+  same sensor, full field of view, no scaling. The second sensor comes along downscaled
+  to 960x540 (the camera's bridge chip does that in hardware) and is used only for
+  depth: depth is computed at 640x360 anyway. No neural networks are used.
+- Formats for programs: by default only 1920x1080 at 60 fps (NV12 and YUY2), so every
+  program gets Full HD 60, even a browser that would take 1280x720@30 by itself.
+  A program that needs less scales the picture down itself. If an old program insists
+  on 1280x720 or 30 fps and does not start, bring back the full list (1920x1080 and
+  1280x720, 30 and 60 fps):
     "C:\Program Files\PS5Camera\ps5cam-ctl.exe" set fullhdonly 0
-  (обратно: set fullhdonly 1). Список меняется, когда камеру не держит ни одна программа.
-  В комнате с лампами 50 Гц при 60 к/с картинка темнее (см. ниже): тогда тоже стоит вернуть
-  полный список и выбрать в программе 30 к/с.
-При переключении между «обычной камерой» и режимами с глубиной камера сама
-переоткрывается, картинка замирает примерно на полсекунды.
-Почему второй сенсор уменьшен: USB 3.0 у этой камеры пропускает не больше ~393 МБ/с,
-две полные картинки 1080p60 требуют ~498 МБ/с, а 1080p + 960x540 — ~320 МБ/с.
-Если в камере ещё работает старая прошивка (до переподключения после обновления),
-боке идёт по-старому: при 30 к/с из двух полных сенсоров, при 60 к/с из кропа 1280x800.
-При 60 к/с в комнате с лампами на 50 Гц картинка темнее: антимерцание ограничивает
-выдержку 10 мс, автояркость это частично компенсирует.
+  (back: set fullhdonly 1). The list changes when no program holds the camera.
+  In a room lit by 50 Hz lamps the picture is darker at 60 fps (see below): bring back
+  the full list then as well and choose 30 fps in the program.
+When switching between the plain camera and the depth modes the camera reopens
+itself, and the picture freezes for about half a second.
+Why the second sensor is downscaled: this camera's USB 3.0 link carries at most
+~393 MB/s, two full 1080p60 pictures need ~498 MB/s, and 1080p + 960x540 ~320 MB/s.
+If the camera still runs an older firmware (until it is replugged after an update),
+bokeh works the old way: at 30 fps from both full sensors, at 60 fps from a 1280x800 crop.
+At 60 fps in a room lit by 50 Hz lamps the picture is darker: anti-flicker limits the
+exposure to 10 ms; auto brightness partly compensates for that.
 
-Как у обычной веб-камеры, одновременно камерой пользуется одно приложение.
-Второе получит ошибку «камера занята», пока первое её не освободит.
+As with any webcam, one program uses the camera at a time. A second one gets a
+"camera in use" error until the first one releases it.
 
-Проблемы
---------
-- Журналы: %ProgramData%\PS5Camera\dmft.log (видео; vcam.log при -VirtualCamera) и
-  %ProgramData%\PS5Camera\service\service.log (служба).
-- Состояние: "C:\Program Files\PS5Camera\ps5cam-ctl.exe" status
-- Если картинка не появилась после подключения, переподключите камеру.
-- Глубину камера различает примерно с полуметра. Всё, что ближе, получается на карте
-  глубины шумом, и боке там размывает неровно. Сядьте дальше от камеры.
-- С -VirtualCamera сырая стереокамера «USB Camera-OV580» скрыта. Вернуть её:
-  ps5cam-ctl unhide (от имени администратора).
+Troubleshooting
+---------------
+- Logs: %ProgramData%\PS5Camera\dmft.log (video; vcam.log with -VirtualCamera) and
+  %ProgramData%\PS5Camera\service\service.log (service).
+- Status: "C:\Program Files\PS5Camera\ps5cam-ctl.exe" status
+- If there is no picture after plugging the camera in, replug it.
+- The camera measures depth from about half a metre. Anything closer turns into noise
+  on the depth map, and bokeh blurs it unevenly. Sit further from the camera.
+- With -VirtualCamera the raw stereo camera "USB Camera-OV580" is hidden. To show it:
+  ps5cam-ctl unhide (as administrator).
 
-Удаление
---------
-Uninstall.cmd или «Параметры → Приложения → Установленные приложения → PS5 HD Camera».
+Uninstall
+---------
+Uninstall.cmd or Settings → Apps → Installed apps → PS5 HD Camera.

@@ -1,21 +1,23 @@
-PS5 HD Camera для macOS
+PS5 HD Camera for macOS
 =======================
+(Русская версия: README.ru.txt)
 
-Камера PlayStation 5 (CFI-ZEY1) без прошивки не работает как веб-камера: при каждом подключении
-в неё нужно загрузить прошивку. Этот пакет ставит фоновую службу, которая делает это сама.
+Without firmware the PlayStation 5 camera (CFI-ZEY1) does not work as a webcam: the firmware has to
+be uploaded on every plug-in. This package installs a background service that does that by itself.
 
-Установка
----------
+Install
+-------
     sudo bash install.sh
 
-Скрипт спросит режим. Боке (размытие фона по глубине) пока есть только в версии для Windows:
-на macOS для него нужна системная камера-расширение, а её macOS запускает только с подписью
-разработчика Apple. Поэтому на macOS ставится обычная камера: родные 1920x1080, 30 и 60 к/с.
+The script asks for the mode. Bokeh (depth-based background blur) is Windows-only for now: on macOS
+it would need a camera system extension, which macOS only runs with an Apple developer signature.
+So macOS gets a plain camera: native 1920x1080 at 30 and 60 fps.
 
-Нужен python3 из Command Line Tools (xcode-select --install). Homebrew не нужен: библиотеку
-libusb установщик берёт из пакета libusb-package.
+Requires python3 from the Command Line Tools (xcode-select --install). Homebrew is not needed: the
+installer takes the libusb library from the libusb-package package.
 
-После установки подключите камеру в порт USB 3 (в USB 2.0 она отдаёт только 640x400) и выберите "USB Camera-OV580" в приложении.
+After installing, plug the camera into a USB 3 port (on USB 2.0 it only delivers 640x400) and choose
+"USB Camera-OV580" in your program.
 
-Журнал:   /Library/Logs/PS5Camera.log
-Удаление: sudo bash "/Library/Application Support/PS5Camera/uninstall.sh"
+Log:       /Library/Logs/PS5Camera.log
+Uninstall: sudo bash "/Library/Application Support/PS5Camera/uninstall.sh"

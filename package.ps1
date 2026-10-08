@@ -23,8 +23,10 @@ foreach ($s in 'install.ps1', 'uninstall.ps1') {
     $text = [IO.File]::ReadAllText((Join-Path $root "installer\$s"))
     [IO.File]::WriteAllText((Join-Path $dist $s), $text, $utf8Bom)
 }
-$readme = [IO.File]::ReadAllText((Join-Path $root 'installer\README.txt'))
-[IO.File]::WriteAllText((Join-Path $dist 'README.txt'), $readme, $utf8Bom)
+foreach ($r in 'README.txt', 'README.ru.txt') {
+    $readme = [IO.File]::ReadAllText((Join-Path $root "installer\$r"))
+    [IO.File]::WriteAllText((Join-Path $dist $r), $readme, $utf8Bom)
+}
 
 $zip = Join-Path $root 'dist\PS5CameraDriver.zip'
 if (Test-Path $zip) { Remove-Item $zip -Force }

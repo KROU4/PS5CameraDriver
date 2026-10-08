@@ -1,6 +1,8 @@
-﻿# Удаление драйвера PS5 HD Camera. Повышает права сам.
+﻿# PS5 HD Camera driver uninstaller. Elevates itself; talks Russian on a Russian Windows, else English.
 param([switch]$NoPause)
 $ErrorActionPreference = 'Continue'
+$russian = (Get-UICulture).TwoLetterISOLanguageName -eq 'ru'
+function T([string]$ru, [string]$en) { if ($script:russian) { $ru } else { $en } }
 $target = Join-Path $env:ProgramFiles 'PS5Camera'
 $ctl = Join-Path $target 'ps5cam-ctl.exe'
 
@@ -39,5 +41,6 @@ foreach ($store in 'Root', 'TrustedPublisher') {
 Start-Sleep -Milliseconds 500
 Remove-Item $target -Recurse -Force -ErrorAction SilentlyContinue
 Remove-Item (Join-Path $env:ProgramData 'PS5Camera') -Recurse -Force -ErrorAction SilentlyContinue
-Write-Host 'PS5 Camera удалена вместе с драйвером загрузчика и его сертификатом; камера снова видна приложениям как обычная USB-камера.'
-if (-not $NoPause) { Read-Host 'Нажмите Enter, чтобы закрыть окно' | Out-Null }
+Write-Host (T 'PS5 Camera удалена вместе с драйвером загрузчика и его сертификатом; камера снова видна приложениям как обычная USB-камера.' `
+    'PS5 Camera was removed together with the boot loader driver and its certificate; programs see the camera as a plain USB camera again.')
+if (-not $NoPause) { Read-Host (T 'Нажмите Enter, чтобы закрыть окно' 'Press Enter to close this window') | Out-Null }

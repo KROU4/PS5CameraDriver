@@ -1,9 +1,9 @@
-## Что меняется
+## What changes
 
-<!-- Коротко: зачем и что сделано. Ссылка на Issue, если есть. -->
+<!-- Briefly: why and what was done. Link the issue, if any. -->
 
-## Как проверено
+## How it was tested
 
-<!-- Сборка (.\build.ps1), на какой системе и с какой программой проверяли камеру. -->
+<!-- Build (.\build.ps1), the system and the program the camera was tested with. -->
 
-- [ ] Вклад — моя работа, лицензирую его под GPL-3.0 (см. [CONTRIBUTING.md](../CONTRIBUTING.md))
+- [ ] This contribution is my own work and I license it under GPL-3.0 (see [CONTRIBUTING.md](../CONTRIBUTING.md))
