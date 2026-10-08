@@ -13,10 +13,12 @@
 
 namespace ps5cam {
 
-// One per compute shader in shaders/ (guided.hlsl has three entry points).
+// One per compute shader in shaders/ (guided.hlsl, subject.hlsl and motion.hlsl have three entry
+// points each).
 enum class Kernel : uint32_t {
     Unpack, Downscale, Census, Aggregate, Wta, LrFill, HoleFill, GuidedPrep, GuidedBox, GuidedCoef, Histogram, Bokeh,
-    Composite, Score, LumaStats, Denoise, DepthOut, Count
+    Composite, Score, LumaStats, Denoise, DepthOut, SubjectSeed, SubjectSweep, SubjectShare, Meter, MotionDown,
+    MotionSearch, MotionRefine, Count
 };
 
 enum class GpuFormat : uint32_t { RGBA8_UINT, RGBA8_UNORM, R32_FLOAT, RG32_UINT, RGBA32_FLOAT, RGBA16_FLOAT, R8_UNORM, RG8_UNORM };
@@ -45,6 +47,10 @@ constexpr HRESULT kGpuDeviceLost = static_cast<HRESULT>(0x887A0005u);
 class Gpu {
 public:
     static constexpr int kSlots = 2;  // readback copies per resource: the GPU fills one, the CPU reads the other
+
+    // A dispatch binds at most this many reads (t0..t7) and writes (u0..u3); more is refused.
+    static constexpr size_t kMaxReads = 8;
+    static constexpr size_t kMaxWrites = 4;
 
     // Image flags.
     static constexpr unsigned kStorage = 1;   // kernels may write it

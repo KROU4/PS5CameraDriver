@@ -13,12 +13,13 @@ cbuffer Constants : register(b0)
     float  blurScale;     // output-pixel CoC per unit of disparity difference
     float  maxCoC;        // CoC clamp in output pixels
     float  fgScale;       // CoC multiplier for things nearer than the focus plane
-    float  focusRange;    // disparity half-width of the sharp zone
+    float  focusRange;    // disparity half-width of the sharp zone (off the subject's own surface)
     float  temporalAlpha; // weight of the new disparity in the temporal filter
     float  p1;            // SGM small-step penalty
     float  p2;            // SGM large-step penalty
     uint   mode;          // 0 bokeh, 1 main sensor, 2 second sensor, 3 depth view, 4 side by side,
-                          // bench only: 5/6/7 raw / checked / hole-filled disparity, 8 disparity in grey
+                          // bench only: 5/6/7 raw / checked / hole-filled disparity, 8 disparity in grey,
+                          // 9 the bokeh's blend weight in grey
     float  guidedEps;     // guided filter regulariser
     uint   secondOffsetTexels; // texel x where the second sensor starts in the packed frame
     uint   mainOffsetTexels;   // texel x where the main sensor starts
@@ -32,10 +33,11 @@ cbuffer Constants : register(b0)
                           //    although the main sensor is the left stream (see downscale.hlsl)
     float  noiseLevel;    // typical frame-to-frame change of a 3x3 luma mean in a still scene
     float  denoiseKeep;   // share of the new frame kept where nothing moves (1 = no temporal denoise)
-    uint   denoiseHistory; // 0: no previous frame to blend with
+    uint   denoiseHistory; // 0: no previous frame to blend with, 1: blend in place, 2: along the motion
     float  denoiseSpatial; // share of the spatially smoothed luma where something moves (0..1)
     float  sharpen;        // composite.hlsl: unsharp-mask amount on the sharp picture (0 off .. 1)
     float  sharpenCore;    // detail up to this size is noise and left alone (luma 0..1)
+    float  subjectRange;   // subject.hlsl: widening of the sharp zone over the subject's own surface
 };
 
 SamplerState LinearClamp : register(s0);

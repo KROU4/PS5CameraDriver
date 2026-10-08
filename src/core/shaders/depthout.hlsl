@@ -4,6 +4,7 @@
 // removing the background, white for the subject in focus and everything in front of it, fading to
 // black behind it as the bokeh's blur grows.
 #include "common.hlsli"
+#define SUBJECT_REGISTER t2
 #include "depthsample.hlsli"
 
 FORMAT("r8") RWTexture2D<unorm float> DepthOut : register(u0);
@@ -24,7 +25,7 @@ void main(uint3 id : SV_DispatchThreadID)
     {
         // Behind the focus plane the matte is what the bokeh keeps sharp (composite blends with
         // smoothstep(0.5, 2.5, CoC)); in front of it everything belongs to the subject.
-        v = d >= focusDisp ? 1.0 : 1.0 - smoothstep(0.5, 2.5, CircleOfConfusion(d));
+        v = d >= focusDisp ? 1.0 : 1.0 - smoothstep(0.5, 2.5, CircleOfConfusion(d, SubjectAt(uv)));
     }
     DepthOut[id.xy] = 16.0 / 255.0 + v * (219.0 / 255.0);
 }

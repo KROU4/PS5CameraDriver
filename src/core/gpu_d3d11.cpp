@@ -25,7 +25,14 @@
 #include "shaders/holefill.h"
 #include "shaders/lrfill.h"
 #include "shaders/lumastats.h"
+#include "shaders/meter.h"
+#include "shaders/motion_down.h"
+#include "shaders/motion_refine.h"
+#include "shaders/motion_search.h"
 #include "shaders/score.h"
+#include "shaders/subject_share.h"
+#include "shaders/subject_seed.h"
+#include "shaders/subject_sweep.h"
 #include "shaders/unpack.h"
 #include "shaders/wta.h"
 
@@ -63,7 +70,10 @@ const Blob kKernels[] = {
     {g_holefill, sizeof(g_holefill)}, {g_guided_prep, sizeof(g_guided_prep)}, {g_guided_box, sizeof(g_guided_box)},
     {g_guided_coef, sizeof(g_guided_coef)}, {g_histogram, sizeof(g_histogram)}, {g_bokeh, sizeof(g_bokeh)},
     {g_composite, sizeof(g_composite)}, {g_score, sizeof(g_score)}, {g_lumastats, sizeof(g_lumastats)},
-    {g_denoise, sizeof(g_denoise)}, {g_depthout, sizeof(g_depthout)},
+    {g_denoise, sizeof(g_denoise)}, {g_depthout, sizeof(g_depthout)}, {g_subject_seed, sizeof(g_subject_seed)},
+    {g_subject_sweep, sizeof(g_subject_sweep)}, {g_subject_share, sizeof(g_subject_share)}, {g_meter, sizeof(g_meter)},
+    {g_motion_down, sizeof(g_motion_down)}, {g_motion_search, sizeof(g_motion_search)},
+    {g_motion_refine, sizeof(g_motion_refine)},
 };
 static_assert(sizeof(kKernels) / sizeof(kKernels[0]) == size_t(Kernel::Count), "one blob per kernel");
 
@@ -97,10 +107,10 @@ struct Gpu::Impl {
 
     void Bind(ID3D11ComputeShader* cs, std::initializer_list<GpuRef> reads, std::initializer_list<GpuRef> writes)
     {
-        ID3D11ShaderResourceView* nullSrv[8] = {};
-        ID3D11UnorderedAccessView* nullUav[4] = {};
-        ctx->CSSetShaderResources(0, 8, nullSrv);
-        ctx->CSSetUnorderedAccessViews(0, 4, nullUav, nullptr);
+        ID3D11ShaderResourceView* nullSrv[Gpu::kMaxReads] = {};
+        ID3D11UnorderedAccessView* nullUav[Gpu::kMaxWrites] = {};
+        ctx->CSSetShaderResources(0, UINT(Gpu::kMaxReads), nullSrv);
+        ctx->CSSetUnorderedAccessViews(0, UINT(Gpu::kMaxWrites), nullUav, nullptr);
         ctx->CSSetShader(cs, nullptr, 0);
         std::vector<ID3D11ShaderResourceView*> s;
         for (const GpuRef& r : reads) s.push_back(r.image ? r.image->srv.Get() : r.buffer ? r.buffer->srv.Get() : nullptr);
@@ -300,6 +310,7 @@ void Gpu::ClearFloat(GpuImage* image, float value)
 void Gpu::Dispatch(Kernel kernel, std::initializer_list<GpuRef> reads, std::initializer_list<GpuRef> writes, uint32_t x,
     uint32_t y, uint32_t z)
 {
+    if (reads.size() > kMaxReads || writes.size() > kMaxWrites) return;  // would stay bound to later kernels
     m->Bind(m->kernels[size_t(kernel)].Get(), reads, writes);
     m->ctx->Dispatch(x, y, z);
 }

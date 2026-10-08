@@ -2,6 +2,7 @@
 // "Bokeh depth of field in a single pass"). Samples nearer than the centre keep their own blur
 // size; samples behind it are limited so a sharp subject never smears into the background.
 #include "common.hlsli"
+#define SUBJECT_REGISTER t2
 #include "depthsample.hlsli"
 
 FORMAT("rgba16f") RWTexture2D<float4> BokehHalf : register(u0);  // (Y, U, V, CoC in output px)
@@ -19,7 +20,7 @@ void main(uint3 id : SV_DispatchThreadID)
     float2 uv = EyeUvFromOutput(outPx);
     float3 centre = MainYuv.SampleLevel(LinearClamp, uv, 0).xyz;
     float centreD = DisparityAt(uv);
-    float centreCoC = CircleOfConfusion(centreD) * 0.5;  // half-res pixels
+    float centreCoC = CircleOfConfusion(centreD, SubjectAt(uv)) * 0.5;  // half-res pixels
     if (centreCoC < 0.5)
     {
         BokehHalf[id.xy] = float4(centre, 0);
@@ -41,7 +42,7 @@ void main(uint3 id : SV_DispatchThreadID)
         float2 tapUv = EyeUvFromOutput(tapOut);
         float3 tap = MainYuv.SampleLevel(LinearClamp, tapUv, 0).xyz;
         float tapD = DisparityAt(tapUv);
-        float tapCoC = CircleOfConfusion(tapD) * 0.5;
+        float tapCoC = CircleOfConfusion(tapD, SubjectAt(tapUv)) * 0.5;
         if (tapD < centreD)  // tap lies behind the centre pixel
             tapCoC = min(tapCoC, centreCoC * 2.0);
         float m = smoothstep(radius - 0.5, radius + 0.5, tapCoC);

@@ -13,7 +13,7 @@
 
 **English** · [Русский](README.ru.md)
 
-[Download](https://github.com/KROU4/PS5CameraDriver/releases/latest) · [Install](#install) · [How it works](#how-it-works-windows) · [Code signing policy](#code-signing-policy)
+[Download](https://github.com/KROU4/PS5CameraDriver/releases/latest) · [Install](#install) · [Performance](#performance) · [How it works](#how-it-works-windows) · [Code signing policy](#code-signing-policy)
 
 </div>
 
@@ -25,8 +25,9 @@ Telegram, OBS, browsers and any other program.
   just like on the PS5. No neural networks: the GPU computes depth with a stereo algorithm
   (census + SGM) in Direct3D 11 shaders. The camera shows up as "PS5 Camera", with no separate
   virtual camera, and the bokeh is switched like Windows' own camera effects: Settings →
-  Cameras → Background effects (standard or portrait blur). Noise reduction and automatic
-  anti-flicker help in dim rooms.
+  Cameras → Background effects (standard or portrait blur). The whole head stays sharp
+  (ears, hair, headphones), the exposure follows the person, not the window behind them, and
+  motion-compensated noise reduction and automatic anti-flicker help in dim rooms.
 - **Linux:** native 1920x1080 at 30 and 60 fps, and (experimental, x86_64) the same bokeh computed
   on the GPU through Vulkan: a daemon reads the camera and feeds a v4l2loopback camera "PS5 Camera".
 - **macOS:** the camera without bokeh, native 1920x1080 at 30 and 60 fps.
@@ -59,6 +60,33 @@ installs), `--bokeh off` the plain camera. Details: [installer/linux/README.txt]
 Uninstall: Settings → Apps → Installed apps on Windows; `uninstall.sh` from the install folder on
 Linux and macOS (the installer prints its path at the end).
 
+## Performance
+
+The picture is computed on the graphics card, so the driver needs one that supports Direct3D 11
+(Windows) or Vulkan 1.1 (Linux); integrated graphics count. Measured on an RTX 3060 Ti with a
+Ryzen 5 5600, 1920x1080 at 60 fps:
+
+| Mode | GPU time per frame | GPU busy at 60 fps | GPU memory | CPU (driver) |
+|---|---|---|---|---|
+| Camera without effects | 2.6–2.9 ms | ~17% | ~60 MB | ~9% of one core |
+| Bokeh | 8.6–9.0 ms | ~53% | ~100–130 MB | ~12% of one core |
+| Bokeh, 1280x720 output | 8.1 ms | ~49% | ~120 MB | — |
+| Bokeh and the depth camera | 9.9 ms | ~59% | ~160 MB | — |
+
+The GPU time and CPU of the first two rows come from the live camera (`ps5cam-ctl status` shows
+the GPU time per frame while a program uses the camera; the CPU is Windows Camera Frame Server's,
+where the effect runs), the rest from recorded camera frames fed at 60 fps. The Vulkan version
+(Linux) takes about the same: 3.0 ms without effects, 9.2 ms with bokeh on the same card. Without a
+graphics card (Windows' software renderer on the 6-core CPU) a frame takes 165 ms without effects
+and 550 ms with bokeh, so a GPU is required.
+
+The work per frame is the same on any card, so the time grows as the card gets slower: for bokeh at
+60 fps a card needs to be roughly at least 60% as fast as an RTX 3060 Ti; at 30 fps (choose 30 fps in
+the program, see [installer/README.txt](installer/README.txt)) about a quarter. Integrated graphics
+will most likely manage bokeh only at 30 fps or the camera without effects — this is an estimate, not
+a measurement. If you try it on other hardware, please share the frame rate and GPU time from
+`ps5cam-ctl status` in [Discussions](https://github.com/KROU4/PS5CameraDriver/discussions).
+
 ## Firmware
 
 The camera needs firmware every time it is plugged in; the driver's service uploads it. Sony's
@@ -83,7 +111,7 @@ flowchart TB
     uvc["USB 05A9:058C — UVC camera<br/>(standard Windows driver)"] --> fs
     subgraph fs["Windows Camera Frame Server"]
         dmft["ps5cam-dmft.dll — the camera's Device MFT"]
-        gpu["Direct3D 11: noise reduction · census → SGM → drop unreliable matches → fill holes<br/>→ temporal filter → guided filter → autofocus → bokeh → auto brightness"]
+        gpu["Direct3D 11: motion-compensated noise reduction · census → SGM → drop unreliable matches<br/>→ fill holes → temporal filter → guided filter → subject silhouette → autofocus → bokeh<br/>→ auto brightness metered on the subject"]
         dmft --> gpu
     end
     fs --> apps["“PS5 Camera” in Media Foundation, WinRT and DirectShow"]

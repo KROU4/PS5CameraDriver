@@ -53,7 +53,7 @@ Settings are in /etc/ps5cam/bokeh.conf and apply a couple of seconds after the f
   focus           manual focus 0 far .. 100 near (50)
   highlights      emphasis of bright spots in the blur, percent 0..400 (150)
   temporal        how quickly depth follows motion 5..100 (40)
-  autobrightness  digital brightening of dim rooms 0 or 1 (1)
+  autobrightness  digital brightening of dim rooms, metered on the person's head with bokeh, 0 or 1 (1)
   maxgain         the most it may amplify, in tenths 10..160 (60, that is 6x)
   denoise         noise reduction 0..100 (90)
   sharpen         edge sharpening that leaves the noise alone 0..100 (50)

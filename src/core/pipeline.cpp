@@ -12,8 +12,16 @@ namespace ps5cam {
 namespace {
 
 constexpr uint32_t kNumDisp = 64;
+constexpr float kRangeDisparity = 24;  // EffectSettings::focusRange and subjectRange hold at this disparity
+constexpr float kDefaultFocus = 16;    // the focus plane until the autofocus has one
 constexpr uint32_t kNoiseBins = 128;  // shaders/denoise.hlsl: bins of 1/4096 of the 3x3-mean change
 constexpr float kNoiseBinWidth = 1.0f / 4096;
+constexpr uint32_t kMotionBlock = 32;  // shaders/motion.hlsl: pixels per motion vector, each way
+// shaders/meter.hlsl: cells across and down the picture, samples per cell, three floats per cell.
+constexpr uint32_t kMeterCellsX = 32, kMeterCellsY = 18, kMeterSamples = 64;
+// Mean luma the auto brightness aims at: of the picture, and with depth of the subject's head.
+constexpr double kFrameTarget = 0.42;
+constexpr double kSubjectTarget = 0.42;
 
 // Mirrors cbuffer Constants in shaders/common.hlsli.
 struct GpuConstants {
@@ -36,7 +44,8 @@ struct GpuConstants {
     uint32_t denoiseHistory;
     float denoiseSpatial;
     float sharpen, sharpenCore;
-    float pad[2];
+    float subjectRange;
+    float pad;
 };
 static_assert(sizeof(GpuConstants) == 192, "constant buffer layout");
 // kNumDisp mirrors MAX_DISP in shaders/common.hlsli.
@@ -49,6 +58,11 @@ struct StereoPipeline::Impl {
     GpuImage* packed = nullptr;                          // R8G8B8A8_UINT, YUY2 texels
     GpuImage *mainYuv = nullptr, *secondYuv = nullptr;   // each sensor at its own size (eyeWidth x eyeHeight, SecondWidth x SecondHeight)
     GpuImage* clean[2] = {};                             // denoised main sensor, ping-pong (this frame / history)
+    // Motion of the picture against the history (motion.hlsl): 4x-downscaled luma of this frame and
+    // of the history (R32_FLOAT), coarse and refined vectors per 32x32 block (R32G32_UINT; the
+    // refined ones ping-pong, as the noise reduction checks them against the previous frame's).
+    GpuImage *smallCur = nullptr, *smallPrev = nullptr, *motionCoarse = nullptr, *motion[2] = {};
+    uint32_t motionIndex = 0;  // which motion holds the latest vectors
     GpuImage *workMain = nullptr, *workSecond = nullptr; // R32_FLOAT work res
     GpuImage *censusMain = nullptr, *censusSecond = nullptr;  // R32G32_UINT work res
     GpuImage *dispMain = nullptr, *dispSecond = nullptr;      // R32_FLOAT work res
@@ -56,6 +70,11 @@ struct StereoPipeline::Impl {
     GpuImage* dispHist[2] = {};     // filled disparity, ping-pong for temporal smoothing
     GpuImage* leftValid = nullptr;
     GpuImage *gfA = nullptr, *gfB = nullptr, *gfC = nullptr;  // R32G32B32A32_FLOAT work res
+    // The subject's silhouette (subject.hlsl), R32_FLOAT work res: the guided disparity, the cost of
+    // reaching each pixel from the focus plane (ping-pong), the subject's share (R8_UNORM) the blur passes read.
+    GpuImage *subjDisp = nullptr, *subjCost[2] = {}, *subjShare[2] = {};
+    uint32_t shareIndex = 0;  // which subjShare is this frame's
+    GpuImage* Share() const { return subjShare[shareIndex]; }
     GpuImage* bokehHalf = nullptr;                           // R16G16B16A16_FLOAT out/2
     GpuImage *outY = nullptr, *outUV = nullptr;              // R8 / R8G8 out res (read back)
     GpuImage* outYuy2 = nullptr;                             // R8G8B8A8 out/2 x out (packed YUY2, read back)
@@ -63,10 +82,11 @@ struct StereoPipeline::Impl {
 
     GpuBuffer* sum = nullptr;  // uint16 per (pixel, disparity)
     GpuBuffer *hist = nullptr, *scoreBuf = nullptr, *lumaHist = nullptr, *noiseHist = nullptr;  // read back
+    GpuBuffer* meter = nullptr;  // the subject's light per cell (meter.hlsl), read back
 
     // Readback ring: the GPU fills slot N while the CPU reads slot N-1.
     struct Slot {
-        bool depth = false, brightness = false, denoise = false, depthPlane = false;
+        bool depth = false, brightness = false, denoise = false, depthPlane = false, meter = false;
     } slots[2];
     int pending = -1;  // slot holding a submitted frame that has not been read back yet
     uint32_t histIndex = 0;  // which dispHist is current
@@ -134,6 +154,11 @@ HRESULT StereoPipeline::CreateResources()
     TRY(g.CreateImage(m_stereo.SecondWidth(), m_stereo.SecondHeight(), GpuFormat::RGBA8_UNORM, rw, &d.secondYuv));
     TRY(g.CreateImage(ew, eh, GpuFormat::RGBA8_UNORM, rw, &d.clean[0]));
     TRY(g.CreateImage(ew, eh, GpuFormat::RGBA8_UNORM, rw, &d.clean[1]));
+    TRY(g.CreateImage(ew / 4, eh / 4, GpuFormat::R32_FLOAT, rw, &d.smallCur));
+    TRY(g.CreateImage(ew / 4, eh / 4, GpuFormat::R32_FLOAT, rw, &d.smallPrev));
+    TRY(g.CreateImage(DivUp(ew, kMotionBlock), DivUp(eh, kMotionBlock), GpuFormat::RG32_UINT, rw, &d.motionCoarse));
+    TRY(g.CreateImage(DivUp(ew, kMotionBlock), DivUp(eh, kMotionBlock), GpuFormat::RG32_UINT, rw, &d.motion[0]));
+    TRY(g.CreateImage(DivUp(ew, kMotionBlock), DivUp(eh, kMotionBlock), GpuFormat::RG32_UINT, rw, &d.motion[1]));
     // Depth resources (~45 MB): a single-sensor pipeline never computes depth, so it skips them;
     // Process binds them (as none) only to kernels that do not read them in Main view.
     if (!m_stereo.mono) {
@@ -150,7 +175,13 @@ HRESULT StereoPipeline::CreateResources()
         TRY(g.CreateImage(ww, wh, GpuFormat::RGBA32_FLOAT, rw, &d.gfA));
         TRY(g.CreateImage(ww, wh, GpuFormat::RGBA32_FLOAT, rw, &d.gfB));
         TRY(g.CreateImage(ww, wh, GpuFormat::RGBA32_FLOAT, rw, &d.gfC));
+        TRY(g.CreateImage(ww, wh, GpuFormat::R32_FLOAT, rw, &d.subjDisp));
+        TRY(g.CreateImage(ww, wh, GpuFormat::R32_FLOAT, rw, &d.subjCost[0]));
+        TRY(g.CreateImage(ww, wh, GpuFormat::R32_FLOAT, rw, &d.subjCost[1]));
+        TRY(g.CreateImage(ww, wh, GpuFormat::R8_UNORM, rw, &d.subjShare[0]));
+        TRY(g.CreateImage(ww, wh, GpuFormat::R8_UNORM, rw, &d.subjShare[1]));
         TRY(g.CreateBuffer(ww * wh * kNumDisp * 2, false, &d.sum));
+        TRY(g.CreateBuffer(kMeterCellsX * kMeterCellsY * 12, true, &d.meter));
     }
     TRY(g.CreateImage(ow / 2, oh / 2, GpuFormat::RGBA16_FLOAT, rw, &d.bokehHalf));
     TRY(g.CreateImage(ow, oh, GpuFormat::R8_UNORM, rwBack, &d.outY));
@@ -242,11 +273,17 @@ void StereoPipeline::UpdateConstants(const EffectSettings* s, uint32_t pathDir)
         c.blurScale = (0.08f + 0.5f * strength) * workToOut;
         c.maxCoC = (6.0f + 26.0f * strength) * outScale;
         c.fgScale = std::clamp(s->foregroundBlur, 0.0f, 1.0f);
-        c.focusRange = std::max(0.0f, s->focusRange);
+        // The sharp zone is a depth in centimetres, which in disparity grows with the square of the
+        // subject's disparity: the ranges are set for a subject at kRangeDisparity (~70 cm away).
+        // (Within 0.3..2.5 of that: disparities ~13..38, ~1.3 m to ~45 cm.)
+        const float focus = m_focus >= 0 ? m_focus : kDefaultFocus;
+        const float depthScale = std::clamp(focus * focus / (kRangeDisparity * kRangeDisparity), 0.3f, 2.5f);
+        c.focusRange = std::max(0.0f, s->focusRange) * depthScale;
+        c.subjectRange = std::max(0.0f, s->subjectRange) * depthScale;
         c.temporalAlpha = m_haveHistory ? std::clamp(s->temporal, 0.05f, 1.0f) : 1.0f;
         c.highlightGain = std::max(0.0f, s->highlights);
         c.mode = static_cast<uint32_t>(s->mode);
-        c.focusDisp = m_focus >= 0 ? m_focus : 16.0f;
+        c.focusDisp = focus;
         c.outFormat = static_cast<uint32_t>(o.format);
         c.lumaGain = s->autoBrightness ? m_gain : 1.0f;
         c.depthView = s->depthView;
@@ -254,7 +291,7 @@ void StereoPipeline::UpdateConstants(const EffectSettings* s, uint32_t pathDir)
         const float denoise = std::clamp(s->denoise, 0.0f, 1.0f);
         c.denoiseKeep = 1.0f - 0.88f * denoise;
         c.denoiseSpatial = denoise;
-        c.denoiseHistory = m_haveClean ? 1 : 0;
+        c.denoiseHistory = !m_haveClean ? 0 : m_motionReady ? 2 : 1;
         c.noiseLevel = m_noise >= 0 ? m_noise : 0.0f;
         // Sharpening leaves alone detail no larger than the noise left in the picture, so that it
         // brings out edges rather than grain: ~2.5 noiseLevel after a full noise reduction (~2
@@ -285,6 +322,7 @@ void StereoPipeline::RunDepth(const EffectSettings& s)
         DivUp(wh, 8));
 
     uint32_t cur = d.histIndex ^ 1, prev = d.histIndex;
+    const bool hadHistory = m_haveHistory;
     if (!m_haveHistory) g.ClearFloat(d.dispHist[prev], -1);
     g.Dispatch(Kernel::LrFill, {d.dispMain, d.dispSecond}, {d.dispFill, d.leftValid}, DivUp(wh, 64), 1);
     g.Dispatch(Kernel::HoleFill, {d.dispFill, d.dispHist[prev], d.workMain}, {d.dispHist[cur]}, DivUp(ww, 16),
@@ -303,6 +341,28 @@ void StereoPipeline::RunDepth(const EffectSettings& s)
     box(d.gfA, d.gfB);
     g.Dispatch(Kernel::GuidedCoef, {d.gfA}, {d.gfC}, DivUp(ww, 16), DivUp(wh, 8));
     box(d.gfC, d.gfB);
+
+    // The subject's silhouette: two rounds of the four scan directions (each from one cost image
+    // into the other; an even count ends in subjCost[0]), then its share, blended with the previous
+    // frame's while the depth history goes on.
+    if (s.subjectRange > 0) {
+        UpdateConstants(&s, 0);
+        g.Dispatch(Kernel::SubjectSeed, {d.workMain, d.gfC}, {d.subjDisp, d.subjCost[0]}, DivUp(ww, 16), DivUp(wh, 8));
+        for (uint32_t sweep = 0; sweep < 8; ++sweep) {
+            const uint32_t dir = sweep % 4;
+            UpdateConstants(&s, dir);
+            g.Dispatch(Kernel::SubjectSweep, {d.subjDisp, d.subjCost[sweep % 2]}, {d.subjCost[(sweep + 1) % 2]},
+                DivUp(dir < 2 ? wh : ww, 64), 1);
+        }
+        const bool blend = hadHistory && m_frame == m_lastShareFrame + 1;
+        UpdateConstants(&s, blend ? 1 : 0);
+        const uint32_t share = d.shareIndex ^ 1;
+        g.Dispatch(Kernel::SubjectShare, {d.subjCost[0], d.subjShare[d.shareIndex]}, {d.subjShare[share]},
+            DivUp(ww, 16), DivUp(wh, 8));
+        d.shareIndex = share;
+        m_lastShareFrame = m_frame;
+        UpdateConstants(&s, 0);
+    }
 }
 
 void StereoPipeline::RestartFocus()
@@ -373,7 +433,49 @@ void StereoPipeline::UpdateFocus(const uint32_t* histogram, const EffectSettings
         m_focus += (target - m_focus) * 0.15f;  // glide, like a lens refocusing
 }
 
-void StereoPipeline::UpdateGain(const uint32_t* h, const EffectSettings& s)
+StereoPipeline::SubjectLight StereoPipeline::MeasureSubject(const float* cells)
+{
+    // The subject is what the bokeh keeps sharp; its head is the top of it: the rows from the first
+    // one it covers to 40% of the way down to its last (head and shoulders, as a webcam frames a
+    // person), at least two rows.
+    SubjectLight light;
+    float rowWeight[kMeterCellsY] = {};
+    float total = 0;
+    for (uint32_t y = 0; y < kMeterCellsY; ++y) {
+        for (uint32_t x = 0; x < kMeterCellsX; ++x) rowWeight[y] += cells[(y * kMeterCellsX + x) * 3];
+        total += rowWeight[y];
+    }
+    const float coverage = total / float(kMeterCellsX * kMeterCellsY * kMeterSamples);
+    const float rowMin = 0.08f * kMeterCellsX * kMeterSamples;  // ~2.5 cells of a row
+    int top = -1, bottom = -1;
+    for (uint32_t y = 0; y < kMeterCellsY; ++y) {
+        if (rowWeight[y] < rowMin) continue;
+        if (top < 0) top = int(y);
+        bottom = int(y);
+    }
+    if (top < 0 || coverage < 0.02f) return light;
+    const int headRows = std::max(2, int(std::lround(0.4 * (bottom - top + 1))));
+    double weight = 0, luma = 0;
+    for (int y = top; y < std::min<int>(top + headRows, kMeterCellsY); ++y) {
+        for (uint32_t x = 0; x < kMeterCellsX; ++x) {
+            weight += cells[(y * kMeterCellsX + x) * 3];
+            luma += cells[(y * kMeterCellsX + x) * 3 + 1];
+        }
+    }
+    if (weight <= 0) return light;
+    light.valid = true;
+    light.headLuma = float(luma / weight);
+    // A small subject (far away, or the focus on a patch of wall) counts less, and so does one
+    // filling most of the picture (an empty room or a wall in focus, not a person).
+    auto smooth = [](float a, float b, float x) {
+        const float t = std::clamp((x - a) / (b - a), 0.0f, 1.0f);
+        return t * t * (3 - 2 * t);
+    };
+    light.confidence = smooth(0.02f, 0.06f, coverage) * (1 - smooth(0.5f, 0.8f, coverage));
+    return light;
+}
+
+void StereoPipeline::UpdateGain(const uint32_t* h, const EffectSettings& s, const SubjectLight& subject)
 {
     double total = 0, mean = 0;
     for (uint32_t i = 0; i < kNumDisp; ++i) {
@@ -393,7 +495,15 @@ void StereoPipeline::UpdateGain(const uint32_t* h, const EffectSettings& s)
         }
     }
     double whiteLevel = (white + 1.0) / kNumDisp;
-    double target = std::min({1.0 / whiteLevel, 0.42 / std::max(mean, 1e-3), double(std::max(1.0f, s.maxGain))});
+    const double maxGain = std::max(1.0f, s.maxGain);
+    double target = std::min({1.0 / whiteLevel, kFrameTarget / std::max(mean, 1e-3), maxGain});
+    // With depth the exposure is the subject's: its head at kSubjectTarget whatever the rest of the
+    // picture does, so a face against a bright window is not left dark (the window goes white under
+    // the soft shoulder of composite.hlsl) and a face lit by a screen in a dark room is not blown out.
+    if (subject.valid) {
+        const double onSubject = std::min(kSubjectTarget / std::max<double>(subject.headLuma, 1e-3), maxGain);
+        target += (onSubject - target) * subject.confidence;
+    }
     target = std::max(1.0, target);
     m_gain += float(target - m_gain) * 0.08f;  // like a camera AE: settle over about half a second
 }
@@ -439,6 +549,8 @@ HRESULT StereoPipeline::Process(const uint8_t* yuy2, uint32_t yuy2Pitch, const E
     // The second sensor view shows no main sensor image to clean up.
     const bool denoise = s.denoise > 0.0f && s.mode != ViewMode::Second;
     if (denoise && m_frame != m_lastDenoiseFrame + 1) m_haveClean = false;  // it was off: history is stale
+    // Motion compensation needs this frame's vectors and the previous frame's to check them against.
+    m_motionReady = denoise && m_haveClean && s.motionCompensation && m_frame == m_lastMotionFrame + 1;
     // The noise is measured by the noise reduction only: without it a level measured earlier, in
     // other light, would mislead the sharpening.
     if (!denoise) m_noise = -1;
@@ -465,9 +577,21 @@ HRESULT StereoPipeline::Process(const uint8_t* yuy2, uint32_t yuy2Pitch, const E
     d.slots[slot].denoise = denoise && m_haveClean;  // only then the shader fills the noise histogram
     if (denoise) {
         const uint32_t cur = d.cleanIndex ^ 1;
+        const uint32_t ew = m_stereo.eyeWidth, eh = m_stereo.eyeHeight;
+        const uint32_t motionCur = d.motionIndex ^ 1;
+        if (m_haveClean && s.motionCompensation) {
+            g.Dispatch(Kernel::MotionDown, {d.mainYuv, d.clean[d.cleanIndex]}, {d.smallCur, d.smallPrev},
+                DivUp(ew / 4, 16), DivUp(eh / 4, 8));
+            g.Dispatch(Kernel::MotionSearch, {d.smallCur, d.smallPrev}, {d.motionCoarse}, DivUp(ew, kMotionBlock),
+                DivUp(eh, kMotionBlock));
+            g.Dispatch(Kernel::MotionRefine, {d.mainYuv, d.clean[d.cleanIndex], d.motionCoarse},
+                {d.motion[motionCur]}, DivUp(ew, kMotionBlock), DivUp(eh, kMotionBlock));
+            d.motionIndex = motionCur;
+            m_lastMotionFrame = m_frame;
+        }
         g.ClearUint(d.noiseHist);
-        g.Dispatch(Kernel::Denoise, {d.mainYuv, d.clean[d.cleanIndex]}, {d.clean[cur], d.noiseHist},
-            DivUp(m_stereo.eyeWidth, 16), DivUp(m_stereo.eyeHeight, 8));
+        g.Dispatch(Kernel::Denoise, {d.mainYuv, d.clean[d.cleanIndex], d.motion[motionCur], d.motion[motionCur ^ 1]},
+            {d.clean[cur], d.noiseHist}, DivUp(ew, 16), DivUp(eh, 8));
         if (d.slots[slot].denoise) g.CopyToReadback(d.noiseHist, slot);
         d.cleanIndex = cur;
         m_haveClean = true;
@@ -477,7 +601,8 @@ HRESULT StereoPipeline::Process(const uint8_t* yuy2, uint32_t yuy2Pitch, const E
 
     const bool needDepth = s.mode == ViewMode::Bokeh || s.mode == ViewMode::Depth || s.mode == ViewMode::DebugRaw ||
                            s.mode == ViewMode::DebugFilled || s.mode == ViewMode::DebugHoles ||
-                           s.mode == ViewMode::DebugGrey || (s.depthPlane && !m_stereo.mono);
+                           s.mode == ViewMode::DebugGrey || s.mode == ViewMode::DebugBlend ||
+                           (s.depthPlane && !m_stereo.mono);
     d.slots[slot].depth = needDepth;
     if (needDepth) {
         if (m_frame != m_lastDepthFrame + 1) {  // depth was off: its history and the focus are stale
@@ -491,15 +616,22 @@ HRESULT StereoPipeline::Process(const uint8_t* yuy2, uint32_t yuy2Pitch, const E
         g.Dispatch(Kernel::Histogram, {image, d.gfC}, {d.hist}, DivUp(ow / 4, 16), DivUp(oh / 4, 8));
         g.CopyToReadback(d.hist, slot);
     }
+    // With depth the auto brightness meters the subject (meter.hlsl: 32x18 cells, 8x8 per group).
+    d.slots[slot].meter = needDepth && s.autoBrightness;
+    if (d.slots[slot].meter) {
+        g.Dispatch(Kernel::Meter, {image, d.gfC, d.Share()}, {d.meter}, DivUp(kMeterCellsX, 8),
+            DivUp(kMeterCellsY, 8));
+        g.CopyToReadback(d.meter, slot);
+    }
     if (s.mode == ViewMode::Bokeh)
-        g.Dispatch(Kernel::Bokeh, {image, d.gfC}, {d.bokehHalf}, DivUp(ow / 2, 16), DivUp(oh / 2, 8));
+        g.Dispatch(Kernel::Bokeh, {image, d.gfC, d.Share()}, {d.bokehHalf}, DivUp(ow / 2, 16), DivUp(oh / 2, 8));
     const bool packedOut = m_output.format == PixelFormat::YUY2;
     g.Dispatch(Kernel::Composite,
-        {image, d.gfC, d.bokehHalf, d.secondYuv, d.dispMain, d.dispFill, d.dispHist[d.histIndex]},
+        {image, d.gfC, d.bokehHalf, d.secondYuv, d.dispMain, d.dispFill, d.dispHist[d.histIndex], d.Share()},
         {d.outY, d.outUV, d.outYuy2}, DivUp(ow / 2, 16), DivUp(oh / 2, 8));
     d.slots[slot].depthPlane = s.depthPlane && !m_stereo.mono;
     if (d.slots[slot].depthPlane) {
-        g.Dispatch(Kernel::DepthOut, {image, d.gfC}, {d.depthPlane}, DivUp(ow, 16), DivUp(oh, 8));
+        g.Dispatch(Kernel::DepthOut, {image, d.gfC, d.Share()}, {d.depthPlane}, DivUp(ow, 16), DivUp(oh, 8));
         g.CopyToReadback(d.depthPlane, slot);
     }
     g.Unbind();
@@ -547,7 +679,16 @@ HRESULT StereoPipeline::Process(const uint8_t* yuy2, uint32_t yuy2Pitch, const E
             g.Unmap(buffer, read);
         }
     };
-    if (d.slots[read].brightness) withHistogram(d.lumaHist, [&](const uint32_t* h) { UpdateGain(h, s); });
+    SubjectLight subject;
+    if (d.slots[read].meter) {
+        GpuMapped m;
+        if (SUCCEEDED(g.Map(d.meter, read, &m))) {
+            subject = MeasureSubject(reinterpret_cast<const float*>(m.data));
+            g.Unmap(d.meter, read);
+        }
+    }
+    m_subjectLuma = subject.valid ? subject.headLuma : 0.0f;
+    if (d.slots[read].brightness) withHistogram(d.lumaHist, [&](const uint32_t* h) { UpdateGain(h, s, subject); });
     if (d.slots[read].depth) withHistogram(d.hist, [&](const uint32_t* h) { UpdateFocus(h, s); });
     if (d.slots[read].denoise) withHistogram(d.noiseHist, [&](const uint32_t* h) { UpdateNoise(h); });
 
@@ -557,6 +698,7 @@ HRESULT StereoPipeline::Process(const uint8_t* yuy2, uint32_t yuy2Pitch, const E
         stats->focusDisparity = m_focus;
         stats->gain = s.autoBrightness ? m_gain : 1.0f;
         stats->noise = std::max(m_noise, 0.0f);
+        stats->subjectLuma = m_subjectLuma;
     }
     return S_OK;
 }

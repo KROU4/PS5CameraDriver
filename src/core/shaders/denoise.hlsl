@@ -9,10 +9,17 @@
 // spatial smoothing follow the camera's gain by themselves. Chroma, which carries the ugliest
 // low-light noise and whose detail the eye hardly sees, is always smoothed, over 17x17 (every
 // fourth pixel) among neighbours of similar brightness and colour.
+// Motion compensation (denoiseHistory 2): where the block a pixel lies in moved (motion.hlsl) and
+// moved alike in the previous frame (motion goes on, while the noise of a dim room now and then
+// fakes a vector for one frame), the history comes from where the block was, if at this pixel that
+// matches better than the history in place; so a face that turns or a hand that moves keeps being
+// averaged over frames instead of smearing or falling back to grainy spatial smoothing.
 #include "common.hlsli"
 
 Texture2D<float4> Cur : register(t0);   // main sensor, this frame (Y, U, V, 1)
 Texture2D<float4> Prev : register(t1);  // the previous result
+Texture2D<uint2> Motion : register(t2); // one vector per 32x32 block (asuint), denoiseHistory 2
+Texture2D<uint2> MotionBefore : register(t3);  // the same of the previous frame
 FORMAT("rgba8") RWTexture2D<unorm float4> Out : register(u0);
 RWByteAddressBuffer NoiseHist : register(u1);  // 128 bins of the 3x3-mean change, 1/4096 each
 
@@ -23,6 +30,26 @@ static const float kChromaColourSigma = 0.03;
 // Luma range sigma of the spatial smoothing per unit of noiseLevel: on this camera a pixel's noise
 // is about 2.3 noiseLevel (the ISP's noise is correlated between neighbours).
 static const float kLumaSigma = 4.5;
+static const uint kMotionBlock = 32;
+static const int kMotionAgree = 2;  // pixels a block's vector may differ from its previous one
+
+// The history's 3x3 luma mean around p - v, and its pixel by pixel difference from this frame's
+// 3x3 around p (summed absolute differences: fine texture that the means hide counts here).
+float2 PrevMatch(int2 p, int2 v, int2 last)
+{
+    float mean = 0, sad = 0;
+    [unroll] for (int y = -1; y <= 1; ++y)
+    {
+        [unroll] for (int x = -1; x <= 1; ++x)
+        {
+            int2 q = clamp(p + int2(x, y), int2(0, 0), last);
+            float h = Prev[clamp(q - v, int2(0, 0), last)].x;
+            mean += h;
+            sad += abs(Cur[q].x - h);
+        }
+    }
+    return float2(mean / 9.0, sad);
+}
 
 [numthreads(16, 8, 1)]
 void main(uint3 id : SV_DispatchThreadID)
@@ -33,7 +60,7 @@ void main(uint3 id : SV_DispatchThreadID)
     const int2 last = int2(eyeSize) - 1;
     float4 c = Cur[p];
 
-    float meanCur = 0, meanPrev = 0;
+    float meanCur = 0, meanPrev = 0, sadPrev = 0;
     float2 meanChroma = 0;
     [unroll] for (int y = -1; y <= 1; ++y)
     {
@@ -44,7 +71,11 @@ void main(uint3 id : SV_DispatchThreadID)
             meanCur += n.x;
             meanChroma += n.yz;
             if (denoiseHistory != 0)
-                meanPrev += Prev[q].x;
+            {
+                float h = Prev[q].x;
+                meanPrev += h;
+                sadPrev += abs(n.x - h);
+            }
         }
     }
     meanCur /= 9.0;
@@ -98,14 +129,34 @@ void main(uint3 id : SV_DispatchThreadID)
         return;
     }
     float change = abs(meanCur - meanPrev);
+    // The noise is measured on the history in place, as without motion compensation.
     if ((id.x & 3) == 0 && (id.y & 3) == 0)
         NoiseHist.InterlockedAdd(min(uint(change * 4096.0), 127u) * 4, 1);
 
+    float t = max(noiseLevel, 1.0 / 4096.0);
+    int2 from = p;
+    if (denoiseHistory == 2)
+    {
+        const uint2 block = min(id.xy / kMotionBlock, (eyeSize - 1) / kMotionBlock);
+        int2 v = asint(Motion[block]);
+        int2 before = asint(MotionBefore[block]);
+        if ((v.x != 0 || v.y != 0) && all(abs(v - before) <= kMotionAgree))
+        {
+            // Along the motion only where it matches this pixel's 3x3 better than the history in
+            // place, pixel by pixel: still fine texture next to a moving hand stays in place.
+            float2 moved = PrevMatch(p, v, last);
+            if (moved.y < sadPrev)
+            {
+                change = abs(meanCur - moved.x);
+                from = clamp(p - v, int2(0, 0), last);
+            }
+        }
+    }
+
     // Still: keep denoiseKeep of the new frame; clearly moving (several times the still-scene
     // change): none of the history.
-    float t = max(noiseLevel, 1.0 / 4096.0);
     float m = smoothstep(2.0 * t, 5.0 * t, change);
-    float4 prev = Prev[p];
+    float4 prev = Prev[from];
     float still = lerp(prev.x, c.x, denoiseKeep);
     float2 stillChroma = lerp(prev.yz, chroma, denoiseKeep);
     Out[p] = float4(lerp(still, moving, m), lerp(stillChroma, chroma, m), 1);

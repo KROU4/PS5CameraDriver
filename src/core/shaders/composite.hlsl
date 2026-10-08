@@ -1,6 +1,7 @@
 // Final pass: blends the sharp main image with the half-resolution bokeh layer (or renders a
 // diagnostic view) and writes NV12 planes. One thread per 2x2 output block.
 #include "common.hlsli"
+#define SUBJECT_REGISTER t7
 #include "depthsample.hlsli"
 
 Texture2D<float4> BokehHalf : register(t2);
@@ -76,6 +77,11 @@ float3 Shade(float2 outPx)
     {
         result = float3(DisparityAt(uv) / 64.0, 0.5, 0.5);  // for measurements: Y = 16 + 219 d / 64
     }
+    else if (mode == 9)
+    {
+        // For measurements: the bokeh's blend weight, Y = 16 + 219 w (0 sharp, 1 blurred).
+        result = float3(smoothstep(0.5, 2.5, CircleOfConfusion(DisparityAt(uv), SubjectAt(uv))), 0.5, 0.5);
+    }
     else if (mode >= 5 && mode <= 7)
     {
         // Nearest work pixel, black where invalid.
@@ -96,13 +102,13 @@ float3 Shade(float2 outPx)
     else
     {
         float3 sharp = SharpMain(uv);
-        float coc = CircleOfConfusion(DisparityAt(uv));
+        float coc = CircleOfConfusion(DisparityAt(uv), SubjectAt(uv));
         float3 blurred = BokehHalf.SampleLevel(LinearClamp, outPx / float2(outSize), 0).xyz;
         result = lerp(sharp, blurred, smoothstep(0.5, 2.5, coc));
     }
     // Digital exposure for dim rooms: linear gain with a soft shoulder so highlights do not clip
     // hard; chroma follows the luma ratio so colours keep their saturation.
-    if (lumaGain > 1.01 && mode != 3 && mode != 8)
+    if (lumaGain > 1.01 && mode != 3 && mode < 8)
     {
         float y = result.x * lumaGain;
         const float knee = 0.75;

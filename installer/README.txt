@@ -42,8 +42,15 @@ choice too, while an administrator is signed in.
 Picture
 -------
 - Noise reduction (on by default, medium): in a dim room the sensor noise is averaged over
-  several frames where nothing moves, and smoothed within the frame where something does;
-  colour noise is smoothed over a wide area. ps5cam-ctl set denoise 0..100 (default 90, 0 = off).
+  several frames; what moves is followed (motion compensation), and where that fails it is
+  smoothed within the frame instead; colour noise is smoothed over a wide area.
+  ps5cam-ctl set denoise 0..100 (default 90, 0 = off).
+- Auto brightness: brightens a dim picture digitally. With bokeh on it meters the person (the
+  head of what the bokeh keeps sharp): a face against a bright window is not left dark, and a
+  face lit by the screen in a dark room is not blown out.
+- Bokeh sharp zone: the whole head stays sharp — ears, hair and headphones, which depth shows
+  joined to the face — while the background behind it is blurred. The zone is the same depth in
+  centimetres at any distance from the camera.
 - Sharpening (on by default): edges gain contrast, while detail as small as the noise is left
   alone, so in a dim room it all but stops. ps5cam-ctl set sharpen 0..100 (default 50, 0 = off).
 - Anti-flicker (automatic by default): in a dim room the camera exposes up to the whole

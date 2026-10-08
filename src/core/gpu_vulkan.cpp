@@ -30,7 +30,14 @@
 #include "shaders/holefill.h"
 #include "shaders/lrfill.h"
 #include "shaders/lumastats.h"
+#include "shaders/meter.h"
+#include "shaders/motion_down.h"
+#include "shaders/motion_refine.h"
+#include "shaders/motion_search.h"
 #include "shaders/score.h"
+#include "shaders/subject_share.h"
+#include "shaders/subject_seed.h"
+#include "shaders/subject_sweep.h"
 #include "shaders/unpack.h"
 #include "shaders/wta.h"
 
@@ -63,7 +70,10 @@ const Blob kKernels[] = {
     {g_holefill, sizeof(g_holefill)}, {g_guided_prep, sizeof(g_guided_prep)}, {g_guided_box, sizeof(g_guided_box)},
     {g_guided_coef, sizeof(g_guided_coef)}, {g_histogram, sizeof(g_histogram)}, {g_bokeh, sizeof(g_bokeh)},
     {g_composite, sizeof(g_composite)}, {g_score, sizeof(g_score)}, {g_lumastats, sizeof(g_lumastats)},
-    {g_denoise, sizeof(g_denoise)}, {g_depthout, sizeof(g_depthout)},
+    {g_denoise, sizeof(g_denoise)}, {g_depthout, sizeof(g_depthout)}, {g_subject_seed, sizeof(g_subject_seed)},
+    {g_subject_sweep, sizeof(g_subject_sweep)}, {g_subject_share, sizeof(g_subject_share)}, {g_meter, sizeof(g_meter)},
+    {g_motion_down, sizeof(g_motion_down)}, {g_motion_search, sizeof(g_motion_search)},
+    {g_motion_refine, sizeof(g_motion_refine)},
 };
 static_assert(sizeof(kKernels) / sizeof(kKernels[0]) == size_t(Kernel::Count), "one blob per kernel");
 
@@ -832,6 +842,10 @@ void Gpu::Dispatch(Kernel kernel, std::initializer_list<GpuRef> reads, std::init
 {
     Impl::Batch* b = m->Rec();
     if (!b) return;
+    if (reads.size() > kMaxReads || writes.size() > kMaxWrites) {
+        m->Fail(E_INVALIDARG, "a kernel was given more images than a dispatch binds");  // the pool's sizing
+        return;
+    }
     Impl::KernelState* k = m->Prepare(kernel, reads, writes);
     if (!k) return;
     for (const GpuRef& ref : writes)
