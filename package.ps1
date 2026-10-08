@@ -11,7 +11,8 @@ $dist = Join-Path $root 'dist\PS5CameraDriver'
 if (Test-Path $dist) { Remove-Item -Recurse -Force $dist }
 New-Item -ItemType Directory -Force $dist | Out-Null
 
-Copy-Item "$b\vcam\ps5cam-vcam.dll", "$b\service\ps5cam-svc.exe", "$b\ctl\ps5cam-ctl.exe", "$b\tray\ps5cam-tray.exe" $dist
+Copy-Item "$b\vcam\ps5cam-vcam.dll", "$b\dmft\ps5cam-dmft.dll", "$b\service\ps5cam-svc.exe", "$b\ctl\ps5cam-ctl.exe",
+    "$b\tray\ps5cam-tray.exe" $dist
 Copy-Item $patch $dist
 Copy-Item (Join-Path $root 'installer\Install.cmd'), (Join-Path $root 'installer\Uninstall.cmd') $dist
 New-Item -ItemType Directory -Force (Join-Path $dist 'driver') | Out-Null

@@ -14,6 +14,7 @@ struct Settings {
     bool autoFocus = true;
     uint32_t focus = 50;      // manual focus 0 (far) .. 100 (near)
     bool prefer60 = true;     // list 60 fps media types first
+    bool fullHdOnly = true;   // offer apps 1920x1080 at 60 fps only (else also 1280x720 and 30 fps)
     uint32_t highlights = 150;  // bokeh highlight gain x100
     uint32_t temporal = 40;   // temporal weight x100
     bool autoBrightness = true;

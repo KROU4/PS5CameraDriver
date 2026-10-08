@@ -27,7 +27,7 @@ class Ps5Stream
     : public Microsoft::WRL::RuntimeClass<Microsoft::WRL::RuntimeClassFlags<Microsoft::WRL::ClassicCom>,
           Microsoft::WRL::ChainInterfaces<IMFMediaStream2, IMFMediaStream, IMFMediaEventGenerator>> {
 public:
-    HRESULT RuntimeClassInitialize(Ps5Source* parent, bool prefer60);
+    HRESULT RuntimeClassInitialize(Ps5Source* parent, bool prefer60, bool fullHdOnly);
     HRESULT Start();  // StartEngine + MEStreamStarted
     HRESULT Stop();
     void Shutdown();

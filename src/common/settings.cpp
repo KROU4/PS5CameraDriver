@@ -64,6 +64,7 @@ Settings LoadSettings()
     s.autoFocus = ReadDword(key, L"AutoFocus", s.autoFocus) != 0;
     s.focus = std::min<DWORD>(ReadDword(key, L"Focus", s.focus), 100);
     s.prefer60 = ReadDword(key, L"Prefer60", s.prefer60) != 0;
+    s.fullHdOnly = ReadDword(key, L"FullHdOnly", s.fullHdOnly) != 0;
     s.highlights = std::min<DWORD>(ReadDword(key, L"Highlights", s.highlights), 400);
     s.temporal = std::clamp<DWORD>(ReadDword(key, L"Temporal", s.temporal), 5, 100);
     s.autoBrightness = ReadDword(key, L"AutoBrightness", s.autoBrightness) != 0;
@@ -81,6 +82,7 @@ bool SaveSettings(const Settings& s)
     WriteDword(key, L"AutoFocus", s.autoFocus);
     WriteDword(key, L"Focus", s.focus);
     WriteDword(key, L"Prefer60", s.prefer60);
+    WriteDword(key, L"FullHdOnly", s.fullHdOnly);
     WriteDword(key, L"Highlights", s.highlights);
     WriteDword(key, L"Temporal", s.temporal);
     WriteDword(key, L"AutoBrightness", s.autoBrightness);

@@ -27,6 +27,7 @@ enum Cmd : UINT {
     CmdHighlightsBase = 400,
     CmdAutoBrightness = 500,
     CmdPrefer60 = 501,
+    CmdFullHdOnly = 502,
     CmdRecalibrate = 600,
     CmdOpenCamera = 601,
     CmdOpenLogs = 602,
@@ -203,7 +204,9 @@ void ShowMenu()
     AppendMenuW(menu, MF_POPUP, reinterpret_cast<UINT_PTR>(hl), L"Блики боке");
 
     AddItem(menu, CmdAutoBrightness, L"Автояркость (для тёмной комнаты)", s.autoBrightness, false);
-    AddItem(menu, CmdPrefer60, L"Предпочитать 60 к/с (при следующем запуске камеры)", s.prefer60, false);
+    AddItem(menu, CmdFullHdOnly, L"Только Full HD 60 к/с (при следующем запуске камеры)", s.fullHdOnly, false);
+    if (!s.fullHdOnly)
+        AddItem(menu, CmdPrefer60, L"Предпочитать 60 к/с (при следующем запуске камеры)", s.prefer60, false);
     AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
     AppendMenuW(menu, MF_STRING, CmdRecalibrate, L"Перекалибровать стерео");
     AppendMenuW(menu, MF_STRING, CmdOpenCamera, L"Открыть приложение «Камера»");
@@ -234,6 +237,7 @@ void ShowMenu()
     } else if (cmd >= CmdHighlightsBase && cmd < CmdHighlightsBase + 3) s.highlights = kHighlights[cmd - CmdHighlightsBase].value;
     else if (cmd == CmdAutoBrightness) s.autoBrightness = !s.autoBrightness;
     else if (cmd == CmdPrefer60) s.prefer60 = !s.prefer60;
+    else if (cmd == CmdFullHdOnly) s.fullHdOnly = !s.fullHdOnly;
     else if (cmd == CmdRecalibrate) {
         BumpCalibrationRequest();
         return;

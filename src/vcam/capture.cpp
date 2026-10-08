@@ -17,6 +17,7 @@
 #include <vector>
 
 #include "../common/log.h"
+#include "cameramodes.h"
 
 using Microsoft::WRL::ComPtr;
 
@@ -82,66 +83,9 @@ std::wstring FindCameraLink()
     return {};
 }
 
-enum class Layout { Mono, SideBySide, HalfSecond };
-
-struct SensorMode {
-    uint32_t packedW, packedH, fps;
-    Layout layout;
-    const wchar_t* key;  // calibration key
-};
-
 // OpenCamera: the camera is on a USB 2.0 port and offers none of our modes (an own code, so no
 // Media Foundation error can be mistaken for it).
 constexpr HRESULT kUsb2Port = MAKE_HRESULT(SEVERITY_ERROR, FACILITY_ITF, 0x0201);
-
-constexpr const wchar_t* kMonoKey = L"1080m";
-constexpr const wchar_t* kHalfKey = L"1080h";
-
-// Every view but Main (the diagnostic Second and SideBySide included) uses the depth mode, so
-// switching between them never reopens the camera; Second shows the second sensor at 960x540 then.
-const wchar_t* WantedKey(ViewMode view)
-{
-    return view == ViewMode::Main ? kMonoKey : kHalfKey;
-}
-
-// Sensor modes for an output request, preferred first; the camera may not offer every one (the
-// firmware lives in RAM, so an older image keeps running until the next replug).
-std::vector<SensorMode> SensorModes(const OutputRequest& r, ViewMode view)
-{
-    const uint32_t fps = r.fps > 30 ? 60u : 30u;
-    std::vector<SensorMode> modes;
-    // Without a depth effect the image comes from one sensor at full 1920x1080 (60 fps since e7).
-    if (view == ViewMode::Main) modes.push_back({1920, 1080, fps, Layout::Mono, kMonoKey});
-    // Depth, firmware e9: the same sensor at full 1920x1080 plus the second one at 960x540, at 30 or
-    // 60 fps (two full sensors at 60 fps would exceed the USB bandwidth).
-    modes.push_back({2448, 1088, fps, Layout::HalfSecond, kHalfKey});
-    // Older images: both full sensors up to 30 fps, the 1280x800 crop of each at 60.
-    if (fps > 30) modes.push_back({2560, 800, 60, Layout::SideBySide, L"800"});
-    else modes.push_back({3840, 1080, 30, Layout::SideBySide, L"1080"});
-    return modes;
-}
-
-StereoFormat FormatOf(const SensorMode& m)
-{
-    StereoFormat sf;
-    switch (m.layout) {
-    case Layout::Mono:
-        sf.mono = true;
-        sf.eyeWidth = m.packedW;
-        sf.eyeHeight = m.packedH;
-        break;
-    case Layout::SideBySide:
-        sf.eyeWidth = m.packedW / 2;
-        sf.eyeHeight = m.packedH;
-        break;
-    case Layout::HalfSecond:
-        sf.halfSecond = true;
-        sf.eyeWidth = (m.packedW - StereoFormat::kHalfHeaderPixels) * 4 / 5;  // main + main / 4
-        sf.eyeHeight = m.packedH - StereoFormat::kHalfExtraLines;
-        break;
-    }
-    return sf;
-}
 
 bool IsDeviceLost(HRESULT hr)
 {
@@ -339,7 +283,7 @@ HRESULT CaptureEngine::OpenCamera()
         RefreshSettings(true);
         view = m_effect.mode;
     }
-    const std::vector<SensorMode> modes = SensorModes(m_req, view);
+    const std::vector<SensorMode> modes = SensorModes(m_req.fps, view);
     const wchar_t* wantedKey = WantedKey(view);
     m_modeChange = false;
     std::wstring link = FindCameraLink();
@@ -422,16 +366,7 @@ HRESULT CaptureEngine::OpenCamera()
     }
 
     const StereoFormat sf = FormatOf(mode);
-    OutputFormat of;
-    of.width = m_req.width;
-    of.height = m_req.height;
-    of.format = m_req.format;
-    // Keep the output aspect: crop the sensor image vertically or horizontally as needed.
-    float outAspect = float(of.width) / of.height, eyeAspect = float(sf.eyeWidth) / sf.eyeHeight;
-    of.cropW = eyeAspect > outAspect ? sf.eyeHeight * outAspect : float(sf.eyeWidth);
-    of.cropH = eyeAspect > outAspect ? float(sf.eyeHeight) : sf.eyeWidth / outAspect;
-    of.cropX = (sf.eyeWidth - of.cropW) * 0.5f;
-    of.cropY = (sf.eyeHeight - of.cropH) * 0.5f;
+    const OutputFormat of = OutputFor(sf, m_req.width, m_req.height, m_req.format);
     {
         std::lock_guard lock(m_lock);
         bool same = m_pipeline && m_stereo.eyeWidth == sf.eyeWidth && m_stereo.eyeHeight == sf.eyeHeight &&

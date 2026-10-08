@@ -91,6 +91,42 @@ std::wstring WaitForCameraLink(DWORD timeoutMs)
     return {};
 }
 
+// Service\UseDeviceMft = 1: the effect runs in ps5cam-dmft.dll inside the camera itself, so the
+// camera stays visible under its own name and there is no virtual camera.
+bool UseDeviceMft()
+{
+    return ReadRegDword(L"UseDeviceMft", 0) != 0;
+}
+
+void DeviceMftReady()
+{
+    std::wstring msg;
+    if (IsPhysicalCameraHidden()) {
+        // Coming from the virtual camera: let go of the hidden camera before restarting it, or the
+        // restart may be refused (and Frame Server then wants a reboot).
+        RemoveVirtualCamera(msg);
+        Log(L"virtual camera removed: %ls", msg.c_str());
+        WriteRegString(L"AssociatedLink", L"");
+        StopFrameServer();
+        SetPhysicalCameraHidden(false, msg);
+        Log(L"raw camera: %ls", msg.c_str());
+        Sleep(1500);  // the device restarts and re-registers its interfaces
+        WaitForCameraLink(10000);
+    }
+    // Another USB port gives the camera new interfaces without the device MFT (this check also
+    // ends the arrival that our own device restart causes). No Frame Server restart: it has no
+    // pipeline for interfaces that just appeared, and stopping it would cut every app's camera.
+    if (!IsDeviceMftSet()) {
+        SetDeviceMft(true, msg, false);
+        Log(L"%ls", msg.c_str());
+    }
+    if (!ReadRegString(L"AssociatedLink").empty()) {
+        RemoveVirtualCamera(msg);
+        Log(L"virtual camera removed: %ls", msg.c_str());
+        WriteRegString(L"AssociatedLink", L"");
+    }
+}
+
 // The running camera is present: apply the raw-camera visibility preference and make sure the
 // virtual camera exists and is associated with this camera's current interface.
 void CameraReady()
@@ -98,6 +134,16 @@ void CameraReady()
     std::wstring link = WaitForCameraLink(10000);
     if (link.empty()) {
         Log(L"camera interface did not appear");
+        return;
+    }
+    if (CameraNeedsRestart()) {
+        // Left waiting for a reboot by a refused device restart: re-enumerate it instead (its
+        // arrival brings us back here).
+        Log(L"camera waits for a reboot, re-enumerating it: %ls", CycleCamera() ? L"ok" : L"failed");
+        return;
+    }
+    if (UseDeviceMft()) {
+        DeviceMftReady();
         return;
     }
     std::wstring msg;
@@ -161,7 +207,7 @@ void Worker()
             BootDevice(job.path);
         } else if (job.kind == JobKind::CameraReady) {
             CameraReady();
-        } else {
+        } else if (!UseDeviceMft()) {
             std::wstring msg;
             RegisterVirtualCamera(msg);
             Log(L"virtual camera: %ls", msg.c_str());

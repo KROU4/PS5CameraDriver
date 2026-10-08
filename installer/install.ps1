@@ -1,19 +1,23 @@
 ﻿# Установщик драйвера PS5 HD Camera. Запускается с правами администратора (через Install.cmd).
-#   .\install.ps1 [-Bokeh ask|on|off] [-Tray] [-Original FILE] [-KeepRawCamera] [-NoPause]
-#   -Bokeh     on: фон всегда размыт; off: обычная камера; ask (по умолчанию): спросить
-#   -Tray      значок в трее для разработки (переключение режимов на лету); без него значка нет
-#   -Original  оригинальная прошивка Sony (иначе sony-firmware.bin рядом или загрузка из интернета)
+#   .\install.ps1 [-Bokeh ask|on|off] [-Tray] [-Original FILE] [-VirtualCamera [-KeepRawCamera]] [-NoPause]
+#   -Bokeh          on: фон всегда размыт; off: обычная камера; ask (по умолчанию): спросить
+#   -Tray           значок в трее для разработки (переключение режимов на лету); без него значка нет
+#   -Original       оригинальная прошивка Sony (иначе sony-firmware.bin рядом или загрузка из интернета)
+#   -VirtualCamera  прежний способ: отдельная виртуальная камера, а сама камера скрыта (с -KeepRawCamera
+#                   видна). По умолчанию эффект работает внутри самой камеры (Device MFT).
 param(
     [ValidateSet('ask', 'on', 'off')][string]$Bokeh = 'ask',
     [switch]$Tray,
     [string]$Original,
+    [switch]$VirtualCamera,
     [switch]$KeepRawCamera,
     [switch]$NoPause
 )
 $ErrorActionPreference = 'Stop'
 $src = $PSScriptRoot
 $target = Join-Path $env:ProgramFiles 'PS5Camera'
-$files = 'ps5cam-vcam.dll', 'ps5cam-svc.exe', 'ps5cam-ctl.exe', 'ps5cam-tray.exe', 'ps5cam-firmware.json', 'uninstall.ps1'
+$files = 'ps5cam-vcam.dll', 'ps5cam-dmft.dll', 'ps5cam-svc.exe', 'ps5cam-ctl.exe', 'ps5cam-tray.exe', 'ps5cam-firmware.json',
+    'uninstall.ps1'
 # Subject of the per-computer certificate that signs the boot driver's catalog (uninstall.ps1 too).
 $signerSubject = 'CN=PS5 Camera driver signer (this computer only)'
 
@@ -108,6 +112,7 @@ if (-not $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administra
     $argList = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', "`"$PSCommandPath`"", '-Bokeh', $Bokeh)
     if ($Tray) { $argList += '-Tray' }
     if ($Original) { $argList += @('-Original', "`"$((Resolve-Path $Original).Path)`"") }
+    if ($VirtualCamera) { $argList += '-VirtualCamera' }
     if ($KeepRawCamera) { $argList += '-KeepRawCamera' }
     if ($NoPause) { $argList += '-NoPause' }
     Start-Process powershell.exe -Verb RunAs -ArgumentList $argList
@@ -116,7 +121,7 @@ if (-not $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administra
 
 try {
     if ([Environment]::OSVersion.Version.Build -lt 22000) {
-        throw 'Нужна Windows 11: системные виртуальные камеры появились в сборке 22000.'
+        throw 'Нужна Windows 11 (сборка 22000 и новее): драйвер проверялся только на ней.'
     }
     foreach ($f in $files + 'driver\ps5cam-boot.inf') {
         if (-not (Test-Path (Join-Path $src $f))) { throw "В папке установщика нет файла $f" }
@@ -166,9 +171,12 @@ try {
     [IO.File]::WriteAllBytes((Join-Path $target 'firmware.bin'), $firmware)  # the service uploads this file
     $ctl = Join-Path $target 'ps5cam-ctl.exe'
 
-    Step 'Регистрация источника видео'
-    $p = Start-Process regsvr32.exe -ArgumentList '/s', "`"$target\ps5cam-vcam.dll`"" -Wait -PassThru
-    if ($p.ExitCode -ne 0) { throw "regsvr32 завершился с кодом $($p.ExitCode)" }
+    Step 'Регистрация компонентов видео'
+    # Both, so that ps5cam-ctl can switch between the two ways later.
+    foreach ($dll in 'ps5cam-dmft.dll', 'ps5cam-vcam.dll') {
+        $p = Start-Process regsvr32.exe -ArgumentList '/s', "`"$target\$dll`"" -Wait -PassThru
+        if ($p.ExitCode -ne 0) { throw "regsvr32 $dll завершился с кодом $($p.ExitCode)" }
+    }
 
     Step 'Настройки и журналы'
     $rc = Run $ctl @('setup')
@@ -177,9 +185,23 @@ try {
     # Mode 0 = bokeh, 1 = plain camera (src/core/pipeline.h ViewMode).
     $rc = Run $ctl @('set', 'mode', $(if ($Bokeh -eq 'on') { '0' } else { '1' }))
     if ($rc -ne 0) { throw "не удалось записать режим камеры ($rc)" }
-    # Admin-only subkey: the SYSTEM service restarts the camera according to this value.
+    # Admin-only subkey: the SYSTEM service restarts the camera according to these values.
     $rc = Run 'reg.exe' @('add', 'HKLM\SOFTWARE\PS5Camera\Service', '/v', 'HideRawCamera', '/t', 'REG_DWORD', '/d', [string][int](-not $KeepRawCamera), '/f')
     if ($rc -ne 0) { throw "не удалось записать настройку HideRawCamera ($rc)" }
+    $rc = Run 'reg.exe' @('add', 'HKLM\SOFTWARE\PS5Camera\Service', '/v', 'UseDeviceMft', '/t', 'REG_DWORD', '/d', [string][int](-not $VirtualCamera), '/f')
+    if ($rc -ne 0) { throw "не удалось записать настройку UseDeviceMft ($rc)" }
+
+    # Before the service starts, so the two do not switch the camera at the same time. The service
+    # repeats it whenever the camera appears (also on another USB port).
+    if ($VirtualCamera) {
+        Run $ctl @('dmft', 'off') | Out-Null  # a previous installation may have used the device MFT
+    } else {
+        Step 'Эффект внутри самой камеры (Device MFT), имя "PS5 Camera"'
+        $plugged = [bool](Get-PnpDevice -PresentOnly -ErrorAction SilentlyContinue | Where-Object { $_.InstanceId -match 'VID_05A9&PID_058C&MI_00' })
+        $rc = Run $ctl @('dmft', 'on')
+        # Without a camera ever plugged in there is nothing to set yet.
+        if ($rc -ne 0 -and $plugged) { throw "не удалось подключить эффект к камере ($rc)" }
+    }
 
     Step 'Служба камеры (автозагрузка прошивки при подключении)'
     $rc = Run (Join-Path $target 'ps5cam-svc.exe') @('install')
@@ -193,16 +215,18 @@ try {
     }
     Write-Host ($(if ($found) { '    камера подключена' } else { '    камера пока не подключена: всё включится само, когда вы её подключите' }))
 
-    Step 'Виртуальная камера "PS5 Camera"'
-    # Служба делает это сама при старте (и скрывает сырую камеру); здесь повторяем, чтобы сразу показать
-    # ошибки. Пока служба пересоздаёт камеру, регистрация может быть временно отклонена, поэтому повторяем.
-    Start-Sleep -Seconds 3
-    $rc = 1
-    for ($i = 0; $i -lt 6 -and $rc -ne 0; $i++) {
-        if ($i -gt 0) { Start-Sleep -Seconds 2 }
-        $rc = Run $ctl @('register')
+    if ($VirtualCamera) {
+        Step 'Виртуальная камера "PS5 Camera"'
+        # Служба делает это сама при старте (и скрывает сырую камеру); здесь повторяем, чтобы сразу показать
+        # ошибки. Пока служба пересоздаёт камеру, регистрация может быть временно отклонена, поэтому повторяем.
+        Start-Sleep -Seconds 3
+        $rc = 1
+        for ($i = 0; $i -lt 6 -and $rc -ne 0; $i++) {
+            if ($i -gt 0) { Start-Sleep -Seconds 2 }
+            $rc = Run $ctl @('register')
+        }
+        if ($rc -ne 0) { throw "не удалось зарегистрировать виртуальную камеру ($rc)" }
     }
-    if ($rc -ne 0) { throw "не удалось зарегистрировать виртуальную камеру ($rc)" }
 
     $runKey = 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Run'
     if ($Tray) {
@@ -228,6 +252,7 @@ try {
 
     Write-Host ''
     Write-Host ("Готово: камера {0}. В любом приложении выберите камеру `"PS5 Camera`"." -f $(if ($Bokeh -eq 'on') { 'с боке' } else { 'без боке' })) -ForegroundColor Green
+    if (-not $VirtualCamera) { Write-Host 'Приложения, открытые во время установки, увидят камеру после перезапуска.' }
     if ($Tray) {
         Write-Host 'Значок в трее: клик включает и выключает боке, правый клик открывает настройки.'
     } else {

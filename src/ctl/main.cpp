@@ -6,6 +6,7 @@
 #include <cstdio>
 #include <string>
 
+#include "../common/ids.h"
 #include "../common/settings.h"
 #include "../common/vcamreg.h"
 
@@ -77,6 +78,23 @@ static int Setup()
     wprintf(L"log folder  : %ls\n", dirOk ? L"ok" : L"failed");
     return regOk && dirOk ? 0 : 1;
 }
+// Restarts PS5CameraService if it runs: at start it sets up the camera the way Service\UseDeviceMft
+// says (virtual camera and hiding, or the device MFT).
+static void RestartCameraService()
+{
+    SC_HANDLE scm = OpenSCManagerW(nullptr, nullptr, SC_MANAGER_CONNECT);
+    if (!scm) return;
+    SC_HANDLE svc = OpenServiceW(scm, L"PS5CameraService", SERVICE_STOP | SERVICE_START | SERVICE_QUERY_STATUS);
+    SERVICE_STATUS st = {};
+    if (svc && QueryServiceStatus(svc, &st) && st.dwCurrentState == SERVICE_RUNNING &&
+        ControlService(svc, SERVICE_CONTROL_STOP, &st)) {
+        for (int i = 0; i < 100 && QueryServiceStatus(svc, &st) && st.dwCurrentState != SERVICE_STOPPED; ++i) Sleep(100);
+        wprintf(L"camera service restart: %ls\n", StartServiceW(svc, 0, nullptr) ? L"ok" : L"failed");
+    }
+    if (svc) CloseServiceHandle(svc);
+    CloseServiceHandle(scm);
+}
+
 int wmain(int argc, wchar_t** argv)
 {
     std::wstring cmd = argc > 1 ? argv[1] : L"";
@@ -86,6 +104,31 @@ int wmain(int argc, wchar_t** argv)
     if (cmd == L"remove") return Report(RemoveVirtualCamera(msg), msg);
     if (cmd == L"hide") return Report(SetPhysicalCameraHidden(true, msg), msg);
     if (cmd == L"unhide") return Report(SetPhysicalCameraHidden(false, msg), msg);
+    if (cmd == L"dmft" && argc == 3 && (wcscmp(argv[2], L"on") == 0 || wcscmp(argv[2], L"off") == 0)) {
+        // The service follows the choice on every plug-in: on keeps the camera visible with the
+        // device MFT and removes the virtual camera; off goes back to the virtual camera.
+        const DWORD on = wcscmp(argv[2], L"on") == 0;
+        if (RegSetKeyValueW(HKEY_LOCAL_MACHINE, kRegServiceKey, L"UseDeviceMft", REG_DWORD, &on, sizeof(on)) !=
+            ERROR_SUCCESS) {
+            wprintf(L"failed: run as administrator\n");
+            return 1;
+        }
+        bool frameServerStopped = false;
+        if (on) {
+            RemoveVirtualCamera(msg);
+            if (IsPhysicalCameraHidden()) {
+                // Let go of the hidden camera first, or its restart may be refused (and Frame Server
+                // then wants a reboot).
+                frameServerStopped = StopFrameServer();
+                SetPhysicalCameraHidden(false, msg);
+                wprintf(L"%ls\n", msg.c_str());
+            }
+        }
+        HRESULT hr = SetDeviceMft(on != 0, msg, !frameServerStopped);
+        int code = Report(hr, msg);
+        if (!on) RestartCameraService();  // it brings the virtual camera back right away
+        return code;
+    }
     if (cmd == L"defaults") return SaveSettings(Settings{}) ? 0 : 1;
     if (cmd == L"set" && argc == 4) {
         Settings s = LoadSettings();
@@ -100,6 +143,7 @@ int wmain(int argc, wchar_t** argv)
         else if (k == L"autofocus") s.autoFocus = v != 0;
         else if (k == L"focus") s.focus = v;
         else if (k == L"prefer60") s.prefer60 = v != 0;
+        else if (k == L"fullhdonly") s.fullHdOnly = v != 0;
         else if (k == L"highlights") s.highlights = v;
         else if (k == L"temporal") s.temporal = v;
         else if (k == L"autobrightness") s.autoBrightness = v != 0;
@@ -132,13 +176,19 @@ int wmain(int argc, wchar_t** argv)
         std::wstring link = FindPhysicalCameraLink();
         wprintf(L"physical camera : %ls\n", link.empty() ? L"not connected" : link.c_str());
         wprintf(L"raw camera hidden: %ls\n", IsPhysicalCameraHidden() ? L"yes" : L"no");
-        wprintf(L"settings        : mode %u blur %u autofocus %u focus %u prefer60 %u highlights %u temporal %u\n",
-            s.mode, s.blur, s.autoFocus, s.focus, s.prefer60, s.highlights, s.temporal);
+        wprintf(L"device MFT      : %ls\n", IsDeviceMftSet() ? L"on" : L"off");
+        wprintf(L"settings        : mode %u blur %u autofocus %u focus %u prefer60 %u fullhdonly %u highlights %u "
+                L"temporal %u\n",
+            s.mode, s.blur, s.autoFocus, s.focus, s.prefer60, s.fullHdOnly, s.highlights, s.temporal);
         wprintf(L"stream          : %ls %ls fps %.2f gpu %.2f ms focus %.2f %ls\n", st.streaming ? L"active" : L"idle",
             st.format.c_str(), st.fpsX100 / 100.0, st.gpuUs / 1000.0, st.focusX100 / 100.0, st.error.c_str());
         return 0;
     }
-    wprintf(L"usage: ps5cam-ctl setup | register | remove | hide | unhide | status | recalibrate | record N | defaults |\n"
-            L"                  set mode|blur|autofocus|focus|prefer60|highlights|temporal|autobrightness|maxgain VALUE\n");
+    wprintf(L"usage: ps5cam-ctl setup | register | remove | hide | unhide | dmft on|off | status | recalibrate |\n"
+            L"                  record N | defaults |\n"
+            L"                  set mode|blur|autofocus|focus|prefer60|fullhdonly|highlights|temporal|autobrightness|\n"
+            L"                      maxgain VALUE\n"
+            L"  fullhdonly 1: apps are offered 1920x1080 at 60 fps only; 0: also 1280x720 and 30 fps\n"
+            L"  (formats apply when no app has the camera open)\n");
     return 1;
 }

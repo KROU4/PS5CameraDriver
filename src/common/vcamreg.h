@@ -21,4 +21,19 @@ HRESULT RemoveVirtualCamera(std::wstring& message);
 HRESULT SetPhysicalCameraHidden(bool hidden, std::wstring& message);
 bool IsPhysicalCameraHidden();
 
+// Names (or stops naming) the device MFT (ps5cam-dmft.dll, COM-registered separately) on the
+// camera's interfaces, so Frame Server runs the effect inside the camera itself, and renames the
+// camera to PS5 Camera (or back). With restartFrameServer, restarts Frame Server when that changes
+// for the plugged-in camera (this ends every app's camera stream). Requires administrator rights.
+HRESULT SetDeviceMft(bool on, std::wstring& message, bool restartFrameServer = true);
+bool IsDeviceMftSet();  // fully on for the plugged-in camera
+// Stops Frame Server (it starts again when an app opens a camera). False if it did not stop.
+bool StopFrameServer();
+
+// A device restart refused while an app held the camera leaves it waiting for a reboot (Frame
+// Server answers MF_E_REBOOT_REQUIRED); re-enumerating it through its USB port (VBUS stays on, so
+// does the firmware) clears that. Requires administrator rights.
+bool CameraNeedsRestart();
+bool CycleCamera();
+
 }  // namespace ps5cam

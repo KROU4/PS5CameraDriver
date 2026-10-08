@@ -11,6 +11,7 @@ add_compile_options(/W4 /permissive- /utf-8 /EHsc)
 add_subdirectory(src/service)
 add_subdirectory(src/core)
 add_subdirectory(src/vcam)
+add_subdirectory(src/dmft)
 add_subdirectory(src/ctl)
 add_subdirectory(src/tray)
 # Diagnostics and firmware-lab tools (developer tree only).

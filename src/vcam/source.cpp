@@ -9,6 +9,7 @@
 
 #include "../common/log.h"
 #include "../common/settings.h"
+#include "cameramodes.h"
 
 using Microsoft::WRL::ComPtr;
 using Microsoft::WRL::MakeAndInitialize;
@@ -16,43 +17,6 @@ using Microsoft::WRL::MakeAndInitialize;
 namespace ps5cam {
 
 namespace {
-
-struct TypeSpec {
-    uint32_t w, h, fps;
-    PixelFormat fmt;
-};
-
-HRESULT MakeVideoType(const TypeSpec& t, IMFMediaType** out)
-{
-    ComPtr<IMFMediaType> mt;
-    HRESULT hr = MFCreateMediaType(&mt);
-    if (FAILED(hr)) return hr;
-    const bool yuy2 = t.fmt == PixelFormat::YUY2;
-    mt->SetGUID(MF_MT_MAJOR_TYPE, MFMediaType_Video);
-    mt->SetGUID(MF_MT_SUBTYPE, yuy2 ? MFVideoFormat_YUY2 : MFVideoFormat_NV12);
-    MFSetAttributeSize(mt.Get(), MF_MT_FRAME_SIZE, t.w, t.h);
-    // Express the rate as a whole 100 ns frame interval (60 fps -> 166666, like the camera's own UVC
-    // descriptors): the DirectShow bridge truncates intervals, and 60/1 would otherwise surface as
-    // 59.9999 fps and reject a request for exactly 60.
-    UINT32 interval = 10'000'000 / t.fps;
-    MFSetAttributeRatio(mt.Get(), MF_MT_FRAME_RATE, 10'000'000, interval);
-    MFSetAttributeRatio(mt.Get(), MF_MT_FRAME_RATE_RANGE_MAX, 10'000'000, interval);
-    MFSetAttributeRatio(mt.Get(), MF_MT_FRAME_RATE_RANGE_MIN, 10'000'000, interval);
-    MFSetAttributeRatio(mt.Get(), MF_MT_PIXEL_ASPECT_RATIO, 1, 1);
-    mt->SetUINT32(MF_MT_INTERLACE_MODE, MFVideoInterlace_Progressive);
-    mt->SetUINT32(MF_MT_ALL_SAMPLES_INDEPENDENT, TRUE);
-    mt->SetUINT32(MF_MT_FIXED_SIZE_SAMPLES, TRUE);
-    mt->SetUINT32(MF_MT_DEFAULT_STRIDE, yuy2 ? t.w * 2 : t.w);  // positive: top-down
-    UINT32 sampleSize = yuy2 ? t.w * t.h * 2 : t.w * t.h * 3 / 2;
-    mt->SetUINT32(MF_MT_SAMPLE_SIZE, sampleSize);
-    mt->SetUINT32(MF_MT_AVG_BITRATE, sampleSize * 8 * t.fps);
-    mt->SetUINT32(MF_MT_YUV_MATRIX, MFVideoTransferMatrix_BT601);
-    mt->SetUINT32(MF_MT_VIDEO_NOMINAL_RANGE, MFNominalRange_16_235);
-    mt->SetUINT32(MF_MT_VIDEO_PRIMARIES, MFVideoPrimaries_BT709);
-    mt->SetUINT32(MF_MT_TRANSFER_FUNCTION, MFVideoTransFunc_709);
-    *out = mt.Detach();
-    return S_OK;
-}
 
 HRESULT SetStreamAttributes(IMFAttributes* a)
 {
@@ -68,7 +32,7 @@ HRESULT SetStreamAttributes(IMFAttributes* a)
 // ---------------------------------------------------------------------------------------------
 // Ps5Stream
 
-HRESULT Ps5Stream::RuntimeClassInitialize(Ps5Source* parent, bool prefer60)
+HRESULT Ps5Stream::RuntimeClassInitialize(Ps5Source* parent, bool prefer60, bool fullHdOnly)
 {
     m_parent = parent;
     HRESULT hr = MFCreateEventQueue(&m_queue);
@@ -78,20 +42,13 @@ HRESULT Ps5Stream::RuntimeClassInitialize(Ps5Source* parent, bool prefer60)
     hr = SetStreamAttributes(m_attributes.Get());
     if (FAILED(hr)) return hr;
 
-    // Both rates show one full 1920x1080 sensor; with depth (firmware e9) the second sensor comes
-    // along at half size. Older images fall back to the 1280x800 stereo crop at 60 fps and both full
-    // sensors at 30 (see SensorModes in capture.cpp).
-    const uint32_t sizes[][2] = {{1920, 1080}, {1280, 720}};  // Full HD and HD; apps scale anything smaller
-    const uint32_t rates[2] = {prefer60 ? 60u : 30u, prefer60 ? 30u : 60u};
     std::vector<ComPtr<IMFMediaType>> types;
-    for (PixelFormat fmt : {PixelFormat::NV12, PixelFormat::YUY2})
-        for (const auto& s : sizes)
-            for (uint32_t fps : rates) {
-                ComPtr<IMFMediaType> mt;
-                hr = MakeVideoType({s[0], s[1], fps, fmt}, &mt);
-                if (FAILED(hr)) return hr;
-                types.push_back(mt);
-            }
+    for (const TypeSpec& t : OutputTypes(prefer60, fullHdOnly)) {
+        ComPtr<IMFMediaType> mt;
+        hr = MakeVideoType(t, &mt);
+        if (FAILED(hr)) return hr;
+        types.push_back(mt);
+    }
     std::vector<IMFMediaType*> raw;
     for (auto& t : types) raw.push_back(t.Get());
     hr = MFCreateStreamDescriptor(0, static_cast<DWORD>(raw.size()), raw.data(), &m_descriptor);
@@ -336,7 +293,7 @@ HRESULT Ps5Source::RuntimeClassInitialize(IMFAttributes* activateAttributes)
     hr = MFCreateAttributes(&m_attributes, 4);
     if (FAILED(hr)) return hr;
     Settings settings = LoadSettings();
-    hr = MakeAndInitialize<Ps5Stream>(&m_stream, this, settings.prefer60);
+    hr = MakeAndInitialize<Ps5Stream>(&m_stream, this, settings.prefer60, settings.fullHdOnly);
     if (FAILED(hr)) return hr;
     IMFStreamDescriptor* sd = m_stream->Descriptor();
     hr = MFCreatePresentationDescriptor(1, &sd, &m_pd);
