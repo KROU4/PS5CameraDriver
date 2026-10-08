@@ -17,9 +17,10 @@
            UpgradeCode="51A018EE-D582-4CF1-BDBA-D278E34380B4" Scope="perMachine" Compressed="yes"
            Language="!(loc.Language)">
     <SummaryInformation Description="PS5 HD Camera driver for Windows 11" />
-    <!-- A rebuild of the same version replaces the installed one too, instead of joining it. The
+    <!-- A rebuild of the same version replaces the installed one too, instead of joining it, and so
+         does the package in the other language (the English and the Russian MSI are one product). The
          old version is removed inside this installation, so a failure brings its files back. -->
-    <MajorUpgrade DowngradeErrorMessage="!(loc.Downgrade)" AllowSameVersionUpgrades="yes"
+    <MajorUpgrade DowngradeErrorMessage="!(loc.Downgrade)" AllowSameVersionUpgrades="yes" IgnoreLanguage="yes"
                   Schedule="afterInstallInitialize" />
     <MediaTemplate EmbedCab="yes" />
 
