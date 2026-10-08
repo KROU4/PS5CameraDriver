@@ -58,6 +58,8 @@ private:
     bool EnsurePipeline();
     IMFSample* NewOutputSample(BYTE** scan0, LONG* pitch, Microsoft::WRL::ComPtr<IMF2DBuffer2>& lockOut);
     void RefreshSettings(bool force);
+    void StartRecording(uint32_t frames);
+    void EndRecording(const wchar_t* why);
     void PublishStatus();
     void SetError(const wchar_t* text);
     std::wstring Error();
@@ -91,6 +93,10 @@ private:
     uint32_t m_nextCalibFrame = 10;
     uint32_t m_frameCount = 0;
     uint32_t m_badFrames = 0;
+    // Raw frames for tuning (ps5cam-ctl record N), written on the reader thread under m_lock.
+    HANDLE m_record = INVALID_HANDLE_VALUE;
+    uint32_t m_recordLeft = 0;
+    uint32_t m_recordFrameBytes = 0;  // frame size the file started with; another one ends it
 
     // Status accounting.
     std::atomic<ULONGLONG> m_statusTick = 0;

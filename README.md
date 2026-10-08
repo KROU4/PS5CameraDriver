@@ -49,8 +49,8 @@ USB 05A9:0580 (загрузчик камеры) ── служба ps5cam-svc �
 USB 05A9:058C (UVC-камера, скрыта от программ)
         ▼
 ps5cam-vcam.dll в Windows Camera Frame Server (системная виртуальная камера)
-  распаковка → census 9x7 → SGM (4 прохода) → проверка лево/право → временной фильтр
-  → guided filter → автофокус → боке → автояркость → NV12/YUY2
+  распаковка → census 9x7 → SGM (4 прохода) → отсев ненадёжных совпадений → заливка дыр
+  → временной фильтр → guided filter → автофокус → боке → автояркость → NV12/YUY2
         ▼
 «PS5 Camera» для Media Foundation, WinRT и DirectShow
 ```

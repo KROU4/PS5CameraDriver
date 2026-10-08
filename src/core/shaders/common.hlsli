@@ -17,7 +17,8 @@ cbuffer Constants : register(b0)
     float  temporalAlpha; // weight of the new disparity in the temporal filter
     float  p1;            // SGM small-step penalty
     float  p2;            // SGM large-step penalty
-    uint   mode;          // 0 bokeh, 1 main sensor, 2 second sensor, 3 depth view, 4 side by side
+    uint   mode;          // 0 bokeh, 1 main sensor, 2 second sensor, 3 depth view, 4 side by side,
+                          // 5/6 raw / checked disparity (bench only)
     float  guidedEps;     // guided filter regulariser
     uint   secondOffsetTexels; // texel x where the second sensor starts in the packed frame
     uint   mainOffsetTexels;   // texel x where the main sensor starts

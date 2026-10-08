@@ -47,5 +47,11 @@ uint32_t LoadCalibrationRequest();
 void BumpCalibrationRequest();
 uint32_t LoadCalibrationHandled();
 void SaveCalibrationHandled(uint32_t value);
+// Raw frame recording for tuning (ps5cam-ctl record N, administrators only): the source takes the
+// request, clears it and writes the next N camera frames to %ProgramData%\PS5Camera\record-<key>.raw
+// (key of the sensor mode: 1080h, 1080m, ...), readable by administrators only. RequestRecording
+// needs admin rights (it secures the Debug key).
+uint32_t TakeRecordRequest();
+bool RequestRecording(uint32_t frames);
 
 }  // namespace ps5cam

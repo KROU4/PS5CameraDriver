@@ -91,6 +91,10 @@ int wmain(int argc, wchar_t** argv)
         Settings s = LoadSettings();
         std::wstring k = argv[2];
         uint32_t v = static_cast<uint32_t>(_wtoi(argv[3]));
+        if (k == L"mode" && v > 4) {
+            wprintf(L"mode: 0 bokeh, 1 main sensor, 2 second sensor, 3 depth, 4 side by side\n");
+            return 1;
+        }
         if (k == L"mode") s.mode = v;
         else if (k == L"blur") s.blur = v;
         else if (k == L"autofocus") s.autoFocus = v != 0;
@@ -105,6 +109,18 @@ int wmain(int argc, wchar_t** argv)
             return 1;
         }
         return SaveSettings(s) ? 0 : 1;
+    }
+    if (cmd == L"record" && argc == 3) {
+        // Raw camera frames for tuning; the source writes them while an app uses the camera.
+        EnablePrivilege(SE_TAKE_OWNERSHIP_NAME);
+        EnablePrivilege(SE_RESTORE_NAME);
+        if (!RequestRecording(static_cast<uint32_t>(_wtoi(argv[2])))) {
+            wprintf(L"failed: run as administrator\n");
+            return 1;
+        }
+        wprintf(L"the next frames go to %%ProgramData%%\\PS5Camera\\record-<sensor mode>.raw, e.g. record-1080h.raw\n"
+                L"(written while an app uses the camera; readable by administrators only)\n");
+        return 0;
     }
     if (cmd == L"recalibrate") {
         BumpCalibrationRequest();
@@ -122,7 +138,7 @@ int wmain(int argc, wchar_t** argv)
             st.format.c_str(), st.fpsX100 / 100.0, st.gpuUs / 1000.0, st.focusX100 / 100.0, st.error.c_str());
         return 0;
     }
-    wprintf(L"usage: ps5cam-ctl setup | register | remove | hide | unhide | status | recalibrate | defaults |\n"
+    wprintf(L"usage: ps5cam-ctl setup | register | remove | hide | unhide | status | recalibrate | record N | defaults |\n"
             L"                  set mode|blur|autofocus|focus|prefer60|highlights|temporal|autobrightness|maxgain VALUE\n");
     return 1;
 }

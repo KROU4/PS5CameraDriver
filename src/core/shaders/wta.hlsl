@@ -3,8 +3,54 @@
 #include "common.hlsli"
 
 ByteAddressBuffer Sum : register(t0);
+Texture2D<float> WorkMain : register(t1);
+Texture2D<uint2> CensusMain : register(t2);
+Texture2D<uint2> CensusSecond : register(t3);
 RWTexture2D<float> DispMain : register(u0);   // -1 = invalid
 RWTexture2D<float> DispSecond : register(u1);
+
+// The best cost must beat every other disparity by this share, or the match is ambiguous.
+static const uint kUniquenessPercent = 92;
+// A flat neighbourhood (luma standard deviation below this, sensor noise level) matches anywhere:
+// SGM then just carries a neighbour's disparity along its paths, which is how a subject's depth
+// spreads over a plain wall. Such pixels are left to the hole filling instead.
+static const float kMinTexture = 0.012;
+// Census bits that differ at the chosen disparity, averaged over 3x3 (of 62). A real match differs
+// in a few bits; in dark noisy areas (a ceiling at high gain) the winner is the least bad of random
+// patterns, which SGM turns into blobs that pass the other tests.
+static const uint kMaxCensusCost = 20;
+
+uint CensusCost(int2 p, int d)
+{
+    uint sum = 0;
+    [unroll] for (int dy = -1; dy <= 1; ++dy)
+    {
+        [unroll] for (int dx = -1; dx <= 1; ++dx)
+        {
+            int2 q = clamp(p + int2(dx, dy), int2(d, 0), int2(workSize) - 1);
+            uint2 a = CensusMain[q];
+            uint2 b = CensusSecond[int2(q.x - d, q.y)];
+            sum += countbits(a.x ^ b.x) + countbits(a.y ^ b.y);
+        }
+    }
+    return sum;
+}
+
+float LocalStd(int2 p)
+{
+    float s = 0, s2 = 0;
+    [unroll] for (int dy = -2; dy <= 2; ++dy)
+    {
+        [unroll] for (int dx = -2; dx <= 2; ++dx)
+        {
+            float v = WorkMain[clamp(p + int2(dx, dy), int2(0, 0), int2(workSize) - 1)];
+            s += v;
+            s2 += v * v;
+        }
+    }
+    float mean = s / 25.0;
+    return sqrt(max(s2 / 25.0 - mean * mean, 0));
+}
 
 uint SumAt(uint pixel, uint d)
 {
@@ -39,8 +85,16 @@ void main(uint3 id : SV_DispatchThreadID)
             second = min(second, costs[d2]);
     }
 
+    // Near the image border the census window (in either image) reaches past the image: those
+    // matches are guesses. The cheap tests go first; HLSL && does not short-circuit, hence [branch].
+    bool inside = id.y >= 3 && id.y + 3 < workSize.y && id.x >= bestD + 4 && id.x + 4 < workSize.x;
+    bool confident = inside && (second == 0xFFFFFFFF || best * 100 < second * kUniquenessPercent);
+    [branch] if (confident)
+        confident = LocalStd(int2(id.xy)) >= kMinTexture;
+    [branch] if (confident)
+        confident = CensusCost(int2(id.xy), bestD) <= kMaxCensusCost * 9;
     float disp = -1;
-    if (second == 0xFFFFFFFF || best * 100 < second * 97)
+    if (confident)
     {
         disp = bestD;
         if (bestD > 0 && bestD + 1 < MAX_DISP && bestD + 1 <= id.x)

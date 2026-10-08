@@ -6,6 +6,9 @@
 #include <ksmedia.h>
 #include <mfapi.h>
 #include <mferror.h>
+#include <knownfolders.h>
+#include <sddl.h>
+#include <shlobj.h>
 #include <wrl/implements.h>
 
 #include <algorithm>
@@ -221,6 +224,7 @@ void CaptureEngine::StopLocked()
         // Release the GPU device and its ~65 MB of resources while nobody streams.
         std::lock_guard lock(m_lock);
         m_pipeline.reset();
+        EndRecording(L"stopped with the stream");
     }
     Status st;
     st.streaming = false;
@@ -242,6 +246,9 @@ void CaptureEngine::RefreshSettings(bool force)
     m_effect.temporal = s.temporal / 100.0f;
     m_effect.autoBrightness = s.autoBrightness;
     m_effect.maxGain = s.maxGain / 10.0f;
+    // Taken only while frames flow, so the file is named after the sensor mode actually streaming.
+    if (m_readerAlive && !m_recordLeft)
+        if (uint32_t frames = TakeRecordRequest()) StartRecording(frames);
     // The tray bumps Request; Handled records the last one we served, so a request made while the
     // camera was idle is honoured at the next stream start.
     if (LoadCalibrationRequest() != LoadCalibrationHandled() && !m_calibPending) {
@@ -249,6 +256,42 @@ void CaptureEngine::RefreshSettings(bool force)
         m_calibFailures = 0;
         m_nextCalibFrame = m_frameCount + 10;
     }
+}
+
+void CaptureEngine::StartRecording(uint32_t frames)
+{
+    PWSTR programData = nullptr;
+    if (FAILED(SHGetKnownFolderPath(FOLDERID_ProgramData, 0, nullptr, &programData))) {
+        Log(L"recording: no ProgramData folder");
+        return;
+    }
+    std::wstring path = std::wstring(programData) + L"\\PS5Camera\\record-" + m_sensorKey + L".raw";
+    CoTaskMemFree(programData);
+    // The frames show whoever sits at the camera: SYSTEM, admins and this service only, not the
+    // users who may read the log folder. A new file, since an existing one would keep its ACL.
+    DeleteFileW(path.c_str());
+    SECURITY_ATTRIBUTES sa = {sizeof(sa)};
+    DWORD error = 0;
+    if (ConvertStringSecurityDescriptorToSecurityDescriptorW(L"D:P(A;;FA;;;SY)(A;;FA;;;BA)(A;;FA;;;LS)", SDDL_REVISION_1,
+            &sa.lpSecurityDescriptor, nullptr)) {
+        m_record = CreateFileW(path.c_str(), GENERIC_WRITE, 0, &sa, CREATE_NEW, FILE_ATTRIBUTE_NORMAL, nullptr);
+        error = GetLastError();
+        LocalFree(sa.lpSecurityDescriptor);
+    }
+    m_recordLeft = m_record != INVALID_HANDLE_VALUE ? frames : 0;
+    m_recordFrameBytes = 0;
+    if (m_recordLeft) Log(L"recording %u raw frames to %ls", frames, path.c_str());
+    else Log(L"recording to %ls failed (error %lu; the old file open elsewhere?)", path.c_str(), error);
+}
+
+void CaptureEngine::EndRecording(const wchar_t* why)
+{
+    if (m_record != INVALID_HANDLE_VALUE) {
+        CloseHandle(m_record);
+        m_record = INVALID_HANDLE_VALUE;
+        Log(L"recording %ls", why);
+    }
+    m_recordLeft = 0;
 }
 
 bool CaptureEngine::EnsurePipeline()
@@ -488,6 +531,20 @@ void CaptureEngine::ProcessFrame(IMFSample* sample)
     size_t available = scan0 && start ? size_t(start + len - scan0) : 0;
     bool ok = pitch >= static_cast<LONG>(rowBytes) && available >= size_t(pitch) * (rows - 1) + rowBytes &&
               available >= need;
+    if (ok && m_recordLeft) {
+        // Debug aid: ~5 MB per frame written synchronously, so a few frames get dropped meanwhile.
+        const uint32_t frameBytes = rowBytes * rows;
+        if (!m_recordFrameBytes) m_recordFrameBytes = frameBytes;
+        bool written = frameBytes == m_recordFrameBytes;
+        const bool packed = pitch == static_cast<LONG>(rowBytes);  // usually: the whole frame in one write
+        for (uint32_t y = 0; written && y < (packed ? 1 : rows); ++y) {
+            const DWORD bytes = packed ? frameBytes : rowBytes;
+            DWORD done = 0;
+            written = WriteFile(m_record, scan0 + size_t(pitch) * y, bytes, &done, nullptr) && done == bytes;
+        }
+        if (!written) EndRecording(L"stopped (sensor mode changed or disk error)");
+        else if (--m_recordLeft == 0) EndRecording(L"finished");
+    }
     if (ok) {
         Deliver(scan0, static_cast<uint32_t>(pitch));
     } else if (m_badFrames++ % 300 == 0) {

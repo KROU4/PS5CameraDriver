@@ -12,7 +12,9 @@
 
 namespace ps5cam {
 
-enum class ViewMode : uint32_t { Bokeh = 0, Main = 1, Second = 2, Depth = 3, SideBySide = 4 };
+// DebugRaw / DebugFilled (bench only): disparity after SGM and the confidence tests in wta.hlsl,
+// and after the left-right check and the fill of occlusions (before the 2D hole fill).
+enum class ViewMode : uint32_t { Bokeh = 0, Main = 1, Second = 2, Depth = 3, SideBySide = 4, DebugRaw = 5, DebugFilled = 6 };
 enum class PixelFormat : uint32_t { NV12 = 0, YUY2 = 1 };
 
 struct EffectSettings {
@@ -123,6 +125,10 @@ private:
     uint32_t m_workW = 640, m_workH = 360;
     Rectification m_rect;
     float m_focus = -1;
+    static constexpr uint32_t kFocusSwitchFrames = 20;  // ~1/3 s at 60 fps
+    int m_focusPeak = -1;                               // histogram peak (bin) autofocus follows
+    int m_focusCandidate = -1;                          // peak waiting to take the focus over
+    uint32_t m_focusCandidateFrames = 0;
     float m_gain = 1;
     bool m_haveHistory = false;
     uint32_t m_frame = 0;

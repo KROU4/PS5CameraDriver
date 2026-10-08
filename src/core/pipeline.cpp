@@ -14,6 +14,7 @@
 #include "shaders/guided_coef.h"
 #include "shaders/guided_prep.h"
 #include "shaders/histogram.h"
+#include "shaders/holefill.h"
 #include "shaders/lrfill.h"
 #include "shaders/lumastats.h"
 #include "shaders/score.h"
@@ -62,7 +63,7 @@ struct Tex {
 struct StereoPipeline::Impl {
     ComPtr<ID3D11Buffer> constants;
     ComPtr<ID3D11SamplerState> linearClamp;
-    ComPtr<ID3D11ComputeShader> unpack, downscale, census, aggregate, wta, lrfill, guidedPrep, guidedBox, guidedCoef,
+    ComPtr<ID3D11ComputeShader> unpack, downscale, census, aggregate, wta, lrfill, holefill, guidedPrep, guidedBox, guidedCoef,
         histogram, bokeh, composite, score, lumastats;
 
     Tex packed;                    // R8G8B8A8_UINT, YUY2 texels
@@ -70,7 +71,8 @@ struct StereoPipeline::Impl {
     Tex workMain, workSecond;      // R32_FLOAT work res
     Tex censusMain, censusSecond;  // R32G32_UINT work res
     Tex dispMain, dispSecond;      // R32_FLOAT work res
-    Tex dispHist[2];               // filtered disparity, ping-pong for temporal smoothing
+    Tex dispFill;                  // after the LR check and the fill of short gaps, -1 = still unknown
+    Tex dispHist[2];               // filled disparity, ping-pong for temporal smoothing
     Tex leftValid;
     Tex gfA, gfB, gfC;             // R32G32B32A32_FLOAT work res
     Tex bokehHalf;                 // R16G16B16A16_FLOAT out/2
@@ -220,6 +222,7 @@ HRESULT StereoPipeline::CreateResources()
     CS(aggregate, g_aggregate);
     CS(wta, g_wta);
     CS(lrfill, g_lrfill);
+    CS(holefill, g_holefill);
     CS(guidedPrep, g_guided_prep);
     CS(guidedBox, g_guided_box);
     CS(guidedCoef, g_guided_coef);
@@ -259,6 +262,7 @@ HRESULT StereoPipeline::CreateResources()
         TRY(MakeTex(dev, ww, wh, DXGI_FORMAT_R32G32_UINT, true, d.censusSecond));
         TRY(MakeTex(dev, ww, wh, DXGI_FORMAT_R32_FLOAT, true, d.dispMain));
         TRY(MakeTex(dev, ww, wh, DXGI_FORMAT_R32_FLOAT, true, d.dispSecond));
+        TRY(MakeTex(dev, ww, wh, DXGI_FORMAT_R32_FLOAT, true, d.dispFill));
         TRY(MakeTex(dev, ww, wh, DXGI_FORMAT_R32_FLOAT, true, d.dispHist[0]));
         TRY(MakeTex(dev, ww, wh, DXGI_FORMAT_R32_FLOAT, true, d.dispHist[1]));
         TRY(MakeTex(dev, ww, wh, DXGI_FORMAT_R32_FLOAT, true, d.leftValid));
@@ -306,6 +310,9 @@ void StereoPipeline::Reset()
     std::lock_guard lock(m_lock);
     m_haveHistory = false;
     m_focus = -1;
+    m_focusPeak = -1;
+    m_focusCandidate = -1;
+    m_focusCandidateFrames = 0;
     if (m_impl) m_impl->pending = -1;
 }
 
@@ -427,7 +434,8 @@ void StereoPipeline::RunDepth(const EffectSettings& s)
         ctx->Dispatch(dir < 2 ? wh : ww, 1, 1);
     }
 
-    Bind(ctx, d.wta.Get(), {d.sumSrv.Get()}, {d.dispMain.uav.Get(), d.dispSecond.uav.Get()});
+    Bind(ctx, d.wta.Get(), {d.sumSrv.Get(), d.workMain.srv.Get(), d.censusMain.srv.Get(), d.censusSecond.srv.Get()},
+        {d.dispMain.uav.Get(), d.dispSecond.uav.Get()});
     ctx->Dispatch(DivUp(ww, 16), DivUp(wh, 8), 1);
 
     uint32_t cur = d.histIndex ^ 1, prev = d.histIndex;
@@ -435,9 +443,11 @@ void StereoPipeline::RunDepth(const EffectSettings& s)
         const float minusOne[4] = {-1, -1, -1, -1};
         ctx->ClearUnorderedAccessViewFloat(d.dispHist[prev].uav.Get(), minusOne);
     }
-    Bind(ctx, d.lrfill.Get(), {d.dispMain.srv.Get(), d.dispSecond.srv.Get(), d.dispHist[prev].srv.Get()},
-        {d.dispHist[cur].uav.Get(), d.leftValid.uav.Get()});
+    Bind(ctx, d.lrfill.Get(), {d.dispMain.srv.Get(), d.dispSecond.srv.Get()}, {d.dispFill.uav.Get(), d.leftValid.uav.Get()});
     ctx->Dispatch(DivUp(wh, 64), 1, 1);
+    Bind(ctx, d.holefill.Get(), {d.dispFill.srv.Get(), d.dispHist[prev].srv.Get(), d.workMain.srv.Get()},
+        {d.dispHist[cur].uav.Get()});
+    ctx->Dispatch(DivUp(ww, 16), DivUp(wh, 8), 1);
     d.histIndex = cur;
     m_haveHistory = true;
 
@@ -464,31 +474,48 @@ void StereoPipeline::UpdateFocus(const uint32_t* histogram, const EffectSettings
         m_focus = std::clamp(s.manualFocus, 0.0f, 1.0f) * (kNumDisp - 1);
         return;
     }
+    // Bins 0-1 collect unmatched pixels and are ignored.
     double total = 0;
     float smooth[kNumDisp] = {};
     for (uint32_t i = 0; i < kNumDisp; ++i) {
-        total += histogram[i];
+        if (i >= 2) total += histogram[i];
         smooth[i] = 0.5f * histogram[i] + 0.25f * histogram[i > 0 ? i - 1 : i] +
                     0.25f * histogram[i + 1 < kNumDisp ? i + 1 : i];
     }
     if (total < 50) return;
-    // Nearest peak that holds a meaningful share of the central area: the subject. Bins 0-1
-    // collect unmatched pixels and are ignored.
+    auto share = [&](int i) {
+        double mass = 0;
+        for (int k = std::max(2, i - 2); k <= std::min<int>(kNumDisp - 1, i + 2); ++k) mass += histogram[k];
+        return mass / total;
+    };
+    // Nearest peak that holds a meaningful share of the central area: the subject. A subject
+    // off-centre or far away fills only ~10% of the weighted area, hence the low share.
     int pick = -1, globalMax = 2;
     for (int i = kNumDisp - 2; i >= 2; --i) {
         if (smooth[i] > smooth[globalMax]) globalMax = i;
-        double mass = 0;
-        for (int k = std::max(0, i - 2); k <= std::min<int>(kNumDisp - 1, i + 2); ++k) mass += histogram[k];
         bool peak = smooth[i] >= smooth[i - 1] && smooth[i] >= smooth[i + 1];
-        if (pick < 0 && peak && mass / total >= 0.12) pick = i;
+        if (pick < 0 && peak && share(i) >= 0.07) pick = i;
     }
     if (pick < 0) pick = globalMax;
+    // While the subject being followed is still there, another peak (a hand raised towards the
+    // camera, a share hovering around the threshold) takes over only after kFocusSwitchFrames.
+    if (m_focusPeak >= 2 && std::abs(pick - m_focusPeak) > 2 && share(m_focusPeak) >= 0.05) {
+        if (std::abs(pick - m_focusCandidate) <= 2) ++m_focusCandidateFrames;
+        else m_focusCandidateFrames = 1;
+        m_focusCandidate = pick;
+        if (m_focusCandidateFrames < kFocusSwitchFrames) pick = m_focusPeak;
+    }
+    if (pick != m_focusPeak) {
+        m_focusCandidate = -1;
+        m_focusCandidateFrames = 0;
+    }
     double wsum = 0, dsum = 0;
-    for (int k = std::max(0, pick - 2); k <= std::min<int>(kNumDisp - 1, pick + 2); ++k) {
+    for (int k = std::max(2, pick - 2); k <= std::min<int>(kNumDisp - 1, pick + 2); ++k) {
         wsum += histogram[k];
         dsum += double(histogram[k]) * k;
     }
     float target = wsum > 0 ? float(dsum / wsum) : float(pick);
+    m_focusPeak = static_cast<int>(std::lround(target));  // follows the subject moving closer or away
     if (m_focus < 0)
         m_focus = target;
     else if (std::fabs(target - m_focus) > 0.6f)
@@ -553,7 +580,8 @@ HRESULT StereoPipeline::Process(const uint8_t* yuy2, uint32_t yuy2Pitch, const E
         ctx->CopyResource(d.lumaHistStaging[slot].Get(), d.lumaHist.Get());
     }
 
-    const bool needDepth = s.mode == ViewMode::Bokeh || s.mode == ViewMode::Depth;
+    const bool needDepth = s.mode == ViewMode::Bokeh || s.mode == ViewMode::Depth || s.mode == ViewMode::DebugRaw ||
+                           s.mode == ViewMode::DebugFilled;
     d.slots[slot].depth = needDepth;
     if (needDepth) {
         if (m_frame != m_lastDepthFrame + 1) m_haveHistory = false;  // depth was off: history is stale
@@ -571,7 +599,9 @@ HRESULT StereoPipeline::Process(const uint8_t* yuy2, uint32_t yuy2Pitch, const E
         ctx->Dispatch(DivUp(ow / 2, 16), DivUp(oh / 2, 8), 1);
     }
     const bool packedOut = m_output.format == PixelFormat::YUY2;
-    Bind(ctx, d.composite.Get(), {d.mainYuv.srv.Get(), d.gfC.srv.Get(), d.bokehHalf.srv.Get(), d.secondYuv.srv.Get()},
+    Bind(ctx, d.composite.Get(),
+        {d.mainYuv.srv.Get(), d.gfC.srv.Get(), d.bokehHalf.srv.Get(), d.secondYuv.srv.Get(), d.dispMain.srv.Get(),
+            d.dispFill.srv.Get()},
         {d.outY.uav.Get(), d.outUV.uav.Get(), d.outYuy2.uav.Get()});
     ctx->Dispatch(DivUp(ow / 2, 16), DivUp(oh / 2, 8), 1);
     Bind(ctx, nullptr, {}, {});

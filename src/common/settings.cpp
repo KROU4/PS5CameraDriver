@@ -1,5 +1,8 @@
 #include "settings.h"
 
+#include <aclapi.h>
+#include <sddl.h>
+
 #include <algorithm>
 
 #include "ids.h"
@@ -171,6 +174,59 @@ void BumpCalibrationRequest()
     if (!key) return;
     WriteDword(key, L"Request", ReadDword(key, L"Request", 0) + 1);
     RegCloseKey(key);
+}
+
+uint32_t TakeRecordRequest()
+{
+    // Users may create keys under the root (and write to keys that inherit its ACL), so a request
+    // counts only in a key owned by Administrators or SYSTEM with its own protected ACL, which is
+    // what ps5cam-ctl record sets up.
+    std::wstring path = std::wstring(kRegRoot) + L"\\Debug";
+    HKEY key = nullptr;
+    if (RegOpenKeyExW(HKEY_LOCAL_MACHINE, path.c_str(), 0, KEY_READ | KEY_SET_VALUE, &key) != ERROR_SUCCESS) return 0;
+    DWORD frames = ReadDword(key, L"RecordFrames", 0);
+    PSID owner = nullptr;
+    PSECURITY_DESCRIPTOR sd = nullptr;
+    SECURITY_DESCRIPTOR_CONTROL control = 0;
+    DWORD revision = 0;
+    bool trusted = GetSecurityInfo(key, SE_REGISTRY_KEY, OWNER_SECURITY_INFORMATION | DACL_SECURITY_INFORMATION, &owner,
+                       nullptr, nullptr, nullptr, &sd) == ERROR_SUCCESS &&
+                   owner && (IsWellKnownSid(owner, WinBuiltinAdministratorsSid) || IsWellKnownSid(owner, WinLocalSystemSid)) &&
+                   GetSecurityDescriptorControl(sd, &control, &revision) && (control & SE_DACL_PROTECTED);
+    if (sd) LocalFree(sd);
+    // A request that cannot be cleared would start a new recording after every finished one.
+    const DWORD zero = 0;
+    bool cleared = !frames || RegSetValueExW(key, L"RecordFrames", 0, REG_DWORD, reinterpret_cast<const BYTE*>(&zero),
+                                  sizeof(zero)) == ERROR_SUCCESS;
+    RegCloseKey(key);
+    return trusted && cleared ? std::min<DWORD>(frames, 600) : 0;
+}
+
+bool RequestRecording(uint32_t frames)
+{
+    // Owner Administrators; SYSTEM and admins write, the media source (LOCAL SERVICE) reads and
+    // clears the request, users only read. Re-applied every time, so a key made by a user is taken over.
+    HKEY key = Open(L"Debug", true);  // fails on a key whose ACL shuts admins out; taken over below
+    if (key) RegCloseKey(key);
+    PSECURITY_DESCRIPTOR sd = nullptr;
+    if (!ConvertStringSecurityDescriptorToSecurityDescriptorW(
+                    L"O:BAD:P(A;CI;KA;;;SY)(A;CI;KA;;;BA)(A;CI;0x2001b;;;LS)(A;CI;KR;;;BU)", SDDL_REVISION_1, &sd,
+                    nullptr))
+        return false;
+    BOOL present = FALSE, defaulted = FALSE;
+    PACL dacl = nullptr;
+    PSID owner = nullptr;
+    std::wstring path = std::wstring(L"MACHINE\\") + kRegRoot + L"\\Debug";
+    bool ok = GetSecurityDescriptorDacl(sd, &present, &dacl, &defaulted) && present &&
+              GetSecurityDescriptorOwner(sd, &owner, &defaulted) && owner &&
+              SetNamedSecurityInfoW(const_cast<wchar_t*>(path.c_str()), SE_REGISTRY_KEY,
+                  OWNER_SECURITY_INFORMATION | DACL_SECURITY_INFORMATION | PROTECTED_DACL_SECURITY_INFORMATION, owner,
+                  nullptr, dacl, nullptr) == ERROR_SUCCESS;
+    LocalFree(sd);
+    if (!ok || (key = Open(L"Debug", true)) == nullptr) return false;
+    WriteDword(key, L"RecordFrames", frames);
+    RegCloseKey(key);
+    return true;
 }
 
 }  // namespace ps5cam
