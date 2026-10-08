@@ -83,7 +83,13 @@ void main(uint3 id : SV_DispatchThreadID)
         return;
     float share = 1.0 - smoothstep(subjectRange, 1.25 * subjectRange, Cost[id.xy]);
     if (pathDir != 0)
-        share = lerp(PrevShare[id.xy], share, temporalAlpha);
+    {
+        // At least one step of the 8-bit image towards the new value, or rounding would hold the
+        // share a few steps short of it for good (strong smoothing: a sharp zone left behind).
+        float prev = PrevShare[id.xy];
+        float step = (share - prev) * temporalAlpha;
+        share = prev + sign(share - prev) * min(abs(share - prev), max(abs(step), 1.0 / 255.0));
+    }
     Share[id.xy] = share;
 }
 #endif
