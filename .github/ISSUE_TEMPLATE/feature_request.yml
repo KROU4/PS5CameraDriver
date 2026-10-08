@@ -1,0 +1,16 @@
+name: Идея
+description: Предложить улучшение
+labels: [enhancement]
+body:
+  - type: textarea
+    id: idea
+    attributes:
+      label: Что хотелось бы
+      description: Опишите задачу, которую это решит, и как вы это себе представляете.
+    validations:
+      required: true
+  - type: textarea
+    id: context
+    attributes:
+      label: Дополнительно
+      description: Программы, в которых это нужно, примеры, скриншоты.

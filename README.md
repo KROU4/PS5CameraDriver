@@ -1,22 +1,43 @@
+<div align="center">
+
 # PS5 HD Camera для ПК
 
-Драйвер для камеры PlayStation 5 HD Camera (CFI-ZEY1): она работает как обычная веб-камера
-в Zoom, Discord, Teams, Telegram, OBS, браузерах и любых других программах.
+**Камера PlayStation 5 как обычная веб-камера: Full HD 60 к/с и боке по настоящей глубине**
+
+[![Сборка](https://github.com/KROU4/PS5CameraDriver/actions/workflows/build.yml/badge.svg)](https://github.com/KROU4/PS5CameraDriver/actions/workflows/build.yml)
+[![Релиз](https://img.shields.io/github/v/release/KROU4/PS5CameraDriver?label=%D1%80%D0%B5%D0%BB%D0%B8%D0%B7)](https://github.com/KROU4/PS5CameraDriver/releases/latest)
+[![Лицензия: GPL-3.0](https://img.shields.io/badge/%D0%BB%D0%B8%D1%86%D0%B5%D0%BD%D0%B7%D0%B8%D1%8F-GPL--3.0-blue)](LICENSE)
+![Windows 11](https://img.shields.io/badge/Windows-11-0078D4?logo=windows11&logoColor=white)
+![Linux](https://img.shields.io/badge/Linux-%D0%B1%D0%B5%D0%B7%20%D0%B1%D0%BE%D0%BA%D0%B5-FCC624?logo=linux&logoColor=black)
+![macOS](https://img.shields.io/badge/macOS-%D0%B1%D0%B5%D0%B7%20%D0%B1%D0%BE%D0%BA%D0%B5-000000?logo=apple&logoColor=white)
+
+[Скачать](https://github.com/KROU4/PS5CameraDriver/releases/latest) · [Установка](#установка) · [Как это устроено](#как-это-устроено-windows) · [English](#in-english)
+
+</div>
+
+Драйвер для камеры PlayStation 5 HD Camera (CFI-ZEY1). Камера работает в Zoom, Discord, Teams,
+Telegram, OBS, браузерах и любых других программах.
 
 - **Windows 11:** родные 1920x1080 при 60 к/с во всех программах (по желанию также 720p и 30 к/с)
-  и **боке**: фон размывается по настоящей
-  глубине, которую считают два сенсора камеры, как на PS5. Нейросети не используются: глубину
-  считает видеокарта стерео-алгоритмом (census + SGM) в шейдерах Direct3D 11.
+  и **боке**: фон размывается по настоящей глубине, которую считают два сенсора камеры, как на
+  PS5. Нейросети не используются: глубину считает видеокарта стерео-алгоритмом (census + SGM) в
+  шейдерах Direct3D 11. Камера видна в системе как «PS5 Camera», без отдельной виртуальной камеры.
 - **Linux и macOS:** камера без боке, родные 1920x1080 при 30 и 60 к/с.
 
 ## Установка
 
 Нужен порт **USB 3**: в USB 2.0 камера отдаёт только 640x400.
 
-**Windows 11.** Распакуйте `PS5CameraDriver.zip` и запустите `Install.cmd`. Установщик спросит,
-нужно ли боке (его можно сразу задать: `Install.cmd -Bokeh on` или `-Bokeh off`), и попросит
-права администратора. В программах выберите камеру «PS5 Camera». Сменить режим потом: запустите
-установщик ещё раз.
+**Windows 11**
+1. Скачайте `PS5CameraDriver.zip` со страницы [релизов](https://github.com/KROU4/PS5CameraDriver/releases/latest).
+2. Если Windows предупреждает о файлах из интернета, перед распаковкой откройте свойства архива и
+   отметьте «Разблокировать» (пока релиз без цифровой подписи, см. [Code signing policy](#code-signing-policy)).
+3. Распакуйте и запустите `Install.cmd`. Установщик спросит, нужно ли боке (сразу задать:
+   `Install.cmd -Bokeh on` или `-Bokeh off`), и попросит права администратора.
+4. В программах выберите камеру «PS5 Camera».
+
+Сменить режим потом: запустите установщик ещё раз. Подробности, режимы и решение проблем — в
+[installer/README.txt](installer/README.txt).
 
 **Linux** (нужны systemd и udev): `sudo bash install.sh` из `PS5CameraDriver-linux.zip`.
 
@@ -44,16 +65,16 @@
 
 ## Как это устроено (Windows)
 
-```
-USB 05A9:0580 (загрузчик камеры) ── служба ps5cam-svc загружает прошивку
-        ▼
-USB 05A9:058C (UVC-камера, стандартный драйвер Windows)
-        ▼
-ps5cam-dmft.dll — Device MFT самой камеры в Windows Camera Frame Server
-  распаковка → census 9x7 → SGM (4 прохода) → отсев ненадёжных совпадений → заливка дыр
-  → временной фильтр → guided filter → автофокус → боке → автояркость → NV12/YUY2
-        ▼
-«PS5 Camera» для Media Foundation, WinRT и DirectShow
+```mermaid
+flowchart TB
+    boot["USB 05A9:0580 — загрузчик камеры<br/>(встроенный WinUSB)"] -->|"служба ps5cam-svc загружает прошивку"| uvc
+    uvc["USB 05A9:058C — UVC-камера<br/>(стандартный драйвер Windows)"] --> fs
+    subgraph fs["Windows Camera Frame Server"]
+        dmft["ps5cam-dmft.dll — Device MFT камеры"]
+        gpu["Direct3D 11: census → SGM → отсев ненадёжных совпадений → заливка дыр<br/>→ временной фильтр → guided filter → автофокус → боке → автояркость"]
+        dmft --> gpu
+    end
+    fs --> apps["«PS5 Camera» в Media Foundation, WinRT и DirectShow"]
 ```
 
 Device MFT — штатный способ Windows добавить обработку кадров в камеру: код работает в
@@ -80,10 +101,13 @@ Device MFT — штатный способ Windows добавить обрабо
 
 Нужны Windows 11, Visual Studio 2022 Build Tools (C++) и Windows SDK 10.0.26100.
 
-```
+```powershell
 .\build.ps1      # build\Release
 .\package.ps1    # dist\: пакеты для Windows, Linux и macOS
 ```
+
+Те же пакеты собирает [GitHub Actions](.github/workflows/build.yml) на каждый коммит; на тег `v*`
+они выкладываются в релиз.
 
 ## Ограничения
 
@@ -91,3 +115,49 @@ Device MFT — штатный способ Windows добавить обрабо
 - Глубину камера различает примерно с полуметра: то, что ближе, размывается неровно.
 - Боке есть только на Windows. На macOS для него нужна системная камера-расширение, которую
   macOS запускает только с подписью разработчика Apple.
+
+## Участие
+
+Сообщения об ошибках и идеи — в [Issues](https://github.com/KROU4/PS5CameraDriver/issues), правила
+для pull request — в [CONTRIBUTING.md](CONTRIBUTING.md), об уязвимостях — [SECURITY.md](SECURITY.md).
+
+## Code signing policy
+
+Free code signing provided by [SignPath.io](https://about.signpath.io), certificate by
+[SignPath Foundation](https://signpath.org).
+
+Подпись подтверждает, что файл собран из исходного кода этого репозитория автоматической сборкой
+GitHub Actions. Каждый релиз подписывается только после ручного одобрения.
+
+- Committers and reviewers (авторы и проверяющие): [KROU4](https://github.com/KROU4)
+- Approvers (одобряют подпись релиза): [KROU4](https://github.com/KROU4)
+
+Подписываются программы и сценарии установки из `PS5CameraDriver.zip`: `ps5cam-dmft.dll`,
+`ps5cam-vcam.dll`, `ps5cam-svc.exe`, `ps5cam-ctl.exe`, `ps5cam-tray.exe`, `install.ps1`,
+`uninstall.ps1`.
+
+**Privacy policy.** This program will not transfer any information to other networked systems
+unless specifically requested by the user or the person installing or operating it. Программа не
+передаёт никаких данных по сети. Единственное сетевое обращение — установщик скачивает
+оригинальную прошивку Sony с адресов из [firmware/ps5cam-firmware.json](firmware/ps5cam-firmware.json)
+(копии на GitHub), если её не положили рядом с установщиком. Видео с камеры обрабатывается только
+на этом компьютере.
+
+## Лицензия
+
+Код распространяется под [GNU GPL 3.0](LICENSE): им можно свободно пользоваться, в том числе в
+работе, изучать, менять и распространять; программы на его основе тоже должны быть открыты под
+GPL-3.0.
+
+Прошивка камеры принадлежит Sony и в проект не входит. Полиномиальное приближение палитры Turbo
+в отладочном виде карты глубины — © Google LLC, Apache License 2.0.
+
+## In English
+
+A driver for the PlayStation 5 HD Camera (CFI-ZEY1). On Windows 11 the camera shows up as a regular
+webcam named "PS5 Camera" with native 1920x1080 at 60 fps and real depth-based background blur
+(stereo matching on the GPU, no neural networks), implemented as a camera Device MFT — no kernel
+driver, no test signing. On Linux and macOS it works as a plain 1080p30/60 webcam. Download the
+zip from [Releases](https://github.com/KROU4/PS5CameraDriver/releases/latest), extract it and run
+`Install.cmd` (USB 3 port required). Licensed under GPL-3.0. Code signing policy: see
+[above](#code-signing-policy).

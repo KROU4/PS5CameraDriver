@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Вопросы и обсуждение
+    url: https://github.com/KROU4/PS5CameraDriver/discussions
+    about: Как настроить, что выбрать, общие вопросы.
+  - name: Уязвимость
+    url: https://github.com/KROU4/PS5CameraDriver/security/advisories/new
+    about: Сообщить о проблеме безопасности закрыто, не в открытом Issue.

@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- SignPath artifact configuration for the Windows package (the GitHub artifact
+     PS5CameraDriver-windows-unsigned, which GitHub hands over as a ZIP archive). -->
+<artifact-configuration xmlns="http://signpath.io/artifact-configuration/v1">
+  <zip-file>
+    <pe-file path="ps5cam-dmft.dll"><authenticode-sign/></pe-file>
+    <pe-file path="ps5cam-vcam.dll"><authenticode-sign/></pe-file>
+    <pe-file path="ps5cam-svc.exe"><authenticode-sign/></pe-file>
+    <pe-file path="ps5cam-ctl.exe"><authenticode-sign/></pe-file>
+    <pe-file path="ps5cam-tray.exe"><authenticode-sign/></pe-file>
+    <powershell-file path="install.ps1"><authenticode-sign/></powershell-file>
+    <powershell-file path="uninstall.ps1"><authenticode-sign/></powershell-file>
+  </zip-file>
+</artifact-configuration>

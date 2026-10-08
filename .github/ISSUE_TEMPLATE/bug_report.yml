@@ -1,0 +1,54 @@
+name: Ошибка
+description: Камера не работает или работает не так
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Спасибо, что сообщаете! Чем подробнее, тем быстрее найдём причину.
+  - type: textarea
+    id: what
+    attributes:
+      label: Что случилось
+      description: Что вы делали, что ожидали и что получилось. Если есть сообщение об ошибке — приложите его.
+    validations:
+      required: true
+  - type: dropdown
+    id: os
+    attributes:
+      label: Система
+      options:
+        - Windows 11
+        - Linux
+        - macOS
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Версия драйвера и системы
+      placeholder: "драйвер v1.0.0, Windows 11 24H2 (Win+R → winver)"
+    validations:
+      required: true
+  - type: input
+    id: hardware
+    attributes:
+      label: Видеокарта и порт USB
+      placeholder: "RTX 3060, USB 3.2 на задней панели"
+  - type: input
+    id: app
+    attributes:
+      label: Программа, в которой открывали камеру
+      placeholder: "Zoom, Discord, OBS, браузер…"
+  - type: textarea
+    id: status
+    attributes:
+      label: Вывод ps5cam-ctl status (Windows)
+      description: '"C:\Program Files\PS5Camera\ps5cam-ctl.exe" status'
+      render: text
+  - type: textarea
+    id: logs
+    attributes:
+      label: Журналы
+      description: Windows — файлы из %ProgramData%\PS5Camera (dmft.log, vcam.log, service\service.log); Linux — journalctl -u ps5camera-fwload.
+      render: text

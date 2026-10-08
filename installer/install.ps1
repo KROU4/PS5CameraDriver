@@ -1,6 +1,7 @@
 ﻿# Установщик драйвера PS5 HD Camera. Запускается с правами администратора (через Install.cmd).
-#   .\install.ps1 [-Bokeh ask|on|off] [-Tray] [-Original FILE] [-VirtualCamera [-KeepRawCamera]] [-NoPause]
+#   .\install.ps1 [-Bokeh ask|on|off] [-Tray] [-Original FILE] [-VirtualCamera [-KeepRawCamera]] [-Yes] [-NoPause]
 #   -Bokeh          on: фон всегда размыт; off: обычная камера; ask (по умолчанию): спросить
+#   -Yes            не спрашивать подтверждения изменений в системе (для автоматической установки)
 #   -Tray           значок в трее для разработки (переключение режимов на лету); без него значка нет
 #   -Original       оригинальная прошивка Sony (иначе sony-firmware.bin рядом или загрузка из интернета)
 #   -VirtualCamera  прежний способ: отдельная виртуальная камера, а сама камера скрыта (с -KeepRawCamera
@@ -11,6 +12,7 @@ param(
     [string]$Original,
     [switch]$VirtualCamera,
     [switch]$KeepRawCamera,
+    [switch]$Yes,
     [switch]$NoPause
 )
 $ErrorActionPreference = 'Stop'
@@ -114,6 +116,7 @@ if (-not $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administra
     if ($Original) { $argList += @('-Original', "`"$((Resolve-Path $Original).Path)`"") }
     if ($VirtualCamera) { $argList += '-VirtualCamera' }
     if ($KeepRawCamera) { $argList += '-KeepRawCamera' }
+    if ($Yes) { $argList += '-Yes' }
     if ($NoPause) { $argList += '-NoPause' }
     Start-Process powershell.exe -Verb RunAs -ArgumentList $argList
     exit
@@ -136,6 +139,34 @@ try {
             if ($tries -ge 5) { throw 'режим не выбран: запустите установщик с -Bokeh on или -Bokeh off' }
             $answer = ([string](Read-Host 'Введите 1 или 2')).Trim()
             if ($answer -eq '1') { $Bokeh = 'on' } elseif ($answer -eq '2') { $Bokeh = 'off' }
+        }
+    }
+
+    if (-not $Yes) {
+        Write-Host ''
+        Write-Host 'Установщик изменит систему:' -ForegroundColor Cyan
+        Write-Host "  - скопирует программы в $target и установит службу PS5CameraService (от имени системы),"
+        Write-Host '    которая при каждом подключении загружает прошивку в камеру;'
+        Write-Host '  - скачает оригинальную прошивку Sony (если её нет рядом) и соберёт из неё прошивку драйвера;'
+        Write-Host '  - установит драйвер WinUSB для камеры в режиме загрузчика: для его подписи создаст сертификат'
+        Write-Host '    только этого компьютера (закрытый ключ сразу удаляется) и добавит его в доверенные;'
+        if ($VirtualCamera) {
+            Write-Host '  - зарегистрирует виртуальную камеру «PS5 Camera» и скроет исходную USB-камеру;'
+        } else {
+            Write-Host '  - подключит видеоэффект к самой камере в службе Windows Camera Frame Server и назовёт её'
+            Write-Host '    «PS5 Camera» (службу Frame Server перезапустит: открытые камеры на миг отключатся);'
+        }
+        Write-Host '  - сохранит настройки в HKLM\SOFTWARE\PS5Camera, журналы — в %ProgramData%\PS5Camera.'
+        Write-Host 'Всё это отменяет Uninstall.cmd.'
+        $go = $null
+        for ($tries = 0; $null -eq $go; $tries++) {
+            if ($tries -ge 5) { throw 'установка не подтверждена' }
+            $answer = ([string](Read-Host 'Продолжить? (Y — да, N — нет)')).Trim().ToUpperInvariant()
+            if ($answer -in 'Y', 'Д') { $go = $true } elseif ($answer -in 'N', 'Н') { $go = $false }
+        }
+        if (-not $go) {
+            Write-Host 'Установка отменена, система не изменена.'
+            Finish 0
         }
     }
 
