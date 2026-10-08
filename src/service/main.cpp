@@ -178,17 +178,21 @@ std::wstring g_firmwareOverride;  // `load FILE` uses a specific image (firmware
 // ps5cam-firmware.json plus the driver's changes, both checked by hash), at most every 9 minutes
 // (RunLoop looks every minute), waiting up to 3 minutes for the download. The script runs in a job
 // that dies with the service, its output goes to service\firmware.log, and a service stop ends it.
+std::atomic<ULONGLONG> g_nextFirmwareBuild = 0;  // GetTickCount64 before which BuildFirmware does not try
+
 bool BuildFirmware()
 {
-    static ULONGLONG lastTry = 0;  // the worker thread's (or `load`'s) only
     const ULONGLONG now = GetTickCount64();
-    if (lastTry && now - lastTry < 9 * 60 * 1000) return false;
-    lastTry = now;
+    if (now < g_nextFirmwareBuild) return false;
+    g_nextFirmwareBuild = now + 9 * 60 * 1000;
     const std::wstring dir = ModuleDir();
     wchar_t system[MAX_PATH], logPath[MAX_PATH];
     if (!GetSystemDirectoryW(system, MAX_PATH) ||
         !ExpandEnvironmentStringsW(L"%ProgramData%\\PS5Camera\\service\\firmware.log", logPath, MAX_PATH))
         return false;
+    WIN32_FILE_ATTRIBUTE_DATA logInfo = {};
+    if (GetFileAttributesExW(logPath, GetFileExInfoStandard, &logInfo) && (logInfo.nFileSizeHigh || logInfo.nFileSizeLow > 1024 * 1024))
+        MoveFileExW(logPath, (std::wstring(logPath) + L".old").c_str(), MOVEFILE_REPLACE_EXISTING);
     std::wstring cmd = L"\"" + std::wstring(system) + L"\\WindowsPowerShell\\v1.0\\powershell.exe\" -NoProfile "
                        L"-NonInteractive -ExecutionPolicy Bypass -File \"" + dir + L"\\firmware.ps1\" -Patch \"" + dir +
                        L"\\ps5cam-firmware.json\" -Out \"" + dir + L"\\firmware.bin\"";
@@ -451,7 +455,7 @@ int RunLoop()
     // without internet access) gets another try: looked at every minute, BuildFirmware spaces the
     // downloads out.
     while (WaitForSingleObject(g_stopEvent, 60 * 1000) == WAIT_TIMEOUT) {
-        if (!g_firmwareOverride.empty()) continue;
+        if (!g_firmwareOverride.empty() || GetTickCount64() < g_nextFirmwareBuild) continue;
         const auto boot = FindBootDevices();
         if (boot.empty()) continue;
         std::vector<uint8_t> image;

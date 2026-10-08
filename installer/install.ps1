@@ -119,7 +119,7 @@ if (-not $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administra
     # Re-launch elevated. Arguments go as an array, so any characters in the folder path are safe.
     $argList = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', "`"$PSCommandPath`"", '-Bokeh', $Bokeh)
     if ($Tray) { $argList += '-Tray' }
-    if ($Original) { $argList += @('-Original', "`"$((Resolve-Path $Original).Path)`"") }
+    if ($Original) { $argList += @('-Original', "`"$((Resolve-Path -LiteralPath $Original).ProviderPath)`"") }
     if ($VirtualCamera) { $argList += '-VirtualCamera' }
     if ($KeepRawCamera) { $argList += '-KeepRawCamera' }
     if ($Yes) { $argList += '-Yes' }
@@ -189,14 +189,6 @@ try {
     }
 
     New-Item -ItemType Directory -Force $target | Out-Null
-    # A folder outside Program Files (the MSI's INSTALLFOLDER) inherits what its parent allows, while
-    # the service runs programs and firmware.ps1 from it as SYSTEM: only SYSTEM and administrators
-    # may change it.
-    if (-not $target.StartsWith($env:ProgramFiles, [StringComparison]::OrdinalIgnoreCase)) {
-        $rc = Run 'icacls.exe' @($target, '/inheritance:r', '/grant:r', '*S-1-5-18:(OI)(CI)F', '*S-1-5-32-544:(OI)(CI)F',
-            '*S-1-5-32-545:(OI)(CI)RX', '/T', '/Q')
-        if ($rc -ne 0) { throw ((T 'не удалось защитить папку установки' 'could not protect the installation folder') + " ($rc)") }
-    }
 
     # The camera firmware the service uploads (firmware.ps1): Sony's original + the driver's changes,
     # built before anything else changes. Without the original (no internet here, e.g.) the
@@ -359,12 +351,18 @@ try {
             'Programs that were open during the installation see the camera after a restart.')
     }
     if ($firmwareCode -eq 2) {
-        $offline = if ($FromMsi) {
-            T 'Прошивки камеры пока нет: служба скачает её сама, когда появится интернет (или установите пакет снова с SONYFIRMWARE=путь к оригиналу).' `
-                "The camera has no firmware yet: the service downloads it once the computer is online (or install the package again with SONYFIRMWARE=path of the original)."
+        $retry = if ($FromMsi) {
+            T 'или установите пакет снова с SONYFIRMWARE=путь к оригиналу' 'or install the package again with SONYFIRMWARE=path of the original'
         } else {
-            T 'Прошивки камеры пока нет: служба скачает её сама, когда появится интернет (или положите оригинал рядом с установщиком как sony-firmware.bin и запустите его снова).' `
-                "The camera has no firmware yet: the service downloads it once the computer is online (or put the original next to the installer as sony-firmware.bin and run it again)."
+            T 'или положите оригинал рядом с установщиком как sony-firmware.bin и запустите его снова' `
+                'or put the original next to the installer as sony-firmware.bin and run it again'
+        }
+        $offline = if (Test-Path -LiteralPath (Join-Path $target 'firmware.bin')) {
+            T "Камера пока работает с прошивкой прежней установки: для новой запустите установку снова, когда появится интернет ($retry)." `
+                "The camera keeps the previous installation's firmware for now: for the new one run the installation again once the computer is online ($retry)."
+        } else {
+            T "Прошивки камеры пока нет: служба скачает её сама, когда появится интернет ($retry)." `
+                "The camera has no firmware yet: the service downloads it once the computer is online ($retry)."
         }
         Write-Host $offline -ForegroundColor Yellow
     }

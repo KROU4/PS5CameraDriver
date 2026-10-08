@@ -11,6 +11,8 @@ param(
     [string]$Original
 )
 $ErrorActionPreference = 'Stop'
+# Run by the service, the output goes to a log file: UTF-8 rather than the OEM code page.
+try { [Console]::OutputEncoding = New-Object Text.UTF8Encoding($false) } catch { }
 $russian = (Get-UICulture).TwoLetterISOLanguageName -eq 'ru'
 function T([string]$ru, [string]$en) { if ($script:russian) { $ru } else { $en } }
 function Sha256([byte[]]$bytes) {
@@ -70,10 +72,16 @@ try {
             Write-Host ("    " + (T 'собранная прошивка не совпала с ожидаемой' 'the built firmware does not match the expected one'))
             exit 1
         }
-        # Whole or not at all: the service may read it at any moment.
-        $tmp = "$Out.tmp"
-        [IO.File]::WriteAllBytes($tmp, $bytes)
-        Move-Item -LiteralPath $tmp -Destination $Out -Force
+        # Whole or not at all: the service may read it at any moment, and the installer and the
+        # service may build it at the same time.
+        $tmp = "$Out.$PID.tmp"
+        try {
+            [IO.File]::WriteAllBytes($tmp, $bytes)
+            # (a $null backup path would reach .NET as "": [NullString] passes a real null)
+            if ([IO.File]::Exists($Out)) { [IO.File]::Replace($tmp, $Out, [NullString]::Value) } else { [IO.File]::Move($tmp, $Out) }
+        } finally {
+            if ([IO.File]::Exists($tmp)) { [IO.File]::Delete($tmp) }
+        }
         exit 0
     }
     if ($Original) { exit 1 }

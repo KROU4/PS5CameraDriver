@@ -195,10 +195,11 @@ GitHub Actions. Каждый релиз подписывается только 
 
 **Privacy policy.** This program will not transfer any information to other networked systems
 unless specifically requested by the user or the person installing or operating it. Программа не
-передаёт никаких данных по сети. Единственное сетевое обращение — установщик скачивает
-оригинальную прошивку Sony с адресов из [firmware/ps5cam-firmware.json](firmware/ps5cam-firmware.json)
-(копии на GitHub), если её не положили рядом с установщиком. Видео с камеры обрабатывается только
-на этом компьютере.
+передаёт никаких данных по сети. Единственное сетевое обращение — скачивание оригинальной прошивки
+Sony с адресов из [firmware/ps5cam-firmware.json](firmware/ps5cam-firmware.json) (копии на GitHub),
+если её не положили рядом с установщиком: установщиком, а если ему это не удалось — службой (не
+чаще раза в 10 минут, пока камера ждёт прошивку). Кроме этих запросов ничего не отправляется. Видео
+с камеры обрабатывается только на этом компьютере.
 
 ## Лицензия
 

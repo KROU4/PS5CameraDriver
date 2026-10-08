@@ -195,9 +195,11 @@ Signed files are the programs and install scripts in `PS5CameraDriver.zip`: `ps5
 
 **Privacy policy.** This program will not transfer any information to other networked systems
 unless specifically requested by the user or the person installing or operating it. The only
-network access is the installer downloading Sony's original firmware from the addresses in
+network access is downloading Sony's original firmware from the addresses in
 [firmware/ps5cam-firmware.json](firmware/ps5cam-firmware.json) (copies on GitHub) when it is not
-placed next to the installer. Camera video is processed on this computer only.
+placed next to the installer: by the installer, and, if the installation could not download it, by
+the service (at most every 10 minutes while a camera waits for its firmware). Nothing is sent
+besides these requests. Camera video is processed on this computer only.
 
 ## License
 
