@@ -38,7 +38,7 @@ HANDLE g_stopEvent = nullptr;
 
 std::mutex g_queueMutex;
 std::condition_variable g_queueCv;
-enum class JobKind { Boot, CameraReady, Register };
+enum class JobKind { Boot, CameraReady, Register, DepthCamera };
 struct Job {
     JobKind kind;
     std::wstring path;
@@ -214,6 +214,12 @@ void Worker()
         } else if (job.kind == JobKind::CameraReady) {
             CameraReady();
             SetEvent(g_settingsEvent);
+        } else if (job.kind == JobKind::DepthCamera) {
+            // The tray and ps5cam-ctl switch it through the settings; registering needs SYSTEM.
+            const bool on = LoadSettings().depthCamera;
+            std::wstring msg;
+            SetDepthCamera(on, msg);
+            Log(L"depth camera %ls: %ls", on ? L"on" : L"off", msg.c_str());
         } else if (!UseDeviceMft()) {
             std::wstring msg;
             RegisterVirtualCamera(msg);
@@ -297,13 +303,19 @@ void EffectDefaultWatcher()
     }
     uint64_t synced = ~0ULL;
     bool toldNoAdmin = false;
+    int depthCamera = -1;  // the state last asked of the worker
     while (!g_stopping) {
         if (g_resyncEffects.exchange(false)) synced = ~0ULL;
         // Armed before reading, so a change while syncing wakes the next round; without the
         // notification, the settings are looked at every minute.
         const bool notified =
             RegNotifyChangeKeyValue(key, FALSE, REG_NOTIFY_CHANGE_LAST_SET, g_settingsEvent, TRUE) == ERROR_SUCCESS;
-        const uint64_t flags = BackgroundEffectFlags(LoadSettings());
+        const Settings settings = LoadSettings();
+        if (int(settings.depthCamera) != depthCamera) {
+            depthCamera = settings.depthCamera;
+            Enqueue(JobKind::DepthCamera);
+        }
+        const uint64_t flags = BackgroundEffectFlags(settings);
         if (flags != synced) {
             if (HANDLE admin = UserAdminToken()) {
                 const int code = RunEffectSync(admin);

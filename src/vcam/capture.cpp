@@ -314,7 +314,8 @@ HRESULT CaptureEngine::OpenCamera()
         // the effect may have changed since, and it decides the sensor mode.
         std::lock_guard lock(m_lock);
         RefreshSettings(true);
-        view = m_effect.mode;
+        // The depth camera needs the second sensor even when the picture does not.
+        view = m_depth.Wanted() && m_effect.mode == ViewMode::Main ? ViewMode::Bokeh : m_effect.mode;
     }
     const std::vector<SensorMode> modes = SensorModes(m_req.fps, view);
     const wchar_t* wantedKey = WantedKey(view);
@@ -566,7 +567,8 @@ void CaptureEngine::Deliver(const uint8_t* yuy2, uint32_t pitch)
 {
     // Called with m_lock held and m_pipeline present.
     RefreshSettings(false);
-    if (wcscmp(WantedKey(m_effect.mode), m_wantedKey) != 0 && !m_modeChange.exchange(true))
+    const wchar_t* wanted = m_depth.Wanted() ? kHalfKey : WantedKey(m_effect.mode);
+    if (wcscmp(wanted, m_wantedKey) != 0 && !m_modeChange.exchange(true))
         SetEvent(m_wake);  // e.g. blur switched on while streaming one sensor: the supervisor reopens
     ++m_frameCount;
     if (m_calibPending && !m_stereo.mono && m_frameCount >= m_nextCalibFrame) {
@@ -593,8 +595,11 @@ void CaptureEngine::Deliver(const uint8_t* yuy2, uint32_t pitch)
     out.Attach(NewOutputSample(&scan0, &outPitch, lock));
     if (!out) return;
     FrameStats st;
-    HRESULT hr = m_pipeline->Process(yuy2, pitch, m_effect, scan0, scan0 + size_t(outPitch) * m_req.height,
-        static_cast<uint32_t>(outPitch), &st);
+    DepthPlane* plane = m_depth.Plane(m_req.width, m_req.height);
+    EffectSettings effect = m_effect;
+    effect.depthPlane = plane != nullptr;
+    HRESULT hr = m_pipeline->Process(yuy2, pitch, effect, scan0, scan0 + size_t(outPitch) * m_req.height,
+        static_cast<uint32_t>(outPitch), &st, plane);
     lock->Unlock2D();
     if (FAILED(hr)) {
         // A lost device (driver update, TDR) never recovers by itself: rebuild the pipeline.
@@ -610,7 +615,9 @@ void CaptureEngine::Deliver(const uint8_t* yuy2, uint32_t pitch)
     if (hr == S_FALSE) return;  // first frame primes the GPU pipeline
     m_lastGpuMs = st.gpuMs;
     m_lastFocus = st.focusDisparity;
-    out->SetSampleTime(MFGetSystemTime());
+    const LONGLONG now = MFGetSystemTime();
+    m_depth.Publish(now);
+    out->SetSampleTime(now);
     out->SetSampleDuration(10'000'000LL / m_req.fps);
     ++m_framesInWindow;
     PublishStatus();

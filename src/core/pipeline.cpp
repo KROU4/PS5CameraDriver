@@ -10,6 +10,7 @@
 #include "shaders/census.h"
 #include "shaders/composite.h"
 #include "shaders/denoise.h"
+#include "shaders/depthout.h"
 #include "shaders/downscale.h"
 #include "shaders/guided_box.h"
 #include "shaders/guided_coef.h"
@@ -47,7 +48,7 @@ struct GpuConstants {
     float highlightGain;
     uint32_t outFormat;
     float lumaGain;
-    float pad;
+    uint32_t depthView;
     uint32_t secondW, secondH, secondFolded, depthMirror;
     float noiseLevel, denoiseKeep;
     uint32_t denoiseHistory;
@@ -70,7 +71,7 @@ struct StereoPipeline::Impl {
     ComPtr<ID3D11Buffer> constants;
     ComPtr<ID3D11SamplerState> linearClamp;
     ComPtr<ID3D11ComputeShader> unpack, downscale, census, aggregate, wta, lrfill, holefill, guidedPrep, guidedBox, guidedCoef,
-        histogram, bokeh, composite, score, lumastats, denoise;
+        histogram, bokeh, composite, score, lumastats, denoise, depthout;
 
     Tex packed;                    // R8G8B8A8_UINT, YUY2 texels
     Tex mainYuv, secondYuv;        // each sensor at its own size (eyeWidth x eyeHeight, SecondWidth x SecondHeight)
@@ -85,8 +86,9 @@ struct StereoPipeline::Impl {
     Tex bokehHalf;                 // R16G16B16A16_FLOAT out/2
     Tex outY, outUV;               // R8 / R8G8 out res
     Tex outYuy2;                   // R8G8B8A8 out/2 x out (packed YUY2)
+    Tex depthPlane;                // R8 out res: the depth camera's picture (depthout.hlsl)
     // Readback ring: the GPU fills slot N while the CPU reads slot N-1.
-    ComPtr<ID3D11Texture2D> outYStaging[2], outUVStaging[2], outYuy2Staging[2];
+    ComPtr<ID3D11Texture2D> outYStaging[2], outUVStaging[2], outYuy2Staging[2], depthPlaneStaging[2];
 
     ComPtr<ID3D11Buffer> sum;  // raw, uint16 per (pixel, disparity)
     ComPtr<ID3D11UnorderedAccessView> sumUav;
@@ -98,7 +100,7 @@ struct StereoPipeline::Impl {
 
     ComPtr<ID3D11Query> disjoint[2], tsBegin[2], tsEnd[2];
     struct Slot {
-        bool depth = false, brightness = false, denoise = false;
+        bool depth = false, brightness = false, denoise = false, depthPlane = false;
     } slots[2];
     int pending = -1;  // slot holding a submitted frame that has not been read back yet
     uint32_t histIndex = 0;  // which dispHist is current
@@ -242,6 +244,7 @@ HRESULT StereoPipeline::CreateResources()
     CS(score, g_score);
     CS(lumastats, g_lumastats);
     CS(denoise, g_denoise);
+    CS(depthout, g_depthout);
 #undef CS
 
     D3D11_BUFFER_DESC cb = {};
@@ -293,6 +296,10 @@ HRESULT StereoPipeline::CreateResources()
         TRY(MakeStaging(dev, ow / 2, oh, DXGI_FORMAT_R8G8B8A8_UNORM, d.outYuy2Staging[i]));
     }
     TRY(MakeTex(dev, ow / 2, oh, DXGI_FORMAT_R8G8B8A8_UNORM, true, d.outYuy2));
+    if (!m_stereo.mono) {
+        TRY(MakeTex(dev, ow, oh, DXGI_FORMAT_R8_UNORM, true, d.depthPlane));
+        for (int i = 0; i < 2; ++i) TRY(MakeStaging(dev, ow, oh, DXGI_FORMAT_R8_UNORM, d.depthPlaneStaging[i]));
+    }
 
 
     TRY(MakeRawBuffer(dev, kNumDisp * 4, false, d.hist, d.histUav, nullptr, &d.histStaging[0]));
@@ -406,6 +413,7 @@ void StereoPipeline::UpdateConstants(const EffectSettings* s, uint32_t pathDir)
         c.focusDisp = m_focus >= 0 ? m_focus : 16.0f;
         c.outFormat = static_cast<uint32_t>(o.format);
         c.lumaGain = s->autoBrightness ? m_gain : 1.0f;
+        c.depthView = s->depthView;
         // Strongest setting: a still pixel keeps 12% of each new frame (noise std / ~4 once settled).
         const float denoise = std::clamp(s->denoise, 0.0f, 1.0f);
         c.denoiseKeep = 1.0f - 0.88f * denoise;
@@ -598,9 +606,10 @@ void StereoPipeline::UpdateNoise(const uint32_t* h)
 }
 
 HRESULT StereoPipeline::Process(const uint8_t* yuy2, uint32_t yuy2Pitch, const EffectSettings& requested, uint8_t* dst,
-    uint8_t* dstUV, uint32_t dstPitch, FrameStats* stats)
+    uint8_t* dstUV, uint32_t dstPitch, FrameStats* stats, DepthPlane* depth)
 {
     std::lock_guard lock(m_lock);
+    if (depth) depth->written = false;
     if (!m_impl) return E_NOT_VALID_STATE;
     EffectSettings s = requested;
     if (m_stereo.mono) s.mode = ViewMode::Main;  // no second sensor: no depth, no side-by-side
@@ -654,7 +663,7 @@ HRESULT StereoPipeline::Process(const uint8_t* yuy2, uint32_t yuy2Pitch, const E
 
     const bool needDepth = s.mode == ViewMode::Bokeh || s.mode == ViewMode::Depth || s.mode == ViewMode::DebugRaw ||
                            s.mode == ViewMode::DebugFilled || s.mode == ViewMode::DebugHoles ||
-                           s.mode == ViewMode::DebugGrey;
+                           s.mode == ViewMode::DebugGrey || (s.depthPlane && !m_stereo.mono);
     d.slots[slot].depth = needDepth;
     if (needDepth) {
         if (m_frame != m_lastDepthFrame + 1) m_haveHistory = false;  // depth was off: history is stale
@@ -677,6 +686,12 @@ HRESULT StereoPipeline::Process(const uint8_t* yuy2, uint32_t yuy2Pitch, const E
             d.dispFill.srv.Get(), d.dispHist[d.histIndex].srv.Get()},
         {d.outY.uav.Get(), d.outUV.uav.Get(), d.outYuy2.uav.Get()});
     ctx->Dispatch(DivUp(ow / 2, 16), DivUp(oh / 2, 8), 1);
+    d.slots[slot].depthPlane = s.depthPlane && !m_stereo.mono;
+    if (d.slots[slot].depthPlane) {
+        Bind(ctx, d.depthout.Get(), {image, d.gfC.srv.Get()}, {d.depthPlane.uav.Get()});
+        ctx->Dispatch(DivUp(ow, 16), DivUp(oh, 8), 1);
+        ctx->CopyResource(d.depthPlaneStaging[slot].Get(), d.depthPlane.tex.Get());
+    }
     Bind(ctx, nullptr, {}, {});
 
     if (packedOut) {
@@ -696,19 +711,22 @@ HRESULT StereoPipeline::Process(const uint8_t* yuy2, uint32_t yuy2Pitch, const E
     ++m_frame;
     if (read < 0) return S_FALSE;
 
-    auto readPlane = [&](ID3D11Texture2D* staging, uint8_t* out, uint32_t rows, uint32_t rowBytes) {
+    auto readPlane = [&](ID3D11Texture2D* staging, uint8_t* out, uint32_t rows, uint32_t rowBytes, uint32_t pitch) {
         D3D11_MAPPED_SUBRESOURCE m;
         HRESULT hr = ctx->Map(staging, 0, D3D11_MAP_READ, 0, &m);
         if (FAILED(hr)) return hr;
         for (uint32_t y = 0; y < rows; ++y)
-            memcpy(out + size_t(y) * dstPitch, static_cast<const uint8_t*>(m.pData) + size_t(y) * m.RowPitch, rowBytes);
+            memcpy(out + size_t(y) * pitch, static_cast<const uint8_t*>(m.pData) + size_t(y) * m.RowPitch, rowBytes);
         ctx->Unmap(staging, 0);
         return S_OK;
     };
-    HRESULT hr = packedOut ? readPlane(d.outYuy2Staging[read].Get(), dst, oh, ow * 2)
-                           : readPlane(d.outYStaging[read].Get(), dst, oh, ow);
-    if (SUCCEEDED(hr) && !packedOut) hr = readPlane(d.outUVStaging[read].Get(), dstUV, oh / 2, ow);
+    HRESULT hr = packedOut ? readPlane(d.outYuy2Staging[read].Get(), dst, oh, ow * 2, dstPitch)
+                           : readPlane(d.outYStaging[read].Get(), dst, oh, ow, dstPitch);
+    if (SUCCEEDED(hr) && !packedOut) hr = readPlane(d.outUVStaging[read].Get(), dstUV, oh / 2, ow, dstPitch);
     if (FAILED(hr)) return hr;
+    if (depth && depth->data && depth->pitch >= ow && d.slots[read].depthPlane &&
+        SUCCEEDED(readPlane(d.depthPlaneStaging[read].Get(), depth->data, oh, ow, depth->pitch)))
+        depth->written = true;
 
     if (d.slots[read].brightness) {
         D3D11_MAPPED_SUBRESOURCE lm;

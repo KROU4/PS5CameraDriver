@@ -90,6 +90,8 @@ Settings LoadSettings()
     s.blurStyle = ReadDword(key, L"BlurStyle", s.blurStyle) == kBlurStandard ? kBlurStandard : kBlurPortrait;
     s.mainsHz = ReadDword(key, L"MainsHz", s.mainsHz);
     if (s.mainsHz != 50 && s.mainsHz != 60) s.mainsHz = 0;
+    s.depthCamera = ReadDword(key, L"DepthCamera", s.depthCamera) != 0;
+    s.depthView = ReadDword(key, L"DepthView", s.depthView) == 1 ? 1 : 0;
     RegCloseKey(key);
     return s;
 }
@@ -122,6 +124,8 @@ bool SaveSettings(const Settings& s)
     WriteDword(key, L"AntiFlicker", s.antiFlicker);
     WriteDword(key, L"BlurStyle", s.blurStyle);
     WriteDword(key, L"MainsHz", s.mainsHz);
+    WriteDword(key, L"DepthCamera", s.depthCamera);
+    WriteDword(key, L"DepthView", s.depthView);
     RegCloseKey(key);
     return true;
 }

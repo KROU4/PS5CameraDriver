@@ -30,6 +30,8 @@ enum Cmd : UINT {
     CmdFullHdOnly = 502,
     CmdDenoiseBase = 510,  // + level index
     CmdFlickerBase = 520,  // + AntiFlicker value
+    CmdDepthOff = 530,
+    CmdDepthViewBase = 531,  // + DepthView
     CmdRecalibrate = 600,
     CmdOpenCamera = 601,
     CmdCameraSettings = 603,
@@ -215,6 +217,11 @@ void ShowMenu()
     HMENU fl = CreatePopupMenu();
     for (UINT i = 0; i < 4; ++i) AddItem(fl, CmdFlickerBase + i, kFlickerNames[i], s.antiFlicker == i);
     AppendMenuW(menu, MF_POPUP, reinterpret_cast<UINT_PTR>(fl), L"Защита от мерцания ламп");
+    HMENU dc = CreatePopupMenu();
+    AddItem(dc, CmdDepthOff, L"Выключена", !s.depthCamera);
+    AddItem(dc, CmdDepthViewBase + 0, L"Карта глубины (ближе — светлее)", s.depthCamera && s.depthView == 0);
+    AddItem(dc, CmdDepthViewBase + 1, L"Маска человека (белое — человек)", s.depthCamera && s.depthView == 1);
+    AppendMenuW(menu, MF_POPUP, reinterpret_cast<UINT_PTR>(dc), L"Камера глубины «PS5 Camera Depth» (для OBS)");
     AddItem(menu, CmdFullHdOnly, L"Только Full HD 60 к/с (при следующем запуске камеры)", s.fullHdOnly, false);
     if (!s.fullHdOnly)
         AddItem(menu, CmdPrefer60, L"Предпочитать 60 к/с (при следующем запуске камеры)", s.prefer60, false);
@@ -251,6 +258,11 @@ void ShowMenu()
     else if (cmd == CmdAutoBrightness) s.autoBrightness = !s.autoBrightness;
     else if (cmd >= CmdDenoiseBase && cmd < CmdDenoiseBase + 4) s.denoise = kDenoise[cmd - CmdDenoiseBase].value;
     else if (cmd >= CmdFlickerBase && cmd < CmdFlickerBase + 4) s.antiFlicker = cmd - CmdFlickerBase;
+    else if (cmd == CmdDepthOff) s.depthCamera = false;  // the service removes the camera
+    else if (cmd >= CmdDepthViewBase && cmd < CmdDepthViewBase + 2) {
+        s.depthCamera = true;  // the service registers the camera
+        s.depthView = cmd - CmdDepthViewBase;
+    }
     else if (cmd == CmdPrefer60) s.prefer60 = !s.prefer60;
     else if (cmd == CmdFullHdOnly) s.fullHdOnly = !s.fullHdOnly;
     else if (cmd == CmdRecalibrate) {

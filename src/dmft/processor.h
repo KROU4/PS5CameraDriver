@@ -10,6 +10,7 @@
 #include <string>
 #include <vector>
 
+#include "../common/depthpublish.h"
 #include "cameramodes.h"
 #include "flicker.h"
 #include "pipeline.h"
@@ -59,6 +60,7 @@ private:
     uint32_t m_frameCount = 0;
     LONGLONG m_lastTime = -1;  // time stamp of the frame the pipeline holds
 
+    DepthPublisher m_depth;  // for the "PS5 Camera Depth" camera
     FlickerGuard m_flicker;
     bool m_flickerStarted = false;  // since the stream started
     bool m_powerLineHeld = false;   // see HoldPowerLine

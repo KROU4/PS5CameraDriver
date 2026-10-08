@@ -15,6 +15,8 @@ std::wstring FindPhysicalCameraInstance();
 // when it is present so Frame Server hands it to the media source. Requires administrator rights.
 HRESULT RegisterVirtualCamera(std::wstring& message);
 HRESULT RemoveVirtualCamera(std::wstring& message);
+// Registers (or removes) the "PS5 Camera Depth" virtual camera. Requires administrator rights.
+HRESULT SetDepthCamera(bool on, std::wstring& message);
 
 // Hides (or shows) the raw "USB Camera-OV580" from normal camera enumeration via the documented
 // SensorCameraMode / SkipCameraEnumeration device parameters, then restarts the device.

@@ -25,7 +25,7 @@ cbuffer Constants : register(b0)
     float  highlightGain; // bokeh highlight emphasis
     uint   outFormat;     // 0 NV12 planes, 1 packed YUY2
     float  lumaGain;      // digital exposure compensation applied to the output (1 = off)
-    float  pad;
+    uint   depthView;     // depthout.hlsl: 0 disparity, 1 subject matte
     uint2  secondSize;    // second sensor image as stored in the packed frame (half size on e9)
     uint   secondFolded;  // 1: each second-sensor row spans two frame lines, starting at line 1
     uint   depthMirror;   // 1: work images are mirrored, so the second sensor's match lies at x - d

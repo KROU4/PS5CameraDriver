@@ -1,4 +1,5 @@
-// In-proc COM server for the PS5 Camera media source (loaded by Frame Server).
+// In-proc COM server for the PS5 Camera media sources (loaded by Frame Server): the camera with the
+// effect ("PS5 Camera", -VirtualCamera installs) and the depth camera ("PS5 Camera Depth").
 #include <windows.h>
 
 #include <atomic>
@@ -18,6 +19,8 @@ std::once_flag g_logOnce;  // logging is set up on first use, never under the lo
 
 class ClassFactory : public IClassFactory {
 public:
+    explicit ClassFactory(ps5cam::SourceKind kind) : m_kind(kind) {}
+
     STDMETHODIMP QueryInterface(REFIID riid, void** ppv) override
     {
         if (!ppv) return E_POINTER;
@@ -42,7 +45,7 @@ public:
         *ppv = nullptr;
         if (outer) return CLASS_E_NOAGGREGATION;
         ComPtr<ps5cam::Ps5Activate> activate;
-        HRESULT hr = Microsoft::WRL::MakeAndInitialize<ps5cam::Ps5Activate>(&activate);
+        HRESULT hr = Microsoft::WRL::MakeAndInitialize<ps5cam::Ps5Activate>(&activate, m_kind);
         if (FAILED(hr)) return hr;
         return activate->QueryInterface(riid, ppv);
     }
@@ -50,6 +53,7 @@ public:
 
 private:
     std::atomic<ULONG> m_ref = 1;
+    ps5cam::SourceKind m_kind;
 };
 
 LSTATUS SetValue(HKEY key, const wchar_t* name, const std::wstring& value)
@@ -57,6 +61,14 @@ LSTATUS SetValue(HKEY key, const wchar_t* name, const std::wstring& value)
     return RegSetValueExW(key, name, 0, REG_SZ, reinterpret_cast<const BYTE*>(value.c_str()),
         static_cast<DWORD>((value.size() + 1) * sizeof(wchar_t)));
 }
+
+const struct {
+    const wchar_t* clsid;
+    const wchar_t* name;
+} kClasses[] = {
+    {ps5cam::kSourceClsidString, L"PS5 Camera Media Source"},
+    {ps5cam::kDepthSourceClsidString, L"PS5 Camera Depth Media Source"},
+};
 
 }  // namespace
 
@@ -73,9 +85,12 @@ STDAPI DllGetClassObject(REFCLSID clsid, REFIID riid, LPVOID* ppv)
 {
     if (!ppv) return E_POINTER;
     *ppv = nullptr;
-    if (clsid != ps5cam::kSourceClsid) return CLASS_E_CLASSNOTAVAILABLE;
+    ps5cam::SourceKind kind;
+    if (clsid == ps5cam::kSourceClsid) kind = ps5cam::SourceKind::Camera;
+    else if (clsid == ps5cam::kDepthSourceClsid) kind = ps5cam::SourceKind::Depth;
+    else return CLASS_E_CLASSNOTAVAILABLE;
     std::call_once(g_logOnce, [] { ps5cam::LogInit(L"vcam"); });
-    auto* factory = new (std::nothrow) ClassFactory();
+    auto* factory = new (std::nothrow) ClassFactory(kind);
     if (!factory) return E_OUTOFMEMORY;
     HRESULT hr = factory->QueryInterface(riid, ppv);
     factory->Release();
@@ -92,24 +107,31 @@ STDAPI DllRegisterServer()
 {
     wchar_t path[MAX_PATH];
     if (!GetModuleFileNameW(g_module, path, MAX_PATH)) return HRESULT_FROM_WIN32(GetLastError());
-    std::wstring key = std::wstring(L"Software\\Classes\\CLSID\\") + ps5cam::kSourceClsidString;
-    HKEY clsidKey = nullptr, inproc = nullptr;
-    LSTATUS st = RegCreateKeyExW(HKEY_LOCAL_MACHINE, key.c_str(), 0, nullptr, 0, KEY_WRITE, nullptr, &clsidKey, nullptr);
-    if (st != ERROR_SUCCESS) return HRESULT_FROM_WIN32(st);
-    SetValue(clsidKey, nullptr, L"PS5 Camera Media Source");
-    st = RegCreateKeyExW(clsidKey, L"InprocServer32", 0, nullptr, 0, KEY_WRITE, nullptr, &inproc, nullptr);
-    if (st == ERROR_SUCCESS) {
-        SetValue(inproc, nullptr, path);
-        SetValue(inproc, L"ThreadingModel", L"Both");
-        RegCloseKey(inproc);
+    for (const auto& c : kClasses) {
+        std::wstring key = std::wstring(L"Software\\Classes\\CLSID\\") + c.clsid;
+        HKEY clsidKey = nullptr, inproc = nullptr;
+        LSTATUS st = RegCreateKeyExW(HKEY_LOCAL_MACHINE, key.c_str(), 0, nullptr, 0, KEY_WRITE, nullptr, &clsidKey, nullptr);
+        if (st != ERROR_SUCCESS) return HRESULT_FROM_WIN32(st);
+        SetValue(clsidKey, nullptr, c.name);
+        st = RegCreateKeyExW(clsidKey, L"InprocServer32", 0, nullptr, 0, KEY_WRITE, nullptr, &inproc, nullptr);
+        if (st == ERROR_SUCCESS) {
+            SetValue(inproc, nullptr, path);
+            SetValue(inproc, L"ThreadingModel", L"Both");
+            RegCloseKey(inproc);
+        }
+        RegCloseKey(clsidKey);
+        if (st != ERROR_SUCCESS) return HRESULT_FROM_WIN32(st);
     }
-    RegCloseKey(clsidKey);
-    return HRESULT_FROM_WIN32(st);
+    return S_OK;
 }
 
 STDAPI DllUnregisterServer()
 {
-    std::wstring key = std::wstring(L"Software\\Classes\\CLSID\\") + ps5cam::kSourceClsidString;
-    LSTATUS st = RegDeleteTreeW(HKEY_LOCAL_MACHINE, key.c_str());
-    return st == ERROR_SUCCESS || st == ERROR_FILE_NOT_FOUND ? S_OK : HRESULT_FROM_WIN32(st);
+    HRESULT result = S_OK;
+    for (const auto& c : kClasses) {
+        std::wstring key = std::wstring(L"Software\\Classes\\CLSID\\") + c.clsid;
+        LSTATUS st = RegDeleteTreeW(HKEY_LOCAL_MACHINE, key.c_str());
+        if (st != ERROR_SUCCESS && st != ERROR_FILE_NOT_FOUND) result = HRESULT_FROM_WIN32(st);
+    }
+    return result;
 }

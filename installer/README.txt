@@ -14,7 +14,7 @@ Install
    confirm the administrator rights prompt. An internet connection is needed: the installer
    downloads Sony's original firmware and builds the driver's firmware from it. Bokeh is on
    after the first installation; an update keeps your choice.
-   Unattended: msiexec /i PS5CameraDriver.msi /qn [BOKEH=on|off] [TRAY=1]
+   Unattended: msiexec /i PS5CameraDriver.msi /qn [BOKEH=on|off] [TRAY=1] [DEPTHCAM=1]
    [SONYFIRMWARE=C:\path\to\sony-firmware.bin]; the log is %ProgramData%\PS5Camera\install.log.
    Or, from this ZIP package: run Install.cmd. It asks for the mode (1 — with bokeh, 2 —
    without; or Install.cmd -Bokeh on / -Bokeh off), lists what it will change in the system
@@ -51,6 +51,24 @@ Picture
   follows the country Windows is set to; a program that sets anti-flicker itself keeps its
   choice.
 
+Depth camera (e.g. for OBS)
+---------------------------
+A second camera, "PS5 Camera Depth" (Windows adds "(Windows Virtual Camera)" to its name),
+shows the depth of what PS5 Camera streams, as a grey picture of the same size: near is
+bright, far is dark. With depthview 1 it shows a matte instead: white is the person in
+focus and everything in front of them, black is the background, for a luma key or a mask.
+It is off by default. Turn it on with DEPTHCAM=1 for the MSI, Install.cmd -DepthCamera, the
+tray menu, or
+  "C:\Program Files\PS5Camera\ps5cam-ctl.exe" set depthcamera 1
+  "C:\Program Files\PS5Camera\ps5cam-ctl.exe" set depthview 0   (depth; 1: matte)
+In OBS add two Video Capture Device sources: PS5 Camera for the picture and PS5 Camera Depth
+for the depth. The depth camera shows the depth only while a program streams PS5 Camera and
+is black otherwise. While it is open, PS5 Camera computes depth in the plain camera mode
+too (the camera switches its format, and the picture freezes for a moment).
+Depth is computed at 640x360 and scaled up, so its edges are softer than the picture's.
+It is measured from about half a metre on, and dark plain clothes or plain walls give the
+stereo little to match, so the matte may have gaps there.
+
 Tray icon (for development: Install.cmd -Tray)
 ---------
 - A click on the icon turns bokeh on and off. Blue lenses on the icon mean bokeh is on,
@@ -60,6 +78,7 @@ Tray icon (for development: Install.cmd -Tray)
 - Background blur: light, medium, strong, maximum.
 - Focus: autofocus on the person or fixed (near, middle, far).
 - Bokeh highlights, auto brightness for a dark room, noise reduction, anti-flicker.
+- The depth camera "PS5 Camera Depth": off, depth map, or matte of the person.
 - A link to the camera's page in Windows Settings (background effects).
 - "Full HD 60 fps only": programs see a single format, 1920x1080@60 (the default).
   Without it — 1080p and 720p at 30 and 60 fps, and "Prefer 60 fps" decides which

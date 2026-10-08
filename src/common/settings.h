@@ -23,6 +23,8 @@ struct Settings {
     uint32_t antiFlicker = 0; // AntiFlicker: 0 auto, 1 50 Hz, 2 60 Hz, 3 off
     uint32_t blurStyle = 0;   // kBlurPortrait / kBlurStandard: what Windows' "Background effects" chose
     uint32_t mainsHz = 0;     // 50 / 60 by the signed-in user's region (tray, installer); 0 unknown
+    bool depthCamera = false; // the "PS5 Camera Depth" virtual camera (the service registers it)
+    uint32_t depthView = 0;   // what it shows: 0 depth (near = bright), 1 subject matte
 };
 
 // Mains frequency (50 or 60) where the account running this lives, by the country Windows is set

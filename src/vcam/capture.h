@@ -18,35 +18,28 @@
 #include <thread>
 #include <vector>
 
+#include "../common/depthpublish.h"
+#include "engine.h"
 #include "flicker.h"
 #include "pipeline.h"
 #include "../common/settings.h"
 
 namespace ps5cam {
 
-struct OutputRequest {
-    uint32_t width = 1920;
-    uint32_t height = 1080;
-    uint32_t fps = 30;
-    PixelFormat format = PixelFormat::NV12;
-};
-
 struct ReaderLink;  // shared with the source-reader callback, outlives the engine if needed
 
-class CaptureEngine {
+class CaptureEngine : public FrameEngine {
 public:
-    using FrameSink = std::function<void(IMFSample*)>;
-
     CaptureEngine();
-    ~CaptureEngine();
+    ~CaptureEngine() override;
 
-    HRESULT Start(const OutputRequest& req, FrameSink sink);
-    void Stop();
+    HRESULT Start(const OutputRequest& req, FrameSink sink) override;
+    void Stop() override;
 
     // For forwarding UVC controls (brightness etc.) to the physical camera.
-    Microsoft::WRL::ComPtr<IUnknown> PhysicalSource();
+    Microsoft::WRL::ComPtr<IUnknown> PhysicalSource() override;
     // An app set the anti-flicker itself: none of ours until the next Start or a setting change.
-    void HoldPowerLine();
+    void HoldPowerLine() override;
 
     // Called by the reader callback while the engine is attached; returns true to read the next frame.
     bool OnReadSample(HRESULT hr, DWORD flags, IMFSample* sample);
@@ -94,6 +87,7 @@ private:
 
     EffectSettings m_effect;
     ULONGLONG m_settingsTick = 0;
+    DepthPublisher m_depth;      // under m_lock: for the "PS5 Camera Depth" camera
     FlickerGuard m_flicker;      // under m_lock
     bool m_flickerStarted = false;  // since Start
     bool m_powerLineHeld = false;   // see HoldPowerLine

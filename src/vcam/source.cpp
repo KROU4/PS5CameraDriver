@@ -10,6 +10,7 @@
 #include "../common/log.h"
 #include "../common/settings.h"
 #include "cameramodes.h"
+#include "depthengine.h"
 
 using Microsoft::WRL::ComPtr;
 using Microsoft::WRL::MakeAndInitialize;
@@ -32,9 +33,15 @@ HRESULT SetStreamAttributes(IMFAttributes* a)
 // ---------------------------------------------------------------------------------------------
 // Ps5Stream
 
-HRESULT Ps5Stream::RuntimeClassInitialize(Ps5Source* parent, bool prefer60, bool fullHdOnly)
+HRESULT Ps5Stream::RuntimeClassInitialize(Ps5Source* parent, SourceKind kind, bool prefer60, bool fullHdOnly)
 {
     m_parent = parent;
+    try {
+        if (kind == SourceKind::Depth) m_engine = std::make_unique<DepthEngine>();
+        else m_engine = std::make_unique<CaptureEngine>();
+    } catch (...) {
+        return E_OUTOFMEMORY;
+    }
     HRESULT hr = MFCreateEventQueue(&m_queue);
     if (FAILED(hr)) return hr;
     hr = MFCreateAttributes(&m_attributes, 8);
@@ -97,7 +104,7 @@ HRESULT Ps5Stream::StartEngine()
     // Stop the previous session first (its frames may be in flight), then open a new epoch so that
     // anything the old session still delivers is recognised and dropped. The engine thread calls
     // back into OnFrame (which takes m_lock), so it is (re)started unlocked.
-    m_engine.Stop();
+    m_engine->Stop();
     uint64_t epoch;
     {
         std::lock_guard lock(m_lock);
@@ -106,7 +113,7 @@ HRESULT Ps5Stream::StartEngine()
         m_state = MF_STREAM_STATE_RUNNING;
         epoch = ++m_epoch;
     }
-    HRESULT hr = m_engine.Start(req, [this, epoch](IMFSample* s) { OnFrame(s, epoch); });
+    HRESULT hr = m_engine->Start(req, [this, epoch](IMFSample* s) { OnFrame(s, epoch); });
     if (FAILED(hr)) {
         std::lock_guard lock(m_lock);
         m_state = MF_STREAM_STATE_STOPPED;  // no engine: do not report a running stream
@@ -126,7 +133,7 @@ void Ps5Stream::StopEngine()
         m_tokens.clear();
         m_pending.Reset();
     }
-    m_engine.Stop();
+    m_engine->Stop();
 }
 
 HRESULT Ps5Stream::Stop()
@@ -286,14 +293,14 @@ STDMETHODIMP Ps5Stream::QueueEvent(MediaEventType type, REFGUID ext, HRESULT sta
 // ---------------------------------------------------------------------------------------------
 // Ps5Source
 
-HRESULT Ps5Source::RuntimeClassInitialize(IMFAttributes* activateAttributes)
+HRESULT Ps5Source::RuntimeClassInitialize(IMFAttributes* activateAttributes, SourceKind kind)
 {
     HRESULT hr = MFCreateEventQueue(&m_queue);
     if (FAILED(hr)) return hr;
     hr = MFCreateAttributes(&m_attributes, 4);
     if (FAILED(hr)) return hr;
     Settings settings = LoadSettings();
-    hr = MakeAndInitialize<Ps5Stream>(&m_stream, this, settings.prefer60, settings.fullHdOnly);
+    hr = MakeAndInitialize<Ps5Stream>(&m_stream, this, kind, settings.prefer60, settings.fullHdOnly);
     if (FAILED(hr)) return hr;
     IMFStreamDescriptor* sd = m_stream->Descriptor();
     hr = MFCreatePresentationDescriptor(1, &sd, &m_pd);
@@ -305,7 +312,7 @@ HRESULT Ps5Source::RuntimeClassInitialize(IMFAttributes* activateAttributes)
     // Frame Server-provided associated source fails with MF_E_INVALIDREQUEST, so that path is not used;
     // AddDeviceSourceInfo at registration still reserves the camera for this virtual camera.
     UNREFERENCED_PARAMETER(activateAttributes);
-    Log(L"source created");
+    Log(kind == SourceKind::Depth ? L"depth source created" : L"source created");
     return S_OK;
 }
 
@@ -513,8 +520,9 @@ STDMETHODIMP Ps5Source::KsEvent(PKSEVENT, ULONG, LPVOID, ULONG, ULONG*)
 // ---------------------------------------------------------------------------------------------
 // Ps5Activate
 
-HRESULT Ps5Activate::RuntimeClassInitialize()
+HRESULT Ps5Activate::RuntimeClassInitialize(SourceKind kind)
 {
+    m_kind = kind;
     return MFCreateAttributes(&m_attr, 4);
 }
 
@@ -524,7 +532,7 @@ STDMETHODIMP Ps5Activate::ActivateObject(REFIID riid, void** ppv)
     *ppv = nullptr;
     if (m_source && m_source->IsShutdown()) m_source.Reset();  // re-activation after Shutdown
     if (!m_source) {
-        HRESULT hr = MakeAndInitialize<Ps5Source>(&m_source, m_attr.Get());
+        HRESULT hr = MakeAndInitialize<Ps5Source>(&m_source, m_attr.Get(), m_kind);
         if (FAILED(hr)) {
             Log(L"source creation failed 0x%08lX", hr);
             return hr;

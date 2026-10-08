@@ -105,7 +105,8 @@ void FrameProcessor::Reset()
 const wchar_t* FrameProcessor::WantedKey()
 {
     RefreshSettings(false);
-    return ps5cam::WantedKey(m_effect.mode);
+    // The depth camera needs the second sensor even when the picture does not.
+    return m_depth.Wanted() ? kHalfKey : ps5cam::WantedKey(m_effect.mode);
 }
 
 void FrameProcessor::RefreshSettings(bool force)
@@ -245,8 +246,11 @@ ComPtr<IMFSample> FrameProcessor::Process(IMFSample* input)
         out.Attach(NewOutputSample(&dst, &dstPitch, lock));
         if (out) {
             FrameStats st;
-            HRESULT hr = m_pipeline->Process(scan0, static_cast<uint32_t>(pitch), m_effect, dst,
-                dst + size_t(dstPitch) * m_output.height, static_cast<uint32_t>(dstPitch), &st);
+            DepthPlane* plane = m_depth.Plane(m_output.width, m_output.height);
+            EffectSettings effect = m_effect;
+            effect.depthPlane = plane != nullptr;
+            HRESULT hr = m_pipeline->Process(scan0, static_cast<uint32_t>(pitch), effect, dst,
+                dst + size_t(dstPitch) * m_output.height, static_cast<uint32_t>(dstPitch), &st, plane);
             lock->Unlock2D();
             LONGLONG time = 0, previous = m_lastTime;
             m_lastTime = SUCCEEDED(input->GetSampleTime(&time)) ? time : MFGetSystemTime();
@@ -264,6 +268,7 @@ ComPtr<IMFSample> FrameProcessor::Process(IMFSample* input)
                 m_lastGpuMs = st.gpuMs;
                 m_lastFocus = st.focusDisparity;
                 out->SetSampleTime(previous);
+                m_depth.Publish(previous);
                 out->SetSampleDuration(10'000'000LL / std::max<uint32_t>(m_fps, 1));
                 ++m_framesInWindow;
                 PublishStatus();

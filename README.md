@@ -26,7 +26,8 @@ Telegram, OBS, browsers and any other program.
   (census + SGM) in Direct3D 11 shaders. The camera shows up as "PS5 Camera", with no separate
   virtual camera, and the bokeh is switched like Windows' own camera effects: Settings →
   Cameras → Background effects (standard or portrait blur). Noise reduction and automatic
-  anti-flicker help in dim rooms.
+  anti-flicker help in dim rooms. Optionally a second camera, "PS5 Camera Depth", shows the depth
+  map or a matte of the person, e.g. for OBS.
 - **Linux and macOS:** the camera without bokeh, native 1920x1080 at 30 and 60 fps.
 
 ## Install
@@ -43,7 +44,7 @@ A **USB 3** port is required: on USB 2.0 the camera only delivers 640x400.
 
 Bokeh is on after the first installation. Switch it in Settings → Bluetooth & devices → Cameras →
 PS5 Camera → Camera effects. Unattended installation:
-`msiexec /i PS5CameraDriver.msi /qn BOKEH=on|off`. The ZIP package (`Install.cmd`) installs the
+`msiexec /i PS5CameraDriver.msi /qn BOKEH=on|off`, the depth camera with `DEPTHCAM=1`. The ZIP package (`Install.cmd`) installs the
 same without MSI. Details, modes, settings and troubleshooting:
 [installer/README.txt](installer/README.txt).
 
@@ -93,7 +94,7 @@ previous variant with a separate virtual camera is still available: `Install.cmd
 |---|---|
 | [src/service](src/service) | service: uploads the firmware, attaches the effect to the camera on every plug-in |
 | [src/dmft](src/dmft) | Device MFT: the effect inside the camera |
-| [src/vcam](src/vcam) | virtual camera (`-VirtualCamera` variant) |
+| [src/vcam](src/vcam) | virtual cameras: the `-VirtualCamera` variant and "PS5 Camera Depth" |
 | [src/core](src/core) | GPU pipeline, shaders in [src/core/shaders](src/core/shaders) |
 | [src/ctl](src/ctl) | `ps5cam-ctl`: settings (`set mode 0` — bokeh, `set mode 1` — none), registration |
 | [src/tray](src/tray) | tray icon for development (`Install.cmd -Tray`) |

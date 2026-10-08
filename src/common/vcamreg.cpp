@@ -9,6 +9,7 @@
 #include <ks.h>
 #include <ksmedia.h>
 #include <mfapi.h>
+#include <mferror.h>
 #include <mfvirtualcamera.h>
 #include <wrl/client.h>
 
@@ -105,6 +106,27 @@ HRESULT RegisterVirtualCamera(std::wstring& message)
     hr = vcam->Start(nullptr);
     message += L"Start " + Hex(hr);
     vcam->Shutdown();
+    return hr;
+}
+
+HRESULT SetDepthCamera(bool on, std::wstring& message)
+{
+    MfInit mf;
+    ComPtr<IMFVirtualCamera> vcam;
+    HRESULT hr = MFCreateVirtualCamera(MFVirtualCameraType_SoftwareCameraSource, MFVirtualCameraLifetime_System,
+        MFVirtualCameraAccess_AllUsers, kDepthCameraName, kDepthSourceClsidString, nullptr, 0, &vcam);
+    if (FAILED(hr)) {
+        message = L"MFCreateVirtualCamera failed " + Hex(hr);
+        return hr;
+    }
+    // No physical camera of its own: it shows what the device MFT publishes while "PS5 Camera" runs.
+    hr = on ? vcam->Start(nullptr) : vcam->Remove();
+    message = (on ? L"Start " : L"Remove ") + Hex(hr);
+    vcam->Shutdown();
+    if (!on && hr == MF_E_INVALIDREQUEST) {  // what Remove says when it was not registered
+        message = L"not registered";
+        return S_FALSE;
+    }
     return hr;
 }
 

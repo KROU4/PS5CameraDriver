@@ -19,6 +19,7 @@ inline void ApplySettings(const Settings& s, EffectSettings& e)
     e.autoBrightness = s.autoBrightness;
     e.maxGain = s.maxGain / 10.0f;
     e.denoise = s.denoise / 100.0f;
+    e.depthView = s.depthView;
 }
 
 }  // namespace ps5cam

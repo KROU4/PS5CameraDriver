@@ -34,6 +34,15 @@ struct EffectSettings {
     bool autoBrightness = true;   // digital exposure compensation for dim rooms
     float maxGain = 6.0f;
     float denoise = 0.7f;         // temporal noise reduction of the image, 0 (off) .. 1
+    bool depthPlane = false;      // also render the depth camera's plane (computes depth in any view)
+    uint32_t depthView = 0;       // that plane: 0 disparity (near = bright), 1 subject matte
+};
+
+// The depth camera's plane of a delivered frame: one byte per output pixel, studio range.
+struct DepthPlane {
+    uint8_t* data = nullptr;  // the caller's buffer, Output().height rows of Output().width bytes
+    uint32_t pitch = 0;
+    bool written = false;     // set by Process when the delivered frame has a plane
 };
 
 struct StereoFormat {
@@ -104,9 +113,10 @@ public:
     // yuy2: packed frame of Stereo().PackedWidth() x PackedHeight() pixels. Output: NV12 writes the Y plane to dst and the
     // interleaved UV plane to dstUV; YUY2 writes packed rows to dst (dstUV unused).
     // Pipelined: the output is the previous input frame (one frame of latency). Returns S_FALSE
-    // and writes nothing for the first frame after Initialize/Reset.
+    // and writes nothing for the first frame after Initialize/Reset. With settings.depthPlane and a
+    // stereo input, depth gets the delivered frame's depth plane.
     HRESULT Process(const uint8_t* yuy2, uint32_t yuy2Pitch, const EffectSettings& settings, uint8_t* dst,
-        uint8_t* dstUV, uint32_t dstPitch, FrameStats* stats = nullptr);
+        uint8_t* dstUV, uint32_t dstPitch, FrameStats* stats = nullptr, DepthPlane* depth = nullptr);
 
     // Searches the vertical offset / roll that best aligns the two sensors on this frame.
     HRESULT Calibrate(const uint8_t* yuy2, uint32_t yuy2Pitch, Rectification* result);

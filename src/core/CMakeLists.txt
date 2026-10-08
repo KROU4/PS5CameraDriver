@@ -32,6 +32,7 @@ add_shader(composite composite.hlsl)
 add_shader(score score.hlsl)
 add_shader(lumastats lumastats.hlsl)
 add_shader(denoise denoise.hlsl)
+add_shader(depthout depthout.hlsl)
 
 add_library(ps5cam-core STATIC pipeline.cpp cameramodes.cpp flicker.cpp ${SHADER_HEADERS})
 target_include_directories(ps5cam-core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR} PRIVATE ${CMAKE_CURRENT_BINARY_DIR})

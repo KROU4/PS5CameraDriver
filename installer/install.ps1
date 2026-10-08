@@ -1,20 +1,22 @@
 # PS5 HD Camera driver installer. Runs elevated (through Install.cmd); talks Russian on a Russian
 # Windows and English otherwise.
-#   .\install.ps1 [-Bokeh ask|on|off|keep] [-Tray] [-Original FILE] [-VirtualCamera [-KeepRawCamera]] [-Yes] [-NoPause]
+#   .\install.ps1 [-Bokeh ask|on|off|keep] [-Tray] [-DepthCamera] [-Original FILE] [-VirtualCamera [-KeepRawCamera]] [-Yes] [-NoPause]
 #   -Bokeh          on: background always blurred; off: plain camera; ask (default): ask;
 #                   keep: as set before (on for a first installation)
 #   -Yes            do not ask to confirm the system changes (unattended install)
 #   -Tray           tray icon for development (switches modes on the fly); none without it
+#   -DepthCamera    a second camera, "PS5 Camera Depth", with the depth of the picture (e.g. for OBS)
 #   -Original       Sony's original firmware (else sony-firmware.bin next to this script, or a download)
 #   -VirtualCamera  the previous way: a separate virtual camera with the camera itself hidden (shown
 #                   with -KeepRawCamera). By default the effect runs inside the camera (Device MFT).
 #   -FromMsi        run by the MSI package (as SYSTEM, no console): its files are already in place,
 #                   it owns the "Installed apps" entry; implies -Yes -NoPause, output goes to -Log.
-#                   Its TRAY and SONYFIRMWARE properties arrive as -MsiTray 1 and -MsiOriginal PATH
-#                   (empty when not set).
+#                   Its TRAY, DEPTHCAM and SONYFIRMWARE properties arrive as -MsiTray, -MsiDepthCam
+#                   (1 on, 0 off, empty: as before) and -MsiOriginal PATH.
 param(
     [ValidateSet('ask', 'on', 'off', 'keep')][string]$Bokeh = 'ask',
     [switch]$Tray,
+    [switch]$DepthCamera,
     [string]$Original,
     [switch]$VirtualCamera,
     [switch]$KeepRawCamera,
@@ -22,22 +24,30 @@ param(
     [switch]$NoPause,
     [switch]$FromMsi,
     [string]$MsiTray,
+    [string]$MsiDepthCam,
     [string]$MsiOriginal,
     [string]$Log
 )
 $ErrorActionPreference = 'Stop'
+$runKey = 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Run'
 if ($FromMsi) {
     $Yes = $true
     $NoPause = $true
-    if ($MsiTray -eq '1') { $Tray = [switch]$true }
+    # Not given (an update, a repair): as the installation before.
+    $Tray = [switch]$(if ($MsiTray) { $MsiTray -eq '1' } else { [bool](Get-ItemProperty $runKey -Name PS5CameraTray -ErrorAction SilentlyContinue) })
     if ($MsiOriginal) { $Original = $MsiOriginal }
 }
+# The transcript starts in this account's own temp folder and goes to -Log (in %ProgramData%\PS5Camera)
+# only after "ps5cam-ctl setup" has secured that folder: a user could have prepared a link there.
+$transcript = $null
+$logFolderReady = $false
 if ($Log) {
-    New-Item -ItemType Directory -Force (Split-Path $Log) | Out-Null
-    Start-Transcript -Path $Log -Force | Out-Null
+    $transcript = Join-Path $env:TEMP "ps5cam-install-$([guid]::NewGuid().ToString('N')).log"
+    Start-Transcript -Path $transcript -Force | Out-Null
 }
 $src = $PSScriptRoot
-$target = Join-Path $env:ProgramFiles 'PS5Camera'
+# The MSI may install elsewhere (INSTALLFOLDER); its files are where this script is.
+$target = if ($FromMsi) { $PSScriptRoot.TrimEnd('\') } else { Join-Path $env:ProgramFiles 'PS5Camera' }
 $version = if (Test-Path (Join-Path $src 'version.txt')) { (Get-Content (Join-Path $src 'version.txt') -TotalCount 1).Trim() } else { '1.0.0' }
 $files = 'ps5cam-vcam.dll', 'ps5cam-dmft.dll', 'ps5cam-svc.exe', 'ps5cam-ctl.exe', 'ps5cam-tray.exe', 'ps5cam-firmware.json',
     'uninstall.ps1'
@@ -57,7 +67,12 @@ function Run([string]$exe, [string[]]$arguments) {
     return $code
 }
 function Finish($code) {
-    if ($Log) { Stop-Transcript | Out-Null }
+    if ($transcript) {
+        Stop-Transcript | Out-Null
+        if ($script:logFolderReady -and (Copy-Item $transcript $Log -Force -PassThru -ErrorAction SilentlyContinue)) {
+            Remove-Item $transcript -Force -ErrorAction SilentlyContinue
+        } else { Write-Host "    log: $transcript" }
+    }
     if (-not $NoPause) { Write-Host ''; Read-Host (T 'Нажмите Enter, чтобы закрыть окно' 'Press Enter to close this window') | Out-Null }
     exit $code
 }
@@ -70,6 +85,15 @@ function Sha256([byte[]]$bytes) {
 # from ps5cam-firmware.json; both the original and the result are checked by hash.
 function Build-Firmware([string]$patchPath) {
     $patch = Get-Content $patchPath -Raw | ConvertFrom-Json
+    # An update with the same firmware changes needs no download: the built image is already there.
+    $built = Join-Path $target 'firmware.bin'
+    if (-not $Original -and (Test-Path $built)) {
+        $bytes = [IO.File]::ReadAllBytes($built)
+        if ((Sha256 $bytes) -eq $patch.result.sha256) {
+            Write-Host ("    " + (T 'прошивка уже собрана: ' 'firmware already built: ') + $built)
+            return , $bytes
+        }
+    }
     $local = if ($Original) { $Original } elseif (Test-Path (Join-Path $src 'sony-firmware.bin')) { Join-Path $src 'sony-firmware.bin' }
     $candidates = if ($local) { @($local) } else { @($patch.sources) }
     [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
@@ -145,10 +169,11 @@ if (-not $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administra
     if ($Original) { $argList += @('-Original', "`"$((Resolve-Path $Original).Path)`"") }
     if ($VirtualCamera) { $argList += '-VirtualCamera' }
     if ($KeepRawCamera) { $argList += '-KeepRawCamera' }
+    if ($DepthCamera) { $argList += '-DepthCamera' }
     if ($Yes) { $argList += '-Yes' }
     if ($NoPause) { $argList += '-NoPause' }
     if ($Log) { $argList += @('-Log', "`"$Log`"") }
-    if ($Log) { Stop-Transcript | Out-Null }
+    if ($transcript) { Stop-Transcript | Out-Null }
     Start-Process powershell.exe -Verb RunAs -ArgumentList $argList
     exit
 }
@@ -252,6 +277,7 @@ try {
     Step (T 'Настройки и журналы' 'Settings and logs')
     $rc = Run $ctl @('setup')
     if ($rc -ne 0) { throw ((T 'не удалось настроить права на настройки и журналы' 'could not set up the settings and log permissions') + " ($rc)") }
+    $logFolderReady = $true  # secured by setup: the log may go there now
     $hadSettings = [bool](Get-ItemProperty 'HKLM:\SOFTWARE\PS5Camera' -Name Mode -ErrorAction SilentlyContinue)
     if (-not $hadSettings) { Run $ctl @('defaults') | Out-Null }
     if ($Bokeh -eq 'keep') {
@@ -262,6 +288,10 @@ try {
         $rc = Run $ctl @('set', 'mode', $(if ($Bokeh -eq 'on') { '0' } else { '1' }))
         if ($rc -ne 0) { throw ((T 'не удалось записать режим камеры' 'could not save the camera mode') + " ($rc)") }
     }
+    # The depth camera: on with -DepthCamera, as before when the MSI does not say; the service
+    # registers or removes it whenever this setting changes.
+    $depthSetting = if ($DepthCamera -or $MsiDepthCam -eq '1') { '1' } elseif ($MsiDepthCam -eq '0') { '0' } else { $null }
+    if ($depthSetting) { Run $ctl @('set', 'depthcamera', $depthSetting) | Out-Null }
     # Admin-only subkey: the SYSTEM service restarts the camera according to these values.
     $rc = Run 'reg.exe' @('add', 'HKLM\SOFTWARE\PS5Camera\Service', '/v', 'HideRawCamera', '/t', 'REG_DWORD', '/d', [string][int](-not $KeepRawCamera), '/f')
     if ($rc -ne 0) { throw ((T 'не удалось записать настройку' 'could not save the setting') + " HideRawCamera ($rc)") }
