@@ -1,0 +1,45 @@
+# Builds Release and assembles the installable packages: dist\PS5CameraDriver (Windows) and
+# dist\PS5CameraDriver-linux / -macos (firmware loader only), each with a .zip. No package carries
+# Sony's firmware: the installers build it from the original image and firmware\ps5cam-firmware.json.
+param([switch]$NoBuild)
+$ErrorActionPreference = 'Stop'
+$root = $PSScriptRoot
+if (-not $NoBuild) { & (Join-Path $root 'build.ps1') -Config Release }
+$b = Join-Path $root 'build\Release\src'
+$patch = Join-Path $root 'firmware\ps5cam-firmware.json'
+$dist = Join-Path $root 'dist\PS5CameraDriver'
+if (Test-Path $dist) { Remove-Item -Recurse -Force $dist }
+New-Item -ItemType Directory -Force $dist | Out-Null
+
+Copy-Item "$b\vcam\ps5cam-vcam.dll", "$b\service\ps5cam-svc.exe", "$b\ctl\ps5cam-ctl.exe", "$b\tray\ps5cam-tray.exe" $dist
+Copy-Item $patch $dist
+Copy-Item (Join-Path $root 'installer\Install.cmd'), (Join-Path $root 'installer\Uninstall.cmd') $dist
+New-Item -ItemType Directory -Force (Join-Path $dist 'driver') | Out-Null
+Copy-Item (Join-Path $root 'installer\driver\ps5cam-boot.inf') (Join-Path $dist 'driver')
+# Windows PowerShell 5.1 needs a BOM to read UTF-8 scripts with Cyrillic text.
+$utf8Bom = New-Object System.Text.UTF8Encoding($true)
+foreach ($s in 'install.ps1', 'uninstall.ps1') {
+    $text = [IO.File]::ReadAllText((Join-Path $root "installer\$s"))
+    [IO.File]::WriteAllText((Join-Path $dist $s), $text, $utf8Bom)
+}
+$readme = [IO.File]::ReadAllText((Join-Path $root 'installer\README.txt'))
+[IO.File]::WriteAllText((Join-Path $dist 'README.txt'), $readme, $utf8Bom)
+
+$zip = Join-Path $root 'dist\PS5CameraDriver.zip'
+if (Test-Path $zip) { Remove-Item $zip -Force }
+Compress-Archive -Path "$dist\*" -DestinationPath $zip
+Get-ChildItem $dist -Recurse | Select-Object @{n = 'File'; e = { $_.FullName.Substring($dist.Length + 1) } }, Length
+"package: $zip"
+
+# Linux and macOS: the firmware tool, its installer and the same firmware patch.
+foreach ($os in 'linux', 'macos') {
+    $d = Join-Path $root "dist\PS5CameraDriver-$os"
+    if (Test-Path $d) { Remove-Item -Recurse -Force $d }
+    New-Item -ItemType Directory -Force $d | Out-Null
+    Copy-Item (Join-Path $root "installer\$os\*") $d
+    Copy-Item (Join-Path $root 'installer\unix\ps5cam_fwload.py'), $patch $d
+    $z = "$d.zip"
+    if (Test-Path $z) { Remove-Item $z -Force }
+    Compress-Archive -Path "$d\*" -DestinationPath $z
+    "package: $z"
+}

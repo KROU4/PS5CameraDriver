@@ -1,0 +1,9 @@
+/build/
+/dist/
+*.user
+*.suo
+.vs/
+__pycache__/
+# Sony's firmware is never committed; the installers download and patch it.
+*.bin
+.ruff_cache/

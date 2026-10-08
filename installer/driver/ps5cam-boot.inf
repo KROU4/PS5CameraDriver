@@ -1,0 +1,40 @@
+; PS5 HD Camera in boot mode (USB 05A9:0580): Microsoft's in-box WinUSB driver, so the PS5 Camera
+; service can upload the firmware. The package holds no driver binary of its own. The installer
+; signs its catalog with a certificate made on the user's computer (private key deleted right
+; after), which is what Windows needs to accept the package without test mode.
+
+[Version]
+Signature   = "$Windows NT$"
+Class       = USBDevice
+ClassGuid   = {88BAE032-5A81-49f0-BC3D-A4FF138216D6}
+Provider    = %Provider%
+CatalogFile = ps5cam-boot.cat
+DriverVer   = 10/08/2026,1.0.0.0
+PnpLockdown = 1
+
+[Manufacturer]
+%Provider% = Devices, NTamd64, NTarm64
+
+[Devices.NTamd64]
+%DeviceName% = Install, USB\VID_05A9&PID_0580
+
+[Devices.NTarm64]
+%DeviceName% = Install, USB\VID_05A9&PID_0580
+
+[Install]
+Include = winusb.inf
+Needs   = WINUSB.NT
+
+[Install.Services]
+Include = winusb.inf
+Needs   = WINUSB.NT.Services
+
+[Install.HW]
+AddReg = DeviceReg
+
+[DeviceReg]
+HKR,,DeviceInterfaceGUIDs,0x10000,"{6C8E3A5D-2F4B-4C1E-9A7D-5B3E0F1C2A94}"
+
+[Strings]
+Provider   = "PS5 Camera"
+DeviceName = "PS5 HD Camera (firmware loader)"

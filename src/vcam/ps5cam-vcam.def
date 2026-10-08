@@ -1,0 +1,6 @@
+LIBRARY ps5cam-vcam
+EXPORTS
+    DllGetClassObject PRIVATE
+    DllCanUnloadNow PRIVATE
+    DllRegisterServer PRIVATE
+    DllUnregisterServer PRIVATE

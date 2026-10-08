@@ -1,0 +1,105 @@
+{
+ "description": "PS5 HD Camera firmware: Sony 21.01-03.20.00.04 + PS5CameraDriver changes (native 1080p60, 1080p60 with depth, auto exposure)",
+ "original": {
+  "size": 68948,
+  "sha256": "10af1aee76fe0057a88db7ebf5f3ebf32430633effb93722be4cd0a9ed4fce54"
+ },
+ "sources": [
+  "https://raw.githubusercontent.com/prosperodev/hdcamera/main/firmware/21.01-03.20.00.04-00.00.00.bin",
+  "https://raw.githubusercontent.com/Hackinside/PS5_camera_files/main/firmware.bin"
+ ],
+ "result": {
+  "size": 68948,
+  "sha256": "dad3d68b3e9c29d24726b959afdfdcfbb3ed53991602ae3bcc5657d8877a602b"
+ },
+ "runs": [
+  [
+   10178,
+   "3c"
+  ],
+  [
+   34506,
+   "38e08446dbbf"
+  ],
+  [
+   58664,
+   "3c"
+  ],
+  [
+   58670,
+   "08000080"
+  ],
+  [
+   58693,
+   "4e30ae"
+  ],
+  [
+   58712,
+   "1e"
+  ],
+  [
+   58718,
+   "10800900"
+  ],
+  [
+   58740,
+   "009c615c"
+  ],
+  [
+   60044,
+   "0990"
+  ],
+  [
+   60087,
+   "58"
+  ],
+  [
+   61005,
+   "e0d40e"
+  ],
+  [
+   61017,
+   "0a8b0200151605"
+  ],
+  [
+   61110,
+   "1516050004141605"
+  ],
+  [
+   61196,
+   "900940040048510000e00c13004851"
+  ],
+  [
+   61217,
+   "0a8b0200151605"
+  ],
+  [
+   62126,
+   "080000803c"
+  ],
+  [
+   64111,
+   "02380d0080"
+  ],
+  [
+   64123,
+   "94"
+  ],
+  [
+   64183,
+   "00"
+  ],
+  [
+   64203,
+   "0703290001"
+  ],
+  [
+   66275,
+   "06"
+  ],
+  [
+   66563,
+   "0200000002"
+  ]
+ ]
+}
