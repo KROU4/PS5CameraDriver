@@ -1,22 +1,21 @@
 # PS5 HD Camera driver installer. Runs elevated (through Install.cmd); talks Russian on a Russian
 # Windows and English otherwise.
-#   .\install.ps1 [-Bokeh ask|on|off|keep] [-Tray] [-DepthCamera] [-Original FILE] [-VirtualCamera [-KeepRawCamera]] [-Yes] [-NoPause]
+#   .\install.ps1 [-Bokeh ask|on|off|keep] [-Tray] [-Original FILE] [-VirtualCamera [-KeepRawCamera]] [-Yes] [-NoPause]
 #   -Bokeh          on: background always blurred; off: plain camera; ask (default): ask;
 #                   keep: as set before (on for a first installation)
 #   -Yes            do not ask to confirm the system changes (unattended install)
 #   -Tray           tray icon for development (switches modes on the fly); none without it
-#   -DepthCamera    a second camera, "PS5 Camera Depth", with the depth of the picture (e.g. for OBS)
 #   -Original       Sony's original firmware (else sony-firmware.bin next to this script, or a download)
 #   -VirtualCamera  the previous way: a separate virtual camera with the camera itself hidden (shown
 #                   with -KeepRawCamera). By default the effect runs inside the camera (Device MFT).
 #   -FromMsi        run by the MSI package (as SYSTEM, no console): its files are already in place,
 #                   it owns the "Installed apps" entry; implies -Yes -NoPause, output goes to -Log.
-#                   Its TRAY, DEPTHCAM and SONYFIRMWARE properties arrive as -MsiTray, -MsiDepthCam
-#                   (1 on, 0 off, empty: as before) and -MsiOriginal PATH.
+#                   Its TRAY and SONYFIRMWARE properties arrive as -MsiTray (1 on, 0 off, empty: as
+#                   before) and -MsiOriginal PATH.
+# The depth camera "PS5 Camera Depth" is switched from the console only: ps5cam-ctl set depthcamera 1.
 param(
     [ValidateSet('ask', 'on', 'off', 'keep')][string]$Bokeh = 'ask',
     [switch]$Tray,
-    [switch]$DepthCamera,
     [string]$Original,
     [switch]$VirtualCamera,
     [switch]$KeepRawCamera,
@@ -24,7 +23,6 @@ param(
     [switch]$NoPause,
     [switch]$FromMsi,
     [string]$MsiTray,
-    [string]$MsiDepthCam,
     [string]$MsiOriginal,
     [string]$Log
 )
@@ -169,7 +167,6 @@ if (-not $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administra
     if ($Original) { $argList += @('-Original', "`"$((Resolve-Path $Original).Path)`"") }
     if ($VirtualCamera) { $argList += '-VirtualCamera' }
     if ($KeepRawCamera) { $argList += '-KeepRawCamera' }
-    if ($DepthCamera) { $argList += '-DepthCamera' }
     if ($Yes) { $argList += '-Yes' }
     if ($NoPause) { $argList += '-NoPause' }
     if ($Log) { $argList += @('-Log', "`"$Log`"") }
@@ -288,10 +285,6 @@ try {
         $rc = Run $ctl @('set', 'mode', $(if ($Bokeh -eq 'on') { '0' } else { '1' }))
         if ($rc -ne 0) { throw ((T 'не удалось записать режим камеры' 'could not save the camera mode') + " ($rc)") }
     }
-    # The depth camera: on with -DepthCamera, as before when the MSI does not say; the service
-    # registers or removes it whenever this setting changes.
-    $depthSetting = if ($DepthCamera -or $MsiDepthCam -eq '1') { '1' } elseif ($MsiDepthCam -eq '0') { '0' } else { $null }
-    if ($depthSetting) { Run $ctl @('set', 'depthcamera', $depthSetting) | Out-Null }
     # Admin-only subkey: the SYSTEM service restarts the camera according to these values.
     $rc = Run 'reg.exe' @('add', 'HKLM\SOFTWARE\PS5Camera\Service', '/v', 'HideRawCamera', '/t', 'REG_DWORD', '/d', [string][int](-not $KeepRawCamera), '/f')
     if ($rc -ne 0) { throw ((T 'не удалось записать настройку' 'could not save the setting') + " HideRawCamera ($rc)") }

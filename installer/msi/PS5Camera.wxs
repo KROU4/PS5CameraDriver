@@ -7,7 +7,6 @@
   uninstall.ps1 -FromMsi undoes that before the files go. Properties:
     BOKEH=on|off|keep   keep (default): as before, on for a first installation
     TRAY=1|0            the tray icon (from the next sign-in); not given: as before
-    DEPTHCAM=1|0        the "PS5 Camera Depth" camera (e.g. for OBS); not given: as before
     SONYFIRMWARE=PATH   Sony's original firmware file instead of the download (an update with the
                         same firmware changes reuses the image built before)
   The installation log is %ProgramData%\PS5Camera\install.log.
@@ -26,13 +25,10 @@
 
     <Property Id="BOKEH" Value="keep" Secure="yes" />
     <Property Id="TRAY" Secure="yes" />
-    <Property Id="DEPTHCAM" Secure="yes" />
     <Property Id="SONYFIRMWARE" Secure="yes" />
     <Launch Condition="Installed OR BOKEH=&quot;on&quot; OR BOKEH=&quot;off&quot; OR BOKEH=&quot;keep&quot;"
             Message="BOKEH must be on, off or keep." />
     <Launch Condition="Installed OR NOT TRAY OR TRAY=&quot;0&quot; OR TRAY=&quot;1&quot;" Message="TRAY must be 0 or 1." />
-    <Launch Condition="Installed OR NOT DEPTHCAM OR DEPTHCAM=&quot;0&quot; OR DEPTHCAM=&quot;1&quot;"
-            Message="DEPTHCAM must be 0 or 1." />
     <!-- A trailing backslash would swallow the closing quote of the command line below. -->
     <Launch Condition="Installed OR NOT SONYFIRMWARE OR NOT (SONYFIRMWARE &gt;&gt; &quot;\&quot;)"
             Message="SONYFIRMWARE must be the path of a file." />
@@ -101,7 +97,7 @@
                   Impersonate="no" Return="ignore" />
 
     <SetProperty Id="PS5CamConfigure" Sequence="execute" Before="PS5CamConfigure"
-                 Value="&quot;[System64Folder]WindowsPowerShell\v1.0\powershell.exe&quot; -NoProfile -ExecutionPolicy Bypass -File &quot;[INSTALLFOLDER]install.ps1&quot; -FromMsi -Bokeh [BOKEH] -MsiTray &quot;[TRAY]&quot; -MsiDepthCam &quot;[DEPTHCAM]&quot; -MsiOriginal &quot;[SONYFIRMWARE]&quot; -Log &quot;[CommonAppDataFolder]PS5Camera\install.log&quot;" />
+                 Value="&quot;[System64Folder]WindowsPowerShell\v1.0\powershell.exe&quot; -NoProfile -ExecutionPolicy Bypass -File &quot;[INSTALLFOLDER]install.ps1&quot; -FromMsi -Bokeh [BOKEH] -MsiTray &quot;[TRAY]&quot; -MsiOriginal &quot;[SONYFIRMWARE]&quot; -Log &quot;[CommonAppDataFolder]PS5Camera\install.log&quot;" />
     <CustomAction Id="PS5CamConfigure" BinaryRef="Wix4UtilCA_X64" DllEntry="WixQuietExec" Execute="deferred"
                   Impersonate="no" Return="check" />
 

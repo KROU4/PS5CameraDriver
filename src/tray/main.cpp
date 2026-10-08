@@ -39,6 +39,10 @@ enum Cmd : UINT {
     CmdExit = 700,
 };
 
+// The depth camera "PS5 Camera Depth" is not offered in the menu for now: only from the console
+// (ps5cam-ctl set depthcamera 1 / depthview 0|1). True brings its submenu back.
+constexpr bool kDepthCameraMenu = false;
+
 const wchar_t* kModeNames[] = {L"Портрет (боке по глубине)", L"Обычная камера", L"Второй сенсор",
     L"Карта глубины", L"Оба сенсора (стерео)"};
 const struct {
@@ -217,11 +221,13 @@ void ShowMenu()
     HMENU fl = CreatePopupMenu();
     for (UINT i = 0; i < 4; ++i) AddItem(fl, CmdFlickerBase + i, kFlickerNames[i], s.antiFlicker == i);
     AppendMenuW(menu, MF_POPUP, reinterpret_cast<UINT_PTR>(fl), L"Защита от мерцания ламп");
-    HMENU dc = CreatePopupMenu();
-    AddItem(dc, CmdDepthOff, L"Выключена", !s.depthCamera);
-    AddItem(dc, CmdDepthViewBase + 0, L"Карта глубины (ближе — светлее)", s.depthCamera && s.depthView == 0);
-    AddItem(dc, CmdDepthViewBase + 1, L"Маска человека (белое — человек)", s.depthCamera && s.depthView == 1);
-    AppendMenuW(menu, MF_POPUP, reinterpret_cast<UINT_PTR>(dc), L"Камера глубины «PS5 Camera Depth» (для OBS)");
+    if (kDepthCameraMenu) {
+        HMENU dc = CreatePopupMenu();
+        AddItem(dc, CmdDepthOff, L"Выключена", !s.depthCamera);
+        AddItem(dc, CmdDepthViewBase + 0, L"Карта глубины (ближе — светлее)", s.depthCamera && s.depthView == 0);
+        AddItem(dc, CmdDepthViewBase + 1, L"Маска человека (белое — человек)", s.depthCamera && s.depthView == 1);
+        AppendMenuW(menu, MF_POPUP, reinterpret_cast<UINT_PTR>(dc), L"Камера глубины «PS5 Camera Depth» (для OBS)");
+    }
     AddItem(menu, CmdFullHdOnly, L"Только Full HD 60 к/с (при следующем запуске камеры)", s.fullHdOnly, false);
     if (!s.fullHdOnly)
         AddItem(menu, CmdPrefer60, L"Предпочитать 60 к/с (при следующем запуске камеры)", s.prefer60, false);

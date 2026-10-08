@@ -26,8 +26,7 @@ Telegram, OBS, браузерах и любых других программа�
   шейдерах Direct3D 11. Камера видна в системе как «PS5 Camera», без отдельной виртуальной камеры,
   а боке включается как собственные эффекты камеры Windows: Параметры → Камеры → Эффекты фона
   (стандартное или портретное размытие). В тёмной комнате помогают шумоподавление и автоматическая
-  защита от мерцания ламп. По желанию есть вторая камера «PS5 Camera Depth» с картой глубины или
-  маской человека, например для OBS.
+  защита от мерцания ламп.
 - **Linux:** родные 1920x1080 при 30 и 60 к/с, а также (экспериментально, x86_64) то же боке, которое
   считает видеокарта через Vulkan: служба читает камеру и отдаёт картинку в камеру v4l2loopback
   «PS5 Camera».
@@ -47,7 +46,7 @@ Telegram, OBS, браузерах и любых других программа�
 
 После первой установки боке включено. Переключается в Параметры → Bluetooth и устройства →
 Камеры → PS5 Camera → Эффекты камеры. Установка без окон:
-`msiexec /i PS5CameraDriver-ru.msi /qn BOKEH=on|off`, камера глубины — `DEPTHCAM=1`. ZIP-пакет (`Install.cmd`) ставит то же без
+`msiexec /i PS5CameraDriver-ru.msi /qn BOKEH=on|off`. ZIP-пакет (`Install.cmd`) ставит то же без
 MSI. Подробности, режимы, настройки и решение проблем — в
 [installer/README.ru.txt](installer/README.ru.txt).
 
@@ -99,7 +98,7 @@ Device MFT — штатный способ Windows добавить обрабо
 |---|---|
 | [src/service](src/service) | служба: загрузка прошивки, подключение эффекта к камере при каждом подключении |
 | [src/dmft](src/dmft) | Device MFT: эффект внутри камеры |
-| [src/vcam](src/vcam) | виртуальные камеры: вариант `-VirtualCamera` и «PS5 Camera Depth» |
+| [src/vcam](src/vcam) | виртуальная камера (вариант `-VirtualCamera`) |
 | [src/core](src/core) | конвейер на видеокарте: Direct3D 11 (Windows) или Vulkan (Linux), шейдеры в [src/core/shaders](src/core/shaders) |
 | [src/linux](src/linux) | `ps5cam-bokehd`: боке на Linux (захват V4L2 → Vulkan → v4l2loopback) |
 | [src/ctl](src/ctl) | `ps5cam-ctl`: настройки (`set mode 0` — боке, `set mode 1` — без), регистрация |
