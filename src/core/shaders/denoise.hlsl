@@ -2,10 +2,13 @@
 // smoothing. Where a 3x3 luma mean barely changes between frames (a change of the order of the
 // noise), the new frame is blended into the history, which averages the sensor noise of a dim
 // room away over several frames; where it changes more, something moves and the new frame is
-// taken without history, so motion does not smear, but smoothed over 5x5 neighbours of similar
-// brightness instead. The typical change of a still scene is measured every frame (a histogram
-// the CPU reads back), so the thresholds and the spatial smoothing follow the camera's gain by
-// themselves. Chroma, which carries the ugliest low-light noise, is always smoothed that way.
+// taken without history, so motion does not smear, but smoothed over neighbours of similar
+// brightness instead: the 5x5 around it and a ring at twice that spacing, since this camera's noise
+// comes in blobs of a few pixels that a 5x5 window cannot average out. The typical change of a
+// still scene is measured every frame (a histogram the CPU reads back), so the thresholds and the
+// spatial smoothing follow the camera's gain by themselves. Chroma, which carries the ugliest
+// low-light noise and whose detail the eye hardly sees, is always smoothed, over 17x17 (every
+// fourth pixel) among neighbours of similar brightness and colour.
 #include "common.hlsli"
 
 Texture2D<float4> Cur : register(t0);   // main sensor, this frame (Y, U, V, 1)
@@ -14,6 +17,9 @@ FORMAT("rgba8") RWTexture2D<unorm float4> Out : register(u0);
 RWByteAddressBuffer NoiseHist : register(u1);  // 128 bins of the 3x3-mean change, 1/4096 each
 
 static const float kChromaSigma = 0.05;  // luma difference at which a neighbour's chroma counts ~60%
+// Chroma difference (from the 3x3 mean) at which it counts ~60%: keeps a colour edge of equal
+// brightness (lips on skin, a logo on cloth) from bleeding over the wide window.
+static const float kChromaColourSigma = 0.03;
 // Luma range sigma of the spatial smoothing per unit of noiseLevel: on this camera a pixel's noise
 // is about 2.3 noiseLevel (the ISP's noise is correlated between neighbours).
 static const float kLumaSigma = 4.5;
@@ -28,18 +34,22 @@ void main(uint3 id : SV_DispatchThreadID)
     float4 c = Cur[p];
 
     float meanCur = 0, meanPrev = 0;
+    float2 meanChroma = 0;
     [unroll] for (int y = -1; y <= 1; ++y)
     {
         [unroll] for (int x = -1; x <= 1; ++x)
         {
             int2 q = clamp(p + int2(x, y), int2(0, 0), last);
-            meanCur += Cur[q].x;
+            float4 n = Cur[q];
+            meanCur += n.x;
+            meanChroma += n.yz;
             if (denoiseHistory != 0)
                 meanPrev += Prev[q].x;
         }
     }
     meanCur /= 9.0;
     meanPrev /= 9.0;
+    meanChroma /= 9.0;
 
     // Neighbours are weighed by their difference from the 3x3 mean rather than from the pixel
     // itself, so that a lone noisy pixel does not keep itself. On a thin line or a sharp step in a
@@ -47,18 +57,33 @@ void main(uint3 id : SV_DispatchThreadID)
     // pixel itself, with a token weight, then stands (rather than 0/0, which turned such lines black).
     const float sigmaY = max(kLumaSigma * noiseLevel, 0.01);
     float luma = c.x * 1e-4, lumaWeight = 1e-4;
+    [unroll] for (int dy = -4; dy <= 4; ++dy)
+    {
+        [unroll] for (int dx = -4; dx <= 4; ++dx)
+        {
+            // The 5x5, and of the 9x9 around it every second pixel of its border ring.
+            const bool inner = abs(dx) <= 2 && abs(dy) <= 2;
+            const bool ring = max(abs(dx), abs(dy)) == 4 && (dx % 2) == 0 && (dy % 2) == 0;
+            if (!inner && !ring)
+                continue;
+            float n = Cur[clamp(p + int2(dx, dy), int2(0, 0), last)].x;
+            float d = n - meanCur;
+            float wy = exp(-0.5 * (d * d) / (sigmaY * sigmaY));
+            luma += n * wy;
+            lumaWeight += wy;
+        }
+    }
     float2 chroma = c.yz * 1e-4;
     float chromaWeight = 1e-4;
-    [unroll] for (int dy = -2; dy <= 2; ++dy)
+    [unroll] for (int cy = -2; cy <= 2; ++cy)
     {
-        [unroll] for (int dx = -2; dx <= 2; ++dx)
+        [unroll] for (int cx = -2; cx <= 2; ++cx)
         {
-            float4 n = Cur[clamp(p + int2(dx, dy), int2(0, 0), last)];
+            float4 n = Cur[clamp(p + int2(cx, cy) * 4, int2(0, 0), last)];
             float d = n.x - meanCur;
-            float wy = exp(-0.5 * (d * d) / (sigmaY * sigmaY));
-            float wc = exp(-0.5 * (d * d) / (kChromaSigma * kChromaSigma));
-            luma += n.x * wy;
-            lumaWeight += wy;
+            float2 dc = n.yz - meanChroma;
+            float wc = exp(-0.5 * (d * d) / (kChromaSigma * kChromaSigma) -
+                           0.5 * dot(dc, dc) / (kChromaColourSigma * kChromaColourSigma));
             chroma += n.yz * wc;
             chromaWeight += wc;
         }

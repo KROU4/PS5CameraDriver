@@ -28,13 +28,14 @@ struct EffectSettings {
     float blurStrength = 0.6f;    // 0..1
     bool autoFocus = true;
     float manualFocus = 0.5f;     // 0 (far) .. 1 (near), used when autoFocus is off
-    float focusRange = 1.0f;      // sharp zone half-width in working disparity units
+    float focusRange = 1.5f;      // sharp zone half-width in working disparity units (a head's depth)
     float foregroundBlur = 0.35f; // relative blur for objects in front of the focus plane
     float temporal = 0.4f;        // weight of the newest disparity (1 = no smoothing)
     float highlights = 1.5f;      // bokeh highlight emphasis
     bool autoBrightness = true;   // digital exposure compensation for dim rooms
     float maxGain = 6.0f;
-    float denoise = 0.7f;         // temporal noise reduction of the image, 0 (off) .. 1
+    float denoise = 0.9f;         // temporal noise reduction of the image, 0 (off) .. 1
+    float sharpen = 0.5f;         // edge sharpening of the picture (noise-aware), 0 (off) .. 1
     bool depthPlane = false;      // also render the depth camera's plane (computes depth in any view)
     uint32_t depthView = 0;       // that plane: 0 disparity (near = bright), 1 subject matte
 };
@@ -138,6 +139,7 @@ private:
     void RunDepth(const EffectSettings& s);
     float ScoreAlignment(float dy, float rotationDeg);
     void UpdateFocus(const uint32_t* histogram, const EffectSettings& s);
+    void RestartFocus();  // the next histograms acquire the subject anew (kFocusAcquireFrames)
     void UpdateGain(const uint32_t* histogram, const EffectSettings& s);
     void UpdateNoise(const uint32_t* histogram);
 
@@ -148,6 +150,8 @@ private:
     Rectification m_rect;
     float m_focus = -1;
     static constexpr uint32_t kFocusSwitchFrames = 20;  // ~1/3 s at 60 fps
+    static constexpr uint32_t kFocusAcquireFrames = 30; // after a start, the focus follows at once
+    uint32_t m_focusFrames = 0;                         // histograms the autofocus used since a start
     int m_focusPeak = -1;                               // histogram peak (bin) autofocus follows
     int m_focusCandidate = -1;                          // peak waiting to take the focus over
     uint32_t m_focusCandidateFrames = 0;

@@ -42,8 +42,10 @@ choice too, while an administrator is signed in.
 Picture
 -------
 - Noise reduction (on by default, medium): in a dim room the sensor noise is averaged over
-  several frames where nothing moves, and smoothed within the frame where something does.
-  ps5cam-ctl set denoise 0..100 (0 = off).
+  several frames where nothing moves, and smoothed within the frame where something does;
+  colour noise is smoothed over a wide area. ps5cam-ctl set denoise 0..100 (default 90, 0 = off).
+- Sharpening (on by default): edges gain contrast, while detail as small as the noise is left
+  alone, so in a dim room it all but stops. ps5cam-ctl set sharpen 0..100 (default 50, 0 = off).
 - Anti-flicker (automatic by default): in a dim room the camera exposes up to the whole
   frame time instead of 10 ms steps, unless lamps flicker; when the picture shows the moving
   bands of flickering lamps it goes back to 50 Hz at once and stays there for half an hour.
@@ -59,7 +61,7 @@ Tray icon (for development: Install.cmd -Tray)
   side by side (in these views the second sensor comes at 960x540).
 - Background blur: light, medium, strong, maximum.
 - Focus: autofocus on the person or fixed (near, middle, far).
-- Bokeh highlights, auto brightness for a dark room, noise reduction, anti-flicker.
+- Bokeh highlights, auto brightness for a dark room, noise reduction, sharpening, anti-flicker.
 - A link to the camera's page in Windows Settings (background effects).
 - "Full HD 60 fps only": programs see a single format, 1920x1080@60 (the default).
   Without it — 1080p and 720p at 30 and 60 fps, and "Prefer 60 fps" decides which

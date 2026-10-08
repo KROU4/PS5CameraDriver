@@ -17,8 +17,9 @@ struct PictureSettings {
     uint32_t temporal = 40;     // temporal weight x100, 5..100
     bool autoBrightness = true;
     uint32_t maxGain = 60;      // x10, 10..160
-    uint32_t denoise = 70;      // temporal noise reduction 0 (off) .. 100
+    uint32_t denoise = 90;      // temporal noise reduction 0 (off) .. 100
     uint32_t antiFlicker = 0;   // AntiFlicker (flicker.h): 0 auto, 1 50 Hz, 2 60 Hz, 3 off
+    uint32_t sharpen = 50;      // edge sharpening 0 (off) .. 100
 };
 
 // Values out of range: a scale is clamped, a choice falls back to its default.
@@ -33,6 +34,7 @@ inline void ClampPicture(PictureSettings& p)
     p.maxGain = std::clamp<uint32_t>(p.maxGain, 10, 160);
     p.denoise = std::min<uint32_t>(p.denoise, 100);
     if (p.antiFlicker > 3) p.antiFlicker = defaults.antiFlicker;
+    p.sharpen = std::min<uint32_t>(p.sharpen, 100);
 }
 
 inline void ApplyPicture(const PictureSettings& p, EffectSettings& e)
@@ -46,6 +48,7 @@ inline void ApplyPicture(const PictureSettings& p, EffectSettings& e)
     e.autoBrightness = p.autoBrightness;
     e.maxGain = p.maxGain / 10.0f;
     e.denoise = p.denoise / 100.0f;
+    e.sharpen = p.sharpen / 100.0f;
 }
 
 }  // namespace ps5cam

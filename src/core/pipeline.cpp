@@ -35,8 +35,10 @@ struct GpuConstants {
     float noiseLevel, denoiseKeep;
     uint32_t denoiseHistory;
     float denoiseSpatial;
+    float sharpen, sharpenCore;
+    float pad[2];
 };
-static_assert(sizeof(GpuConstants) == 176, "constant buffer layout");
+static_assert(sizeof(GpuConstants) == 192, "constant buffer layout");
 // kNumDisp mirrors MAX_DISP in shaders/common.hlsli.
 
 uint32_t DivUp(uint32_t a, uint32_t b) { return (a + b - 1) / b; }
@@ -171,9 +173,7 @@ void StereoPipeline::Reset()
     m_haveClean = false;
     m_noise = -1;  // another stream may run at another gain
     m_focus = -1;
-    m_focusPeak = -1;
-    m_focusCandidate = -1;
-    m_focusCandidateFrames = 0;
+    RestartFocus();
     if (m_impl) m_impl->pending = -1;
 }
 
@@ -256,6 +256,13 @@ void StereoPipeline::UpdateConstants(const EffectSettings* s, uint32_t pathDir)
         c.denoiseSpatial = denoise;
         c.denoiseHistory = m_haveClean ? 1 : 0;
         c.noiseLevel = m_noise >= 0 ? m_noise : 0.0f;
+        // Sharpening leaves alone detail no larger than the noise left in the picture, so that it
+        // brings out edges rather than grain: ~2.5 noiseLevel after a full noise reduction (~2
+        // levels in daylight, ~9 in a dim room, where it all but stops), up to 5 without one. While
+        // the noise is not known (the noise reduction off or just started), so much that it hardly
+        // sharpens.
+        c.sharpen = std::clamp(s->sharpen, 0.0f, 1.0f);
+        c.sharpenCore = m_noise >= 0 ? m_noise * (5.0f - 2.5f * denoise) : 0.03f;
     }
     m_gpu->SetConstants(&c, sizeof(c));
 }
@@ -298,10 +305,19 @@ void StereoPipeline::RunDepth(const EffectSettings& s)
     box(d.gfC, d.gfB);
 }
 
+void StereoPipeline::RestartFocus()
+{
+    m_focusFrames = 0;
+    m_focusPeak = -1;
+    m_focusCandidate = -1;
+    m_focusCandidateFrames = 0;
+}
+
 void StereoPipeline::UpdateFocus(const uint32_t* histogram, const EffectSettings& s)
 {
     if (!s.autoFocus) {
         m_focus = std::clamp(s.manualFocus, 0.0f, 1.0f) * (kNumDisp - 1);
+        RestartFocus();  // autofocus switched back on acquires the subject anew
         return;
     }
     // Bins 0-1 collect unmatched pixels and are ignored.
@@ -313,6 +329,11 @@ void StereoPipeline::UpdateFocus(const uint32_t* histogram, const EffectSettings
                     0.25f * histogram[i + 1 < kNumDisp ? i + 1 : i];
     }
     if (total < 50) return;
+    // While a stream starts, the depth of a person (less texture than a wall, noisier in a dim
+    // room) settles over the first frames, and the first pick may be the wall behind: during
+    // acquisition the focus follows the pick at once, without the hold and the glide below.
+    const bool acquiring = m_focusFrames < kFocusAcquireFrames;
+    if (acquiring) ++m_focusFrames;
     auto share = [&](int i) {
         double mass = 0;
         for (int k = std::max(2, i - 2); k <= std::min<int>(kNumDisp - 1, i + 2); ++k) mass += histogram[k];
@@ -329,7 +350,7 @@ void StereoPipeline::UpdateFocus(const uint32_t* histogram, const EffectSettings
     if (pick < 0) pick = globalMax;
     // While the subject being followed is still there, another peak (a hand raised towards the
     // camera, a share hovering around the threshold) takes over only after kFocusSwitchFrames.
-    if (m_focusPeak >= 2 && std::abs(pick - m_focusPeak) > 2 && share(m_focusPeak) >= 0.05) {
+    if (!acquiring && m_focusPeak >= 2 && std::abs(pick - m_focusPeak) > 2 && share(m_focusPeak) >= 0.05) {
         if (std::abs(pick - m_focusCandidate) <= 2) ++m_focusCandidateFrames;
         else m_focusCandidateFrames = 1;
         m_focusCandidate = pick;
@@ -346,7 +367,7 @@ void StereoPipeline::UpdateFocus(const uint32_t* histogram, const EffectSettings
     }
     float target = wsum > 0 ? float(dsum / wsum) : float(pick);
     m_focusPeak = static_cast<int>(std::lround(target));  // follows the subject moving closer or away
-    if (m_focus < 0)
+    if (m_focus < 0 || acquiring)
         m_focus = target;
     else if (std::fabs(target - m_focus) > 0.6f)
         m_focus += (target - m_focus) * 0.15f;  // glide, like a lens refocusing
@@ -418,6 +439,9 @@ HRESULT StereoPipeline::Process(const uint8_t* yuy2, uint32_t yuy2Pitch, const E
     // The second sensor view shows no main sensor image to clean up.
     const bool denoise = s.denoise > 0.0f && s.mode != ViewMode::Second;
     if (denoise && m_frame != m_lastDenoiseFrame + 1) m_haveClean = false;  // it was off: history is stale
+    // The noise is measured by the noise reduction only: without it a level measured earlier, in
+    // other light, would mislead the sharpening.
+    if (!denoise) m_noise = -1;
 
     g.BeginTiming(slot);
 
@@ -456,7 +480,10 @@ HRESULT StereoPipeline::Process(const uint8_t* yuy2, uint32_t yuy2Pitch, const E
                            s.mode == ViewMode::DebugGrey || (s.depthPlane && !m_stereo.mono);
     d.slots[slot].depth = needDepth;
     if (needDepth) {
-        if (m_frame != m_lastDepthFrame + 1) m_haveHistory = false;  // depth was off: history is stale
+        if (m_frame != m_lastDepthFrame + 1) {  // depth was off: its history and the focus are stale
+            m_haveHistory = false;
+            RestartFocus();
+        }
         m_lastDepthFrame = m_frame;
         RunDepth(s);
         UpdateConstants(&s, 0);
@@ -600,6 +627,7 @@ HRESULT StereoPipeline::Calibrate(const uint8_t* yuy2, uint32_t yuy2Pitch, Recti
     }
     m_rect = {bestDy, bestRot, best};
     m_haveHistory = false;
+    RestartFocus();  // the disparities shift with the new alignment
     if (result) *result = m_rect;
     return S_OK;
 }

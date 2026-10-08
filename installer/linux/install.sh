@@ -182,6 +182,12 @@ EOF
     install -d -m 0755 "$(dirname "$bokeh_conf")"
     if [[ -f "$bokeh_conf" ]]; then
         echo "    $(t 'настройки остаются прежними:' 'keeping the settings in') $bokeh_conf"
+        # The first release's file: its noise reduction default (70) moves to the new one (90),
+        # and the sharpening it did not have yet is added with its default.
+        sed -i 's/^denoise = 70$/denoise = 90/' "$bokeh_conf"
+        if ! grep -q '^[[:space:]]*#*[[:space:]]*sharpen' "$bokeh_conf"; then
+            printf '\n# Edge sharpening of the picture, leaving the noise alone: 0 off .. 100 strongest. Default 50.\nsharpen = 50\n' >> "$bokeh_conf"
+        fi
     else
         install -m 0644 "$here/bokeh.conf" "$bokeh_conf"
     fi

@@ -35,13 +35,34 @@ float3 RgbToYuv(float3 c)
     return float3(y, (c.b - y) * 0.564 + 0.5, (c.r - y) * 0.713 + 0.5);
 }
 
+// The main sensor picture with its luma sharpened: an unsharp mask over a cross of four samples
+// 1.2 pixels away (output pixels when the output is smaller than the eye image, so that what it
+// brings out survives the downscale), whose detail up to sharpenCore (the noise's size) is left
+// alone, so that edges gain contrast and grain does not.
+float3 SharpMain(float2 uv)
+{
+    float3 c = MainYuv.SampleLevel(LinearClamp, uv, 0).xyz;
+    if (sharpen <= 0)
+        return c;
+    const float2 eyePerOut = crop.zw / float2(outSize);
+    const float2 o = 1.2 * max(eyePerOut, 1.0) / float2(eyeSize);
+    float around = 0.25 * (MainYuv.SampleLevel(LinearClamp, uv + float2(o.x, 0), 0).x +
+                           MainYuv.SampleLevel(LinearClamp, uv - float2(o.x, 0), 0).x +
+                           MainYuv.SampleLevel(LinearClamp, uv + float2(0, o.y), 0).x +
+                           MainYuv.SampleLevel(LinearClamp, uv - float2(0, o.y), 0).x);
+    float detail = c.x - around;
+    detail = sign(detail) * max(abs(detail) - sharpenCore, 0);
+    c.x = saturate(c.x + 1.2 * sharpen * detail);
+    return c;
+}
+
 float3 Shade(float2 outPx)
 {
     float2 uv = EyeUvFromOutput(outPx);
     float3 result;
     if (mode == 1)
     {
-        result = MainYuv.SampleLevel(LinearClamp, uv, 0).xyz;
+        result = SharpMain(uv);
     }
     else if (mode == 2)
     {
@@ -74,7 +95,7 @@ float3 Shade(float2 outPx)
     }
     else
     {
-        float3 sharp = MainYuv.SampleLevel(LinearClamp, uv, 0).xyz;
+        float3 sharp = SharpMain(uv);
         float coc = CircleOfConfusion(DisparityAt(uv));
         float3 blurred = BokehHalf.SampleLevel(LinearClamp, outPx / float2(outSize), 0).xyz;
         result = lerp(sharp, blurred, smoothstep(0.5, 2.5, coc));

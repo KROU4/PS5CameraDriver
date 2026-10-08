@@ -164,6 +164,7 @@ int wmain(int argc, wchar_t** argv)
         else if (k == L"autobrightness") s.autoBrightness = v != 0;
         else if (k == L"maxgain") s.maxGain = v;
         else if (k == L"denoise") s.denoise = v;
+        else if (k == L"sharpen") s.sharpen = v;
         else if (k == L"antiflicker" && v <= 3) s.antiFlicker = v;
         else if (k == L"blurstyle" && v <= 1) s.blurStyle = v;
         else if (k == L"depthcamera") s.depthCamera = v != 0;
@@ -208,11 +209,11 @@ int wmain(int argc, wchar_t** argv)
         wprintf(L"device MFT      : %ls\n", IsDeviceMftSet() ? L"on" : L"off");
         wprintf(L"Windows default : background effects %ls\n", DescribeBackgroundEffectDefault().c_str());
         wprintf(L"settings        : mode %u blur %u autofocus %u focus %u prefer60 %u fullhdonly %u highlights %u "
-                L"temporal %u autobrightness %u maxgain %u denoise %u antiflicker %u blurstyle %u mains %u Hz "
-                L"depthcamera %u depthview %u\n",
+                L"temporal %u autobrightness %u maxgain %u denoise %u sharpen %u antiflicker %u blurstyle %u "
+                L"mains %u Hz depthcamera %u depthview %u\n",
             s.mode, s.blur, s.autoFocus, s.focus, s.prefer60, s.fullHdOnly, s.highlights, s.temporal, s.autoBrightness,
-            s.maxGain, s.denoise, s.antiFlicker, s.blurStyle, s.mainsHz ? s.mainsHz : RegionMainsHz(), s.depthCamera,
-            s.depthView);
+            s.maxGain, s.denoise, s.sharpen, s.antiFlicker, s.blurStyle, s.mainsHz ? s.mainsHz : RegionMainsHz(),
+            s.depthCamera, s.depthView);
         wprintf(L"stream          : %ls %ls fps %.2f gpu %.2f ms focus %.2f %ls\n", st.streaming ? L"active" : L"idle",
             st.format.c_str(), st.fpsX100 / 100.0, st.gpuUs / 1000.0, st.focusX100 / 100.0, st.error.c_str());
         return 0;
@@ -220,9 +221,10 @@ int wmain(int argc, wchar_t** argv)
     wprintf(L"usage: ps5cam-ctl setup | register | remove | hide | unhide | dmft on|off | status | recalibrate |\n"
             L"                  record N | defaults |\n"
             L"                  set mode|blur|autofocus|focus|prefer60|fullhdonly|highlights|temporal|autobrightness|\n"
-            L"                      maxgain|denoise|antiflicker|blurstyle|depthcamera|depthview VALUE\n"
+            L"                      maxgain|denoise|sharpen|antiflicker|blurstyle|depthcamera|depthview VALUE\n"
             L"  fullhdonly 1: apps are offered 1920x1080 at 60 fps only; 0: also 1280x720 and 30 fps\n"
             L"  denoise 0..100: temporal noise reduction of the picture (0 off)\n"
+            L"  sharpen 0..100: edge sharpening of the picture, leaving the noise alone (0 off)\n"
             L"  antiflicker 0 auto (dim scenes without lamp flicker get the longer exposure), 1 50 Hz, 2 60 Hz, 3 off\n"
             L"  blurstyle 0 portrait blur (the bokeh as set), 1 standard blur (strongest): Windows' background effects\n"
             L"  depthcamera 1: a \"PS5 Camera Depth\" camera shows the depth of what PS5 Camera streams (e.g. for OBS);\n"

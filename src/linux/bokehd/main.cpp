@@ -24,7 +24,8 @@ void Usage(FILE* to)
           "       ps5cam-bokehd --list | --version\n"
           "         the camera and loopback devices found | the release number\n"
           "       ps5cam-bokehd --input CLIP --output OUT [--frames N] [--format nv12|yuy2] [--mode M]\n"
-          "                     [--blur 0..100] [--denoise 0..100] [--dy DY] [--depthplane 0|1]\n"
+          "                     [--blur 0..100] [--denoise 0..100] [--sharpen 0..100] [--dy DY]\n"
+          "                     [--depthplane 0|1]\n"
           "         test without a camera: the pipeline over CLIP (recorded camera frames: packed\n"
           "         2448x1088 YUY2, 5326848 bytes each) into OUT, NV12 by default (the same output on\n"
           "         Windows and Linux, so that the GPU backends can be compared)\n"
@@ -32,7 +33,7 @@ void Usage(FILE* to)
           "         disparity (raw, checked, hole-filled, grey)\n"
           "         --dy: vertical offset of the second sensor instead of calibrating on the first frame\n"
           "         --depthplane: also write the depth camera's plane (0 disparity, 1 matte) to OUT.depth\n"
-          "         defaults: mode 0, blur 60, denoise 70\n"
+          "         defaults: mode 0, blur 60, denoise 90, sharpen 50\n"
           "environment PS5CAM_GPU=NAME: the GPU whose name contains NAME; CPU Vulkan drivers (lavapipe)\n"
           "         are used only when named, e.g. PS5CAM_GPU=llvmpipe for tests on a machine without a GPU\n",
         to);
@@ -64,7 +65,7 @@ int List()
 int main(int argc, char** argv)
 {
     static constexpr std::string_view kWithValue[] = {"--config", "--input", "--output", "--frames", "--format",
-        "--mode", "--blur", "--denoise", "--dy", "--depthplane"};
+        "--mode", "--blur", "--denoise", "--sharpen", "--dy", "--depthplane"};
     std::string config = kDefaultConfigPath;
     bool list = false;
     bool test = false;
@@ -105,6 +106,7 @@ int main(int argc, char** argv)
         } else if (arg == "--mode") ok = ParseUint(value, options.mode) && options.mode <= 8;
         else if (arg == "--blur") ok = ParseUint(value, options.blur) && options.blur <= 100;
         else if (arg == "--denoise") ok = ParseUint(value, options.denoise) && options.denoise <= 100;
+        else if (arg == "--sharpen") ok = ParseUint(value, options.sharpen) && options.sharpen <= 100;
         else if (arg == "--dy") ok = options.haveDy = ParseFloat(value, options.dy);
         else if (arg == "--depthplane") {
             ok = ParseUint(value, number) && number <= 1;

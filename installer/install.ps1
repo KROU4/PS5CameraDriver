@@ -277,6 +277,15 @@ try {
     $logFolderReady = $true  # secured by setup: the log may go there now
     $hadSettings = [bool](Get-ItemProperty 'HKLM:\SOFTWARE\PS5Camera' -Name Mode -ErrorAction SilentlyContinue)
     if (-not $hadSettings) { Run $ctl @('defaults') | Out-Null }
+    # Settings of 1.1.0 and earlier, where the installer wrote every default: the noise reduction
+    # then defaulted to 70 (its weak level to 40). A value still at one of those moves once to the
+    # new level (90, 50); SettingsVersion 2 marks the settings as migrated.
+    $saved = Get-ItemProperty 'HKLM:\SOFTWARE\PS5Camera' -ErrorAction SilentlyContinue
+    if ($hadSettings -and -not ($saved.PSObject.Properties['SettingsVersion'] -and $saved.SettingsVersion -ge 2)) {
+        if ($saved.Denoise -eq 70) { Run $ctl @('set', 'denoise', '90') | Out-Null }
+        elseif ($saved.Denoise -eq 40) { Run $ctl @('set', 'denoise', '50') | Out-Null }
+    }
+    & reg.exe add 'HKLM\SOFTWARE\PS5Camera' /v SettingsVersion /t REG_DWORD /d 2 /f 2>&1 | Out-Null
     if ($Bokeh -eq 'keep') {
         # An update keeps the user's choice; a first installation starts with bokeh.
         $Bokeh = if ($hadSettings -and (Get-ItemProperty 'HKLM:\SOFTWARE\PS5Camera').Mode -ne 0) { 'off' } else { 'on' }

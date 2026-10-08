@@ -34,6 +34,8 @@ cbuffer Constants : register(b0)
     float  denoiseKeep;   // share of the new frame kept where nothing moves (1 = no temporal denoise)
     uint   denoiseHistory; // 0: no previous frame to blend with
     float  denoiseSpatial; // share of the spatially smoothed luma where something moves (0..1)
+    float  sharpen;        // composite.hlsl: unsharp-mask amount on the sharp picture (0 off .. 1)
+    float  sharpenCore;    // detail up to this size is noise and left alone (luma 0..1)
 };
 
 SamplerState LinearClamp : register(s0);

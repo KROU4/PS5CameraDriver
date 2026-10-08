@@ -85,6 +85,7 @@ Settings LoadSettings()
     s.autoBrightness = ReadDword(key, L"AutoBrightness", s.autoBrightness) != 0;
     s.maxGain = ReadDword(key, L"MaxGain", s.maxGain);
     s.denoise = ReadDword(key, L"Denoise", s.denoise);
+    s.sharpen = ReadDword(key, L"Sharpen", s.sharpen);
     s.antiFlicker = ReadDword(key, L"AntiFlicker", s.antiFlicker);
     ClampPicture(s);
     s.blurStyle = ReadDword(key, L"BlurStyle", s.blurStyle) == kBlurStandard ? kBlurStandard : kBlurPortrait;
@@ -121,6 +122,7 @@ bool SaveSettings(const Settings& s)
     WriteDword(key, L"AutoBrightness", s.autoBrightness);
     WriteDword(key, L"MaxGain", s.maxGain);
     WriteDword(key, L"Denoise", s.denoise);
+    WriteDword(key, L"Sharpen", s.sharpen);
     WriteDword(key, L"AntiFlicker", s.antiFlicker);
     WriteDword(key, L"BlurStyle", s.blurStyle);
     WriteDword(key, L"MainsHz", s.mainsHz);

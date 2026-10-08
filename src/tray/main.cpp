@@ -5,6 +5,7 @@
 
 #include <cmath>
 #include <cstdio>
+#include <cstdlib>
 #include <string>
 #include <vector>
 
@@ -30,6 +31,7 @@ enum Cmd : UINT {
     CmdFullHdOnly = 502,
     CmdDenoiseBase = 510,  // + level index
     CmdFlickerBase = 520,  // + AntiFlicker value
+    CmdSharpenBase = 540,  // + level index
     CmdDepthOff = 530,
     CmdDepthViewBase = 531,  // + DepthView
     CmdRecalibrate = 600,
@@ -51,7 +53,8 @@ const struct {
 } kBlur[] = {{L"Лёгкое", 25}, {L"Среднее", 50}, {L"Сильное", 75}, {L"Максимальное", 100}},
   kFocus[] = {{L"Близко (до 60 см)", 85}, {L"Средне (около 1 м)", 50}, {L"Далеко", 20}},
   kHighlights[] = {{L"Без бликов", 0}, {L"Обычные", 150}, {L"Яркие", 300}},
-  kDenoise[] = {{L"Выключено", 0}, {L"Слабое", 40}, {L"Среднее", 70}, {L"Сильное", 100}};
+  kDenoise[] = {{L"Выключено", 0}, {L"Слабое", 50}, {L"Среднее", 90}, {L"Сильное", 100}},
+  kSharpen[] = {{L"Выключена", 0}, {L"Обычная", 50}, {L"Высокая", 100}};
 const wchar_t* kFlickerNames[] = {L"Авто (в темноте ярче, если лампы не мерцают)", L"50 Гц", L"60 Гц", L"Выключена"};
 
 constexpr uint32_t kModeBokeh = 0;
@@ -158,6 +161,16 @@ void UpdateTray(DWORD message)
     }
 }
 
+// The level of a menu nearest to a value (set from the console, or a default of an older version).
+template <size_t N, typename Level>
+UINT Nearest(const Level (&levels)[N], uint32_t value)
+{
+    UINT best = 0;
+    for (UINT i = 1; i < N; ++i)
+        if (std::abs(int(levels[i].value) - int(value)) < std::abs(int(levels[best].value) - int(value))) best = i;
+    return best;
+}
+
 void AddItem(HMENU m, UINT id, const wchar_t* text, bool checked, bool radio = true, bool enabled = true)
 {
     MENUITEMINFOW mi = {sizeof(mi)};
@@ -216,8 +229,11 @@ void ShowMenu()
 
     AddItem(menu, CmdAutoBrightness, L"Автояркость (для тёмной комнаты)", s.autoBrightness, false);
     HMENU dn = CreatePopupMenu();
-    for (UINT i = 0; i < 4; ++i) AddItem(dn, CmdDenoiseBase + i, kDenoise[i].name, s.denoise == kDenoise[i].value);
+    for (UINT i = 0; i < 4; ++i) AddItem(dn, CmdDenoiseBase + i, kDenoise[i].name, i == Nearest(kDenoise, s.denoise));
     AppendMenuW(menu, MF_POPUP, reinterpret_cast<UINT_PTR>(dn), L"Шумоподавление");
+    HMENU sh = CreatePopupMenu();
+    for (UINT i = 0; i < 3; ++i) AddItem(sh, CmdSharpenBase + i, kSharpen[i].name, i == Nearest(kSharpen, s.sharpen));
+    AppendMenuW(menu, MF_POPUP, reinterpret_cast<UINT_PTR>(sh), L"Резкость");
     HMENU fl = CreatePopupMenu();
     for (UINT i = 0; i < 4; ++i) AddItem(fl, CmdFlickerBase + i, kFlickerNames[i], s.antiFlicker == i);
     AppendMenuW(menu, MF_POPUP, reinterpret_cast<UINT_PTR>(fl), L"Защита от мерцания ламп");
@@ -263,6 +279,7 @@ void ShowMenu()
     } else if (cmd >= CmdHighlightsBase && cmd < CmdHighlightsBase + 3) s.highlights = kHighlights[cmd - CmdHighlightsBase].value;
     else if (cmd == CmdAutoBrightness) s.autoBrightness = !s.autoBrightness;
     else if (cmd >= CmdDenoiseBase && cmd < CmdDenoiseBase + 4) s.denoise = kDenoise[cmd - CmdDenoiseBase].value;
+    else if (cmd >= CmdSharpenBase && cmd < CmdSharpenBase + 3) s.sharpen = kSharpen[cmd - CmdSharpenBase].value;
     else if (cmd >= CmdFlickerBase && cmd < CmdFlickerBase + 4) s.antiFlicker = cmd - CmdFlickerBase;
     else if (cmd == CmdDepthOff) s.depthCamera = false;  // the service removes the camera
     else if (cmd >= CmdDepthViewBase && cmd < CmdDepthViewBase + 2) {

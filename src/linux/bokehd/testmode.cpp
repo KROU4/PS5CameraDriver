@@ -30,6 +30,7 @@ int RunTest(const TestOptions& o)
     es.mode = static_cast<ViewMode>(o.mode);
     es.blurStrength = o.blur / 100.0f;
     es.denoise = o.denoise / 100.0f;
+    es.sharpen = o.sharpen / 100.0f;
 
     const uint32_t pitch = sf.PackedWidth() * 2;
     const size_t frameBytes = size_t(pitch) * sf.PackedHeight();

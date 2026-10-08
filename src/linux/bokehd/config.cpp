@@ -34,6 +34,7 @@ constexpr PictureKey kPictureKeys[] = {
     {"autobrightness", nullptr, &PictureSettings::autoBrightness},
     {"maxgain", &PictureSettings::maxGain, nullptr},
     {"denoise", &PictureSettings::denoise, nullptr},
+    {"sharpen", &PictureSettings::sharpen, nullptr},
     {"antiflicker", &PictureSettings::antiFlicker, nullptr},
 };
 constexpr std::string_view kLinuxKeys[] = {"mains", "fps", "always_on"};
@@ -204,9 +205,9 @@ std::string DescribeConfig(const BokehConfig& c)
     char text[512];
     snprintf(text, sizeof(text),
         "mode %u (%s), blur %u, autofocus %u, focus %u, highlights %u, temporal %u, autobrightness %u, maxgain %u, "
-        "denoise %u, antiflicker %u (%s), mains %u Hz, fps %u, always_on %u, camera %s, output %s",
+        "denoise %u, sharpen %u, antiflicker %u (%s), mains %u Hz, fps %u, always_on %u, camera %s, output %s",
         c.mode, ModeName(c.mode), c.blur, c.autoFocus ? 1 : 0, c.focus, c.highlights, c.temporal,
-        c.autoBrightness ? 1 : 0, c.maxGain, c.denoise, c.antiFlicker, AntiFlickerName(c.antiFlicker), c.mainsHz,
+        c.autoBrightness ? 1 : 0, c.maxGain, c.denoise, c.sharpen, c.antiFlicker, AntiFlickerName(c.antiFlicker), c.mainsHz,
         c.fps, c.alwaysOn ? 1 : 0, c.camera.empty() ? "auto" : c.camera.c_str(),
         c.output.empty() ? "auto" : c.output.c_str());
     return text;

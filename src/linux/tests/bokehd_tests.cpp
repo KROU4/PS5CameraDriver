@@ -94,12 +94,12 @@ void TestDefaults()
     const BokehConfig defaults;
     CHECK(DescribeConfig(c) == DescribeConfig(defaults));
     CHECK(c.mode == 0 && c.blur == 60 && c.autoFocus && c.focus == 50 && c.highlights == 150 && c.temporal == 40);
-    CHECK(c.autoBrightness && c.maxGain == 60 && c.denoise == 70 && c.antiFlicker == 0);
+    CHECK(c.autoBrightness && c.maxGain == 60 && c.denoise == 90 && c.antiFlicker == 0 && c.sharpen == 50);
     CHECK(c.mainsHz == 50 && c.fps == 60 && !c.alwaysOn && c.camera.empty() && c.output.empty());
     EffectSettings e;
     ApplyConfig(c, e);
-    CHECK(e.mode == ViewMode::Bokeh && e.blurStrength == 0.6f && e.denoise == 0.7f && e.maxGain == 6.0f);
-    CHECK(e.highlights == 1.5f && e.temporal == 0.4f && e.manualFocus == 0.5f);
+    CHECK(e.mode == ViewMode::Bokeh && e.blurStrength == 0.6f && e.denoise == 0.9f && e.maxGain == 6.0f);
+    CHECK(e.highlights == 1.5f && e.temporal == 0.4f && e.manualFocus == 0.5f && e.sharpen == 0.5f);
 #ifdef PS5CAM_BOKEH_CONF
     // The installed file spells out every default.
     std::set<std::string> warned;
@@ -115,16 +115,16 @@ void TestDefaults()
 void TestClamps()
 {
     const BokehConfig c = Parse(
-        "mode = 7\nblur = 150\nfocus = 200\nhighlights = 401\ntemporal = 1\nmaxgain = 999\ndenoise = 101\n"
+        "mode = 7\nblur = 150\nfocus = 200\nhighlights = 401\ntemporal = 1\nmaxgain = 999\ndenoise = 101\nsharpen = 101\n"
         "antiflicker = 9\nmains = 55\nfps = 25\nalways_on = 2\nautofocus = 0\nautobrightness = 5\n");
     // The limits are ClampPicture's.
     PictureSettings raw;
     raw.mode = 7, raw.blur = 150, raw.focus = 200, raw.highlights = 401, raw.temporal = 1, raw.maxGain = 999;
-    raw.denoise = 101, raw.antiFlicker = 9;
+    raw.denoise = 101, raw.antiFlicker = 9, raw.sharpen = 101;
     ClampPicture(raw);
     CHECK(c.mode == raw.mode && c.blur == raw.blur && c.focus == raw.focus && c.highlights == raw.highlights);
     CHECK(c.temporal == raw.temporal && c.maxGain == raw.maxGain && c.denoise == raw.denoise);
-    CHECK(c.antiFlicker == raw.antiFlicker);
+    CHECK(c.antiFlicker == raw.antiFlicker && c.sharpen == raw.sharpen && c.sharpen == 100);
     CHECK(c.mode == 0 && c.blur == 100 && c.temporal == 5 && c.maxGain == 160 && c.antiFlicker == 0);
     CHECK(c.mainsHz == 50 && c.fps == 60 && c.alwaysOn && !c.autoFocus && c.autoBrightness);
     const BokehConfig ok = Parse("mode = 4\nmains = 60\nfps = 30\nantiflicker = 3\ntemporal = 5\nmaxgain = 10\n");
@@ -157,7 +157,7 @@ void TestSyntax()
         "output = auto\n");
     CHECK(c.mode == 2);  // after the BOM
     CHECK(c.blur == 10);
-    CHECK(c.focus == 50 && c.denoise == 70 && c.highlights == 150 && c.temporal == 40 && c.maxGain == 60);
+    CHECK(c.focus == 50 && c.denoise == 90 && c.highlights == 150 && c.temporal == 40 && c.maxGain == 60);
     CHECK(c.fps == 30);
     CHECK(c.camera == "/dev/video9" && c.output.empty());
 
