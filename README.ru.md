@@ -39,8 +39,9 @@ Telegram, OBS, браузерах и любых других программа�
 
 **Windows 11**
 1. Скачайте `PS5CameraDriver-ru.msi` (на английском — `PS5CameraDriver.msi`) со страницы
-   [релизов](https://github.com/KROU4/PS5CameraDriver/releases/latest) и запустите. Нужны права
-   администратора и интернет (установщик скачивает оригинальную прошивку Sony, см.
+   [релизов](https://github.com/KROU4/PS5CameraDriver/releases/latest) и запустите, либо
+   `winget install KROU4.PS5CameraDriver`, когда пакет появится в winget. Нужны права администратора
+   и — при установке или позже — интернет (скачивается оригинальная прошивка Sony, см.
    [Прошивка](#прошивка)). Пока релизы без цифровой подписи, SmartScreen может предупредить о
    неизвестном издателе (см. [Code signing policy](#code-signing-policy)).
 2. В программах выберите камеру «PS5 Camera».
@@ -92,9 +93,11 @@ Camera Frame Server, где работает эффект), остальное �
 Камере при каждом подключении нужна прошивка, её загружает служба драйвера. Прошивка Sony в
 проект не входит: установщик скачивает оригинальный образ (PS5 system software 21.01-03.20.00.04)
 из публичных копий, проверяет его SHA-256 и накладывает изменения драйвера —
-90 байт из [firmware/ps5cam-firmware.json](firmware/ps5cam-firmware.json). Без интернета положите
-оригинал рядом с установщиком под именем `sony-firmware.bin` или укажите его параметром
-`SONYFIRMWARE=` (MSI), `-Original` (`Install.cmd`) или `--original` (Linux, macOS).
+90 байт из [firmware/ps5cam-firmware.json](firmware/ps5cam-firmware.json). В Windows установка без
+интернета всё равно завершается, а служба соберёт прошивку, когда камера будет подключена и
+появится интернет. Совсем без интернета положите оригинал рядом с установщиком под именем
+`sony-firmware.bin` или укажите его параметром `SONYFIRMWARE=` (MSI), `-Original` (`Install.cmd`)
+или `--original` (Linux, macOS).
 
 Что меняет патч:
 - 1920x1080 с одного сенсора при 60 к/с (у Sony 1080p ограничен 30 к/с);
@@ -188,7 +191,7 @@ GitHub Actions. Каждый релиз подписывается только 
 
 Подписываются программы и сценарии установки из `PS5CameraDriver.zip`: `ps5cam-dmft.dll`,
 `ps5cam-vcam.dll`, `ps5cam-svc.exe`, `ps5cam-ctl.exe`, `ps5cam-tray.exe`, `install.ps1`,
-`uninstall.ps1`; пакеты MSI собираются из этих подписанных файлов.
+`uninstall.ps1`, `firmware.ps1`; пакеты MSI собираются из этих подписанных файлов.
 
 **Privacy policy.** This program will not transfer any information to other networked systems
 unless specifically requested by the user or the person installing or operating it. Программа не

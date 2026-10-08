@@ -24,7 +24,7 @@ New-Item -ItemType Directory -Force (Join-Path $dist 'driver') | Out-Null
 Copy-Item (Join-Path $root 'installer\driver\ps5cam-boot.inf') (Join-Path $dist 'driver')
 # Windows PowerShell 5.1 needs a BOM to read UTF-8 scripts with Cyrillic text.
 $utf8Bom = New-Object System.Text.UTF8Encoding($true)
-foreach ($s in 'install.ps1', 'uninstall.ps1') {
+foreach ($s in 'install.ps1', 'uninstall.ps1', 'firmware.ps1') {
     $text = [IO.File]::ReadAllText((Join-Path $root "installer\$s"))
     [IO.File]::WriteAllText((Join-Path $dist $s), $text, $utf8Bom)
 }

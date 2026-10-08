@@ -173,6 +173,69 @@ void CameraReady()
 
 std::wstring g_firmwareOverride;  // `load FILE` uses a specific image (firmware experiments)
 
+// An installation without internet access leaves no firmware.bin (and a broken one is no better):
+// build it with the installer's firmware.ps1 (Sony's original from the sources in
+// ps5cam-firmware.json plus the driver's changes, both checked by hash), at most every 9 minutes
+// (RunLoop looks every minute), waiting up to 3 minutes for the download. The script runs in a job
+// that dies with the service, its output goes to service\firmware.log, and a service stop ends it.
+bool BuildFirmware()
+{
+    static ULONGLONG lastTry = 0;  // the worker thread's (or `load`'s) only
+    const ULONGLONG now = GetTickCount64();
+    if (lastTry && now - lastTry < 9 * 60 * 1000) return false;
+    lastTry = now;
+    const std::wstring dir = ModuleDir();
+    wchar_t system[MAX_PATH], logPath[MAX_PATH];
+    if (!GetSystemDirectoryW(system, MAX_PATH) ||
+        !ExpandEnvironmentStringsW(L"%ProgramData%\\PS5Camera\\service\\firmware.log", logPath, MAX_PATH))
+        return false;
+    std::wstring cmd = L"\"" + std::wstring(system) + L"\\WindowsPowerShell\\v1.0\\powershell.exe\" -NoProfile "
+                       L"-NonInteractive -ExecutionPolicy Bypass -File \"" + dir + L"\\firmware.ps1\" -Patch \"" + dir +
+                       L"\\ps5cam-firmware.json\" -Out \"" + dir + L"\\firmware.bin\"";
+    SECURITY_ATTRIBUTES inherit = {sizeof(inherit), nullptr, TRUE};
+    HANDLE log = CreateFileW(logPath, FILE_APPEND_DATA, FILE_SHARE_READ, &inherit, OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+    STARTUPINFOW si = {sizeof(si)};
+    if (log != INVALID_HANDLE_VALUE) {
+        si.dwFlags = STARTF_USESTDHANDLES;
+        si.hStdOutput = si.hStdError = log;
+    }
+    HANDLE job = CreateJobObjectW(nullptr, nullptr);
+    if (job) {
+        JOBOBJECT_EXTENDED_LIMIT_INFORMATION limits = {};
+        limits.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+        SetInformationJobObject(job, JobObjectExtendedLimitInformation, &limits, sizeof(limits));
+    }
+    PROCESS_INFORMATION pi = {};
+    const BOOL started = CreateProcessW(nullptr, cmd.data(), nullptr, nullptr, log != INVALID_HANDLE_VALUE,
+        CREATE_NO_WINDOW | CREATE_SUSPENDED, nullptr, dir.c_str(), &si, &pi);
+    const DWORD startError = GetLastError();
+    if (log != INVALID_HANDLE_VALUE) CloseHandle(log);
+    if (!started) {
+        if (job) CloseHandle(job);
+        Log(L"firmware: cannot run firmware.ps1 (%lu)", startError);
+        return false;
+    }
+    if (job) AssignProcessToJobObject(job, pi.hProcess);
+    ResumeThread(pi.hThread);
+    DWORD code = 1;
+    HANDLE waits[] = {pi.hProcess, g_stopEvent};
+    const DWORD waited = WaitForMultipleObjects(g_stopEvent ? 2 : 1, waits, FALSE, 3 * 60 * 1000);
+    if (waited == WAIT_OBJECT_0) {
+        GetExitCodeProcess(pi.hProcess, &code);
+    } else {
+        TerminateProcess(pi.hProcess, 1);
+        if (waited == WAIT_TIMEOUT) Log(L"firmware: firmware.ps1 timed out");
+    }
+    CloseHandle(pi.hThread);
+    CloseHandle(pi.hProcess);
+    if (job) CloseHandle(job);
+    if (waited != WAIT_OBJECT_0) return false;
+    if (code == 0) Log(L"firmware built from Sony's original");
+    else if (code == 2) Log(L"firmware: Sony's original could not be downloaded (offline?), next try in 10 minutes");
+    else Log(L"firmware: firmware.ps1 failed (%lu), see firmware.log", code);
+    return code == 0;
+}
+
 void BootDevice(const std::wstring& path)
 {
     std::vector<uint8_t> image;
@@ -180,7 +243,7 @@ void BootDevice(const std::wstring& path)
     std::wstring fw = g_firmwareOverride.empty() ? ModuleDir() + L"\\firmware.bin" : g_firmwareOverride;
     if (!LoadFirmwareFile(fw, image, error)) {
         Log(L"firmware: %ls", error.c_str());
-        return;
+        if (!g_firmwareOverride.empty() || !BuildFirmware() || !LoadFirmwareFile(fw, image, error)) return;
     }
     for (int attempt = 1; attempt <= 5 && !g_stopping; ++attempt) {
         DWORD t0 = GetTickCount();
@@ -384,7 +447,18 @@ int RunLoop()
     // Re-assert the virtual camera at every start (covers reboots), with the camera if it is running.
     Enqueue(FindPhysicalCameraInstance().empty() ? JobKind::Register : JobKind::CameraReady);
 
-    WaitForSingleObject(g_stopEvent, INFINITE);
+    // A camera left in boot mode because its firmware could not be built yet (an installation
+    // without internet access) gets another try: looked at every minute, BuildFirmware spaces the
+    // downloads out.
+    while (WaitForSingleObject(g_stopEvent, 60 * 1000) == WAIT_TIMEOUT) {
+        if (!g_firmwareOverride.empty()) continue;
+        const auto boot = FindBootDevices();
+        if (boot.empty()) continue;
+        std::vector<uint8_t> image;
+        std::wstring error;
+        if (!LoadFirmwareFile(ModuleDir() + L"\\firmware.bin", image, error))
+            for (const auto& p : boot) Enqueue(JobKind::Boot, p);
+    }
     g_stopping = true;
     g_queueCv.notify_all();
     if (notify) CM_Unregister_Notification(notify);

@@ -65,6 +65,10 @@
         <RemoveFile Id="OldUninstallPs1" Name="uninstall.ps1" On="install" />
       </Component>
       <Component>
+        <File Source="$(var.Dist)\firmware.ps1" />
+        <RemoveFile Id="OldFirmwarePs1" Name="firmware.ps1" On="install" />
+      </Component>
+      <Component>
         <File Source="$(var.Dist)\version.txt" />
         <RemoveFile Id="OldVersionTxt" Name="version.txt" On="install" />
       </Component>

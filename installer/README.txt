@@ -11,9 +11,11 @@ Install
 -------
 1. Plug the camera into a USB 3 port.
 2. Run PS5CameraDriver.msi (PS5CameraDriver-ru.msi in Russian) from the release page and
-   confirm the administrator rights prompt. An internet connection is needed: the installer
-   downloads Sony's original firmware and builds the driver's firmware from it. Bokeh is on
-   after the first installation; an update keeps your choice.
+   confirm the administrator rights prompt. The installer downloads Sony's original firmware
+   and builds the driver's firmware from it; without internet access the installation still
+   completes, and the service fetches the firmware itself when the camera is plugged into a
+   computer that is online (it tries every 10 minutes). Bokeh is on after the first
+   installation; an update keeps your choice.
    Unattended: msiexec /i PS5CameraDriver.msi /qn [BOKEH=on|off] [TRAY=1]
    [SONYFIRMWARE=C:\path\to\sony-firmware.bin]; the log is %ProgramData%\PS5Camera\install.log.
    Or, from this ZIP package: run Install.cmd. It asks for the mode (1 — with bokeh, 2 —

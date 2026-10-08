@@ -38,10 +38,11 @@ A **USB 3** port is required: on USB 2.0 the camera only delivers 640x400.
 
 **Windows 11**
 1. Download `PS5CameraDriver.msi` (`PS5CameraDriver-ru.msi` in Russian) from the
-   [releases](https://github.com/KROU4/PS5CameraDriver/releases/latest) page and run it. It needs
-   administrator rights and an internet connection (it downloads Sony's original firmware, see
-   [Firmware](#firmware)). Until releases are digitally signed, SmartScreen may warn about an
-   unknown publisher (see [Code signing policy](#code-signing-policy)).
+   [releases](https://github.com/KROU4/PS5CameraDriver/releases/latest) page and run it, or
+   `winget install KROU4.PS5CameraDriver` once the package is in winget. It needs administrator
+   rights and, at installation or later, an internet connection (it downloads Sony's original
+   firmware, see [Firmware](#firmware)). Until releases are digitally signed, SmartScreen may warn
+   about an unknown publisher (see [Code signing policy](#code-signing-policy)).
 2. Choose the "PS5 Camera" camera in your programs.
 
 Bokeh is on after the first installation. Switch it in Settings → Bluetooth & devices → Cameras →
@@ -92,9 +93,11 @@ a measurement. If you try it on other hardware, please share the frame rate and 
 The camera needs firmware every time it is plugged in; the driver's service uploads it. Sony's
 firmware is not part of the project: the installer downloads the original image (PS5 system
 software 21.01-03.20.00.04) from public copies, checks its SHA-256 and applies the driver's
-changes — 90 bytes from [firmware/ps5cam-firmware.json](firmware/ps5cam-firmware.json). Without
-internet access, put the original next to the installer as `sony-firmware.bin` or pass it with
-`SONYFIRMWARE=` (MSI), `-Original` (`Install.cmd`) or `--original` (Linux, macOS).
+changes — 90 bytes from [firmware/ps5cam-firmware.json](firmware/ps5cam-firmware.json). On
+Windows an installation without internet access still completes, and the service builds the
+firmware when the camera is plugged in and the computer is online. Offline, put the original next to
+the installer as `sony-firmware.bin` or pass it with `SONYFIRMWARE=` (MSI), `-Original`
+(`Install.cmd`) or `--original` (Linux, macOS).
 
 What the patch changes:
 - 1920x1080 from one sensor at 60 fps (Sony limits 1080p to 30 fps);
@@ -188,7 +191,7 @@ GitHub Actions build. Every release is signed only after manual approval.
 
 Signed files are the programs and install scripts in `PS5CameraDriver.zip`: `ps5cam-dmft.dll`,
 `ps5cam-vcam.dll`, `ps5cam-svc.exe`, `ps5cam-ctl.exe`, `ps5cam-tray.exe`, `install.ps1`,
-`uninstall.ps1`; the MSI packages are built from these signed files.
+`uninstall.ps1`, `firmware.ps1`; the MSI packages are built from these signed files.
 
 **Privacy policy.** This program will not transfer any information to other networked systems
 unless specifically requested by the user or the person installing or operating it. The only
