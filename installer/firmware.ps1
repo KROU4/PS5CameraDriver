@@ -77,19 +77,22 @@ try {
         # Whole or not at all: the service may read it at any moment, and the installer and the
         # service may build it at the same time.
         $tmp = "$Out.$PID.tmp"
+        $written = $false
         try {
             [IO.File]::WriteAllBytes($tmp, $bytes)
+            $written = $true
             # (a $null backup path would reach .NET as "": [NullString] passes a real null)
             if ([IO.File]::Exists($Out)) { [IO.File]::Replace($tmp, $Out, [NullString]::Value) } else { [IO.File]::Move($tmp, $Out) }
         } catch {
+            $failure = $_
+            # A replacement that failed half way can leave no firmware.bin: the checked image (written
+            # whole) goes there.
+            if ($written -and -not [IO.File]::Exists($Out)) { try { [IO.File]::Move($tmp, $Out) } catch { } }
             # The other builder (installer or service) may have put the same image there first, or a
             # reader may hold the file: fine as long as the right image is in place.
-            if (-not ([IO.File]::Exists($Out) -and (Sha256 ([IO.File]::ReadAllBytes($Out))) -eq $p.result.sha256)) { throw }
+            if (-not ([IO.File]::Exists($Out) -and (Sha256 ([IO.File]::ReadAllBytes($Out))) -eq $p.result.sha256)) { throw $failure }
         } finally {
-            # A replacement that failed half way can leave no firmware.bin: the checked image goes there.
-            if ([IO.File]::Exists($tmp)) {
-                if ([IO.File]::Exists($Out)) { [IO.File]::Delete($tmp) } else { [IO.File]::Move($tmp, $Out) }
-            }
+            if ([IO.File]::Exists($tmp)) { try { [IO.File]::Delete($tmp) } catch { } }
         }
         exit 0
     }
