@@ -144,6 +144,7 @@ struct Gpu::Impl {
     VkQueryPool queries = VK_NULL_HANDLE;
     bool timingWritten[kSlots] = {};
     VkResult lost = VK_SUCCESS;  // sticky: a lost (or hung) device stays lost, nothing is recorded any more
+    bool hung = false;           // a batch did not finish in time: the GPU may still be using everything
     // Sticky too: a command that could not be recorded (a kernel the driver did not build, out of
     // memory). The frames are wrong from then on, so Map reports it and the caller rebuilds.
     HRESULT error = S_OK;
@@ -269,11 +270,13 @@ struct Gpu::Impl {
     // A batch that did not finish stays Submitted: its command buffer and memory may still be in use.
     bool Wait(Batch& b)
     {
-        if (b.state != BatchState::Submitted) return lost == VK_SUCCESS;
+        if (lost != VK_SUCCESS) return false;  // no waiting on a device that is gone
+        if (b.state != BatchState::Submitted) return true;
         VkResult r = vkWaitForFences(device, 1, &b.fence, VK_TRUE, kWaitNs);
         if (r != VK_SUCCESS) {
-            if (lost == VK_SUCCESS) fprintf(stderr, "ps5cam gpu: waiting for the GPU failed (%d)\n", int(r));
+            fprintf(stderr, "ps5cam gpu: waiting for the GPU failed (%d)\n", int(r));
             lost = VK_ERROR_DEVICE_LOST;
+            hung = r == VK_TIMEOUT;
             return false;
         }
         b.state = BatchState::Idle;
@@ -362,13 +365,17 @@ Gpu::Impl::~Impl()
         if (instance) vkDestroyInstance(instance, nullptr);
         return;
     }
-    // A hung GPU may still use everything below and never return from vkDeviceWaitIdle: leave it all
-    // to the process's end rather than block the caller or free memory in use.
+    // A hung GPU (a batch that timed out) may still use everything below and never return from
+    // vkDeviceWaitIdle: leave it all to the process's end rather than block the caller or free
+    // memory in use. A lost device (the driver reset it) returns at once and is freed as usual.
+    bool timedOut = hung;
     for (Batch& b : batches)
-        if (b.state == BatchState::Submitted && vkWaitForFences(device, 1, &b.fence, VK_TRUE, 2000000000ull) != VK_SUCCESS) {
-            fprintf(stderr, "ps5cam gpu: the GPU does not finish; its objects are left behind\n");
-            return;
-        }
+        if (!timedOut && b.state == BatchState::Submitted)
+            timedOut = vkWaitForFences(device, 1, &b.fence, VK_TRUE, 2000000000ull) == VK_TIMEOUT;
+    if (timedOut) {
+        fprintf(stderr, "ps5cam gpu: the GPU does not finish; its objects are left behind\n");
+        return;
+    }
     vkDeviceWaitIdle(device);
     for (auto& img : images) {
         if (img->view) vkDestroyImageView(device, img->view, nullptr);

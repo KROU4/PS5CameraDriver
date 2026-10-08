@@ -99,8 +99,15 @@ bool SaveCalibration(const std::string& dir, const Rectification& r)
     if (!ok) {
         Log("cannot save the calibration to %s: %s", path.c_str(), strerror(error ? error : EIO));
         unlink(temp.c_str());
+        return false;
     }
-    return ok;
+    // The rename lasts through a power cut only once the directory is on disk too. Best effort:
+    // the worst case is calibrating again.
+    if (const int dirFd = open(dir.c_str(), O_RDONLY | O_DIRECTORY | O_CLOEXEC); dirFd >= 0) {
+        fsync(dirFd);
+        close(dirFd);
+    }
+    return true;
 }
 
 }  // namespace ps5cam

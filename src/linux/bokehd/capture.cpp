@@ -205,6 +205,15 @@ bool Capture::Requeue(std::string& error)
     return Queue(index, error);
 }
 
+bool Capture::GetPowerLine(int& value)
+{
+    v4l2_control control = {};
+    control.id = V4L2_CID_POWER_LINE_FREQUENCY;
+    if (Ioctl(m_fd, VIDIOC_G_CTRL, &control) != 0) return false;
+    value = control.value;
+    return true;
+}
+
 bool Capture::SetPowerLine(int value, std::string& error)
 {
     v4l2_control control = {};

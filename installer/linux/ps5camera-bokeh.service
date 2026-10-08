@@ -5,6 +5,12 @@ After=systemd-modules-load.service
 # The writer side of "PS5 Camera" is ours before anyone logs in: with Type=notify the service
 # counts as started once it holds the device (or found none), and logins wait for that.
 Before=systemd-user-sessions.service
+# A crash that repeats at every start gives up after 5 starts in 2 minutes (systemctl status shows
+# it; systemctl restart tries again). The default 5 in 10 s would never trip with RestartSec=5. The
+# daemon itself exits after 5 GPU losses in a row, which its back-off (2 + 4 + 8 + 16 s) stretches
+# over half a minute: a GPU that keeps failing gets a fresh process about every 40 s, under the limit.
+StartLimitIntervalSec=120
+StartLimitBurst=5
 
 [Service]
 Type=notify
@@ -12,7 +18,7 @@ ExecStart=/opt/ps5camera/ps5cam-bokehd
 # Settings are re-read when /etc/ps5cam/bokeh.conf changes; "systemctl reload" forces it.
 ExecReload=/bin/kill -HUP $MAINPID
 Restart=on-failure
-RestartSec=2
+RestartSec=5
 
 # A throwaway unprivileged user. video opens /dev/video* (camera and loopback), render the GPU's
 # /dev/dri/renderD*; NVIDIA's /dev/nvidia* are open to everyone.

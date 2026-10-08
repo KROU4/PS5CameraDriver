@@ -51,14 +51,37 @@ secure_boot_on() {
     return 1
 }
 
-# v4l2loopback (a kernel module that DKMS or akmods builds for the running kernel) and the Vulkan
-# loader with Mesa's drivers. NVIDIA's proprietary driver brings its own Vulkan driver.
-install_bokeh_packages() {
+# The Vulkan loader with Mesa's drivers; NVIDIA's proprietary driver brings its own Vulkan driver.
+# Installed before ps5cam-bokehd is tried, which needs libvulkan.so.1 to start at all.
+install_vulkan_packages() {
+    local pkgs
+    if command -v apt-get >/dev/null; then
+        apt-get update || true
+        apt-get install -y libvulkan1 mesa-vulkan-drivers || return 1
+    elif command -v dnf >/dev/null; then
+        dnf install -y vulkan-loader mesa-vulkan-drivers || return 1
+    elif command -v pacman >/dev/null; then
+        pkgs=(vulkan-icd-loader)
+        if has_gpu 0x1002; then pkgs+=(vulkan-radeon); fi
+        if has_gpu 0x8086; then pkgs+=(vulkan-intel); fi
+        pacman -S --needed --noconfirm "${pkgs[@]}" || return 1
+    elif command -v zypper >/dev/null; then
+        pkgs=(libvulkan1)
+        if has_gpu 0x1002; then pkgs+=(libvulkan_radeon); fi
+        if has_gpu 0x8086; then pkgs+=(libvulkan_intel); fi
+        zypper --non-interactive install "${pkgs[@]}" || return 1
+    else
+        echo "$(t 'Неизвестный менеджер пакетов: установите сами Vulkan (загрузчик libvulkan.so.1 и драйвер видеокарты).' 'Unknown package manager: install Vulkan (the libvulkan.so.1 loader and your graphics driver) yourself.')" >&2
+        return 1
+    fi
+}
+
+# v4l2loopback: a kernel module that DKMS or akmods builds for the running kernel.
+install_loopback_packages() {
     local kernel owner headers pkgs
     kernel="$(uname -r)"
     if command -v apt-get >/dev/null; then
-        apt-get update || true
-        pkgs=(v4l2loopback-dkms libvulkan1 mesa-vulkan-drivers)
+        pkgs=(v4l2loopback-dkms)
         if apt-cache show "linux-headers-$kernel" >/dev/null 2>&1; then pkgs+=("linux-headers-$kernel"); fi
         apt-get install -y "${pkgs[@]}" || return 1
     elif command -v dnf >/dev/null; then
@@ -69,31 +92,24 @@ install_bokeh_packages() {
             return 1
         fi
         dnf install -y "kernel-devel-$kernel" || true
-        dnf install -y vulkan-loader mesa-vulkan-drivers || return 1
         # akmods builds the module in the background at boot; build it for this kernel right now.
         if command -v akmods >/dev/null; then akmods --force --kernels "$kernel" || true; fi
     elif command -v pacman >/dev/null; then
         # The headers package goes with the kernel package: linux, linux-lts, linux-zen ...
         owner="$(pacman -Qqo "/usr/lib/modules/$kernel" 2>/dev/null | head -n 1 || true)"
         headers="${owner:-linux}-headers"
-        pkgs=(v4l2loopback-dkms "$headers" vulkan-icd-loader)
-        if has_gpu 0x1002; then pkgs+=(vulkan-radeon); fi
-        if has_gpu 0x8086; then pkgs+=(vulkan-intel); fi
-        pacman -S --needed --noconfirm "${pkgs[@]}" || return 1
+        pacman -S --needed --noconfirm v4l2loopback-dkms "$headers" || return 1
     elif command -v zypper >/dev/null; then
-        pkgs=(v4l2loopback-kmp-default libvulkan1)
-        if has_gpu 0x1002; then pkgs+=(libvulkan_radeon); fi
-        if has_gpu 0x8086; then pkgs+=(libvulkan_intel); fi
-        zypper --non-interactive install "${pkgs[@]}" || return 1
+        zypper --non-interactive install v4l2loopback-kmp-default || return 1
     else
-        echo "$(t 'Неизвестный менеджер пакетов: установите сами v4l2loopback и Vulkan (загрузчик libvulkan.so.1 и драйвер видеокарты).' 'Unknown package manager: install v4l2loopback and Vulkan (the libvulkan.so.1 loader and your graphics driver) yourself.')" >&2
+        echo "$(t 'Неизвестный менеджер пакетов: установите сами модуль ядра v4l2loopback.' 'Unknown package manager: install the v4l2loopback kernel module yourself.')" >&2
         return 1
     fi
 }
 
 install_bokeh() {
     local f node version unit_source
-    echo "==> $(t 'Боке: v4l2loopback и Vulkan' 'Bokeh: v4l2loopback and Vulkan')"
+    echo "==> $(t 'Боке: v4l2loopback' 'Bokeh: v4l2loopback')"
     if secure_boot_on; then
         echo "    $(t 'Включена безопасная загрузка (Secure Boot): модуль v4l2loopback собирается на этом компьютере' 'Secure Boot is on: the v4l2loopback module is built on this computer (DKMS) and loads only')"
         echo "    $(t '(DKMS) и загрузится, только если подписан ключом, которому доверяет прошивка. Ubuntu и Debian' 'when signed with a key the firmware trusts. Ubuntu and Debian may ask for a password for the')"
@@ -101,19 +117,12 @@ install_bokeh() {
         echo "    $(t '«Enroll MOK» на синем экране и введите его. Fedora (akmods): после установки выполните' 'it. Fedora (akmods): after the installation run')"
         echo "      sudo mokutil --import /etc/pki/akmods/certs/public_key.der"
     fi
-    install_bokeh_packages || true
+    install_loopback_packages || true
     if ! modinfo v4l2loopback >/dev/null 2>&1; then
-        rm -f "$target/ps5cam-bokehd.new"
         echo "$(t 'Модуль v4l2loopback не установился (подробности выше), боке не установлено.' 'The v4l2loopback module did not install (details above); bokeh is not installed.')" >&2
         echo "$(t 'Если ядро обновлялось после загрузки, перезагрузите компьютер: модуль собирается для нового ядра.' 'If the kernel was updated since the last boot, reboot: the module is built for the new kernel.')" >&2
         echo "$(t 'Камера без боке установлена и работает. Исправьте ошибку и запустите установщик снова.' 'The camera without bokeh is installed and works. Fix the error and run the installer again.')" >&2
         exit 1
-    fi
-    if ! ldconfig -p 2>/dev/null | grep -q 'libvulkan\.so\.1'; then
-        echo "    $(t 'нет загрузчика Vulkan (libvulkan.so.1): без него служба боке не найдёт видеокарту' 'no Vulkan loader (libvulkan.so.1): without it the bokeh service finds no GPU')" >&2
-    fi
-    if has_gpu 0x10de; then
-        echo "    $(t 'NVIDIA: фирменный драйвер NVIDIA ставит свой драйвер Vulkan' "NVIDIA: NVIDIA's proprietary driver installs its own Vulkan driver")"
     fi
 
     echo "==> $(t 'Устройство «PS5 Camera» (v4l2loopback)' 'The "PS5 Camera" device (v4l2loopback)')"
@@ -265,17 +274,29 @@ if [[ "$bokeh" == on ]]; then
     for f in ps5cam-bokehd bokeh.conf ps5camera-bokeh.service; do
         [[ -f "$here/$f" ]] || { echo "$(t 'В папке установщика нет файла' 'The installer folder lacks the file') $f $(t '(он нужен для боке)' '(bokeh needs it)')" >&2; exit 1; }
     done
-    # Tried here, before anything is installed: the program needs glibc 2.34 or newer. It goes in
-    # place under its own name later (a rename, so a running old copy is no obstacle).
+    echo "==> $(t 'Боке: Vulkan (загрузчик и драйверы Mesa)' 'Bokeh: Vulkan (the loader and Mesa drivers)')"
+    install_vulkan_packages || echo "    $(t 'Vulkan не установился (подробности выше)' 'Vulkan did not install (details above)')" >&2
+    if has_gpu 0x10de; then
+        echo "    $(t 'NVIDIA: фирменный драйвер NVIDIA ставит свой драйвер Vulkan' "NVIDIA: NVIDIA's proprietary driver installs its own Vulkan driver")"
+    fi
+    # Tried here, before the rest is installed: the program needs glibc 2.34 or newer and the Vulkan
+    # loader. It goes in place under its own name later (a rename, so a running old copy is no
+    # obstacle); whatever stops the installer before that removes it.
     install -d "$target"
+    trap 'rm -f "$target/ps5cam-bokehd.new"' EXIT
     install -m 0755 "$here/ps5cam-bokehd" "$target/ps5cam-bokehd.new"
     if bokehd_says="$("$target/ps5cam-bokehd.new" --version 2>&1)"; then
-        echo "$bokehd_says"
+        echo "    $bokehd_says"
     else
         rm -f "$target/ps5cam-bokehd.new"
         echo
-        echo "$(t 'Служба боке (ps5cam-bokehd) не запускается в этой системе: ей нужна glibc 2.34 или новее' 'The bokeh service (ps5cam-bokehd) does not run on this system: it needs glibc 2.34 or newer')"
-        echo "$(t '(Ubuntu 22.04, Debian 12, Fedora 35 и новее). Ошибка:' '(Ubuntu 22.04, Debian 12, Fedora 35 or newer). The error:') $bokehd_says"
+        if [[ "$bokehd_says" == *GLIBC_* ]]; then
+            echo "$(t 'Служба боке (ps5cam-bokehd) не запускается в этой системе: ей нужна glibc 2.34 или новее' 'The bokeh service (ps5cam-bokehd) does not run on this system: it needs glibc 2.34 or newer')"
+            echo "$(t '(Ubuntu 22.04, Debian 12, Fedora 35 и новее).' '(Ubuntu 22.04, Debian 12, Fedora 35 or newer).')"
+        else
+            echo "$(t 'Служба боке (ps5cam-bokehd) не запускается в этой системе.' 'The bokeh service (ps5cam-bokehd) does not run on this system.')"
+        fi
+        echo "$(t 'Ошибка' 'The error'): $bokehd_says"
         read -r -p "$(t 'Установить камеру без боке? [Y/n] ' 'Install the camera without bokeh? [Y/n] ')" answer || answer=""
         [[ "$answer" =~ ^[Nn] ]] && exit 1
         bokeh=off
@@ -339,7 +360,7 @@ if [[ "$bokeh" == on ]]; then
     echo
     echo "$(t 'Готово: PS5 HD Camera с боке. В программах выберите камеру «PS5 Camera» (исходная' 'Done: PS5 HD Camera with bokeh. In your programs choose the camera "PS5 Camera" (the raw')"
     echo "$(t '«USB Camera-OV580» тоже видна: это камера без обработки). Настройки: /etc/ps5cam/bokeh.conf' '"USB Camera-OV580" stays visible too: that is the camera without processing). Settings: /etc/ps5cam/bokeh.conf')"
-    echo "$(t '(применяются сразу после сохранения). Журнал: journalctl -u ps5camera-bokeh' '(applied as soon as you save the file). Log: journalctl -u ps5camera-bokeh')"
+    echo "$(t '(применяются через пару секунд после сохранения). Журнал: journalctl -u ps5camera-bokeh' '(applied a couple of seconds after you save the file). Log: journalctl -u ps5camera-bokeh')"
 else
     remove_bokeh
     echo

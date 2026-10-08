@@ -183,18 +183,32 @@ void TestFiles(const std::string& dir)
     CHECK(loaded && c.blur == 60);
     CHECK(Count(log, "no such file, using the defaults") == 1);
 
+    // Every Settled() call below is one poll of the daemon.
     const std::string path = dir + "/bokeh.conf";
     CHECK(WriteText(path, "blur = 33\n"));
-    CHECK(LoadConfig(path, warned, c) && c.blur == 33);
-
     FileWatch watch(path);
-    CHECK(watch.Changed());
-    CHECK(!watch.Changed());
-    CHECK(WriteText(path, "blur = 44\nfps = 30\n"));  // another size
-    CHECK(watch.Changed());
-    CHECK(!watch.Changed());
+    FileStamp read;
+    CHECK(LoadConfig(path, warned, c, &read) && c.blur == 33);
+    watch.MarkRead(read);
+    CHECK(!watch.Settled());  // the version already read
+    CHECK(!watch.Settled());
+    CHECK(WriteText(path, "blur = 44\nfps = 30\n"));
+    CHECK(!watch.Settled());  // just changed: wait one poll
+    CHECK(watch.Settled());   // left alone for a poll: read it
+    CHECK(LoadConfig(path, warned, c, &read) && c.blur == 44 && c.fps == 30);
+    watch.MarkRead(read);
+    CHECK(!watch.Settled());
+    // An editor truncating and then writing: the empty version is never read.
+    CHECK(WriteText(path, ""));
+    CHECK(!watch.Settled());
+    CHECK(WriteText(path, "blur = 55\n"));
+    CHECK(!watch.Settled());
+    CHECK(watch.Settled());
+    CHECK(LoadConfig(path, warned, c, &read) && c.blur == 55);
+    watch.MarkRead(read);
     CHECK(unlink(path.c_str()) == 0);
-    CHECK(watch.Changed());
+    CHECK(!watch.Settled());
+    CHECK(watch.Settled());  // removed for good: the defaults
 }
 
 void TestCalibration(const std::string& dir)

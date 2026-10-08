@@ -143,6 +143,7 @@ jobs:
       DXC_SHA256: b99655f65215287825fcdd49102b17e2a1608eff79ffaf9457514c2676892aa5
       PS5CAM_GPU: llvmpipe
       PS5CAM_VK_VALIDATION: '1'
+      VK_INSTANCE_LAYERS: VK_LAYER_KHRONOS_validation  # the loader fails if the layer is missing
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
         with:
@@ -171,8 +172,10 @@ jobs:
           # Three frames of noise in the camera's stereo format: no calibration, but every kernel runs,
           # through both outputs; the first Process call only primes the pipeline.
           head -c $((5326848 * 3)) /dev/urandom > /tmp/noise.clip
-          ./build/src/linux/ps5cam-bokehd --input /tmp/noise.clip --output /tmp/out.nv12 > /tmp/nv12.log 2>&1
-          ./build/src/linux/ps5cam-bokehd --input /tmp/noise.clip --output /tmp/out.yuy2 --format yuy2 --depthplane 1 > /tmp/yuy2.log 2>&1
+          ./build/src/linux/ps5cam-bokehd --input /tmp/noise.clip --output /tmp/out.nv12 > /tmp/nv12.log 2>&1 ||
+            { cat /tmp/nv12.log; exit 1; }
+          ./build/src/linux/ps5cam-bokehd --input /tmp/noise.clip --output /tmp/out.yuy2 --format yuy2 --depthplane 1 \
+            > /tmp/yuy2.log 2>&1 || { cat /tmp/yuy2.log; exit 1; }
           cat /tmp/nv12.log /tmp/yuy2.log
           test "$(stat -c %s /tmp/out.nv12)" -eq $((1920 * 1080 * 3 / 2 * 2))
           test "$(stat -c %s /tmp/out.yuy2)" -eq $((1920 * 1080 * 2 * 2))

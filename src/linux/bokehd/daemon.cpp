@@ -37,16 +37,30 @@ namespace {
 
 constexpr uint64_t kScanMs = 1000;        // missing devices and config changes are looked for this often
 constexpr uint64_t kStopDelayMs = 3000;   // programs often stop and start again while setting up a call
-constexpr uint64_t kGpuRetryMs = 2000;
 constexpr uint64_t kCameraRetryMs = 2000;  // the camera is there but did not start (another program has it?)
 constexpr uint64_t kStallMs = 3000;        // no frame for this long: restart the camera's stream
 constexpr uint64_t kBlackMs = 1000;        // nothing to show for this long: a black frame keeps programs going
+// A GPU that keeps failing is retried after 2, 4, 8, 16, 32, then every 60 s; after this many
+// losses with no good frame in between the process exits and systemd starts a fresh one, which
+// also gets a fresh Vulkan instance and driver state.
+constexpr uint32_t kMaxGpuLosses = 5;
 constexpr const char* kNoGpu = "no GPU with Vulkan 1.1 found; lavapipe is used only with PS5CAM_GPU=llvmpipe";
 
 uint64_t NowMs()
 {
     return static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::milliseconds>(
         std::chrono::steady_clock::now().time_since_epoch()).count());
+}
+
+// Milliseconds from then to now; 0 when then is later (set during this pass of the loop).
+uint64_t Since(uint64_t now, uint64_t then)
+{
+    return now > then ? now - then : 0;
+}
+
+uint64_t GpuRetryMs(uint32_t failures)
+{
+    return std::min<uint64_t>(2000ULL << std::min<uint32_t>(failures > 0 ? failures - 1 : 0, 5), 60000);
 }
 
 StereoFormat CameraFormat()
@@ -156,8 +170,9 @@ private:
 
     std::unique_ptr<StereoPipeline> m_pipeline;
     uint64_t m_gpuRetryAt = 0;
-    uint32_t m_gpuInitFailures = 0;
-    uint32_t m_gpuProcessFailures = 0;
+    uint32_t m_gpuInitFailures = 0;  // in a row
+    uint32_t m_gpuLosses = 0;        // Process failures since the last good frame
+    bool m_gpuGivenUp = false;       // exit with 1 so that systemd starts a fresh process
 
     CalibrationSchedule m_calibration;
     uint32_t m_frameCount = 0;  // frames given to the pipeline, for the calibration schedule
@@ -165,6 +180,7 @@ private:
     FlickerGuard m_flicker;
     std::vector<float> m_rowMeans;
     bool m_powerLineFailed = false;
+    int m_powerLineBefore = -1;  // the camera's own value when the stream started, put back at the end
 
     std::vector<uint8_t> m_frame;  // the output frame
     // The current stream, for the line logged when it stops.
@@ -197,7 +213,7 @@ int Daemon::Run()
     Log("settings from %s: %s; calibration in %s", m_watch.Path().c_str(), DescribeConfig(m_config).c_str(),
         m_stateDir.c_str());
 
-    while (!m_quit) {
+    while (!m_quit && !m_gpuGivenUp) {
         uint64_t now = NowMs();
         Tick(now);
         pollfd fds[3] = {};
@@ -233,10 +249,10 @@ int Daemon::Run()
         if (cameraIndex >= 0 && m_capture.IsOpen() && fds[cameraIndex].revents)
             OnCameraReady(now, (fds[cameraIndex].revents & kBroken) != 0);
     }
-    StopStream("the service stops");
+    StopStream(m_gpuGivenUp ? "the GPU keeps failing" : "the service stops");
     m_opens.Stop();
     m_output.Close();
-    return m_quit ? 0 : 1;
+    return m_quit && !m_gpuGivenUp ? 0 : 1;
 }
 
 bool Daemon::SetUpSignals()
@@ -279,16 +295,19 @@ void Daemon::HandleSignals()
 
 void Daemon::Reload(bool force)
 {
-    const bool changed = m_watch.Changed();
-    if (!changed && !force) return;
+    const bool settled = m_watch.Settled();
+    if (!settled && !force) return;
     BokehConfig c;
-    if (!LoadConfig(m_watch.Path(), m_warnedKeys, c)) return;  // being written: FileWatch sees it again
+    FileStamp stamp;
+    if (!LoadConfig(m_watch.Path(), m_warnedKeys, c, &stamp)) return;  // being written: a later poll reads it
+    m_watch.MarkRead(stamp);
+    // old is what the open devices were set up with (the defaults if the start could not read the file).
     const BokehConfig old = m_config;
     const bool first = !m_configLoaded;
     m_config = c;
     m_configLoaded = true;
     ApplyConfig(m_config, m_effect);
-    if (first) return;  // Run logs the settings with the start
+    if (first && !m_output.IsOpen() && !m_capture.IsOpen()) return;  // Run logs the settings with the start
     if (DescribeConfig(c) == DescribeConfig(old)) return;
     Log("settings changed: %s", DescribeConfig(c).c_str());
     if (m_output.IsOpen() && (c.output != old.output || c.alwaysOn != old.alwaysOn)) {
@@ -329,10 +348,10 @@ void Daemon::Tick(uint64_t now)
     if (!wanted && m_capture.IsOpen()) StopStream("no program watches");
     if (!wanted) return;
     if (!m_capture.IsOpen() && now >= m_nextCameraTry) StartStream(now);
-    if (m_capture.IsOpen() && now - m_lastFrameAt >= kStallMs) RestartStalledStream(now);
+    if (m_capture.IsOpen() && Since(now, m_lastFrameAt) >= kStallMs) RestartStalledStream(now);
     // A program watching a missing camera (or a GPU being re-created) gets black instead of a
     // frozen picture, and does not give up waiting.
-    if (m_output.IsOpen() && now - m_lastWrite >= kBlackMs) {
+    if (m_output.IsOpen() && Since(now, m_lastWrite) >= kBlackMs) {
         std::string error;
         if (m_output.WriteBlack(error)) m_lastWrite = now;
         else CloseOutput(error);
@@ -430,6 +449,11 @@ void Daemon::StartStream(uint64_t now)
     m_incomplete = 0;
     m_gpuMsTotal = 0;
     m_powerLineFailed = false;
+    // A new viewer gets a GPU attempt now, not at the end of a back-off from an earlier session.
+    m_gpuRetryAt = 0;
+    m_gpuInitFailures = 0;
+    // What the user (or v4l2-ctl) left in the camera, before the anti-flicker guard changes it.
+    if (!m_capture.GetPowerLine(m_powerLineBefore)) m_powerLineBefore = -1;
     ApplyPowerLine(m_flicker.Start(static_cast<AntiFlicker>(m_config.antiFlicker), m_config.mainsHz == 60));
     Log("streaming: camera %s YUYV 2448x1088 at %.0f fps -> %s", path.c_str(), m_capture.Fps(),
         m_output.Path().c_str());
@@ -457,9 +481,11 @@ void Daemon::StopStream(const char* why)
 {
     if (m_capture.IsOpen()) {
         // Auto may have switched the anti-flicker off in a dark room: other programs using the camera
-        // directly would get flickering lamps. Fails on an unplugged camera, which forgets it anyway.
+        // directly would get flickering lamps. Back to what the camera had (by mains if unknown).
+        // Fails on an unplugged camera, which forgets it anyway.
         std::string ignored;
-        m_capture.SetPowerLine(m_config.mainsHz == 60 ? kPowerLine60 : kPowerLine50, ignored);
+        const int mains = m_config.mainsHz == 60 ? kPowerLine60 : kPowerLine50;
+        m_capture.SetPowerLine(m_powerLineBefore >= 0 ? m_powerLineBefore : mains, ignored);
         const double seconds = (NowMs() - m_streamStart) / 1000.0;
         Log("stream stopped (%s): %llu frames in %.0f s, GPU %.2f ms per frame, %u dropped late, %u incomplete", why,
             static_cast<unsigned long long>(m_framesOut), seconds, m_framesOut ? m_gpuMsTotal / m_framesOut : 0.0,
@@ -531,14 +557,20 @@ void Daemon::ProcessFrame(const uint8_t* frame, uint64_t now)
     const HRESULT hr = m_pipeline->Process(frame, pitch, m_effect, m_frame.data(), nullptr, Loopback::kPitch, &stats);
     if (FAILED(hr)) {
         // A lost device (driver reset, GPU hang) never recovers by itself: make a new pipeline.
-        if (m_gpuProcessFailures++ % 30 == 0)
-            Log("GPU pipeline failed 0x%08X, re-creating it", static_cast<unsigned>(hr));
         m_pipeline.reset();
-        m_gpuRetryAt = now + kGpuRetryMs;
+        if (++m_gpuLosses >= kMaxGpuLosses) {
+            Log("GPU pipeline failed 0x%08X, %u times without a good frame in between: exiting for a fresh start",
+                static_cast<unsigned>(hr), m_gpuLosses);
+            m_gpuGivenUp = true;
+            return;
+        }
+        m_gpuRetryAt = now + GpuRetryMs(m_gpuLosses);
+        Log("GPU pipeline failed 0x%08X, re-creating it in %llu s", static_cast<unsigned>(hr),
+            static_cast<unsigned long long>(GpuRetryMs(m_gpuLosses) / 1000));
         return;
     }
     if (hr != S_OK) return;  // S_FALSE: the first frame only primes the pipeline
-    m_gpuProcessFailures = 0;
+    m_gpuLosses = 0;
     std::string error;
     if (!m_output.Write(m_frame.data(), error)) {
         CloseOutput(error);
@@ -557,12 +589,13 @@ bool Daemon::EnsurePipeline(uint64_t now)
     auto p = std::unique_ptr<StereoPipeline>(new (std::nothrow) StereoPipeline());
     const HRESULT hr = p ? p->Initialize(CameraFormat(), LoopbackFormat()) : E_OUTOFMEMORY;
     if (FAILED(hr)) {
-        if (m_gpuInitFailures++ % 30 == 0) {
-            if (hr == E_NOTIMPL) Log("%s; retrying every %llu s", kNoGpu, kGpuRetryMs / 1000ULL);
-            else Log("GPU pipeline init failed 0x%08X, retrying every %llu s", static_cast<unsigned>(hr),
-                     kGpuRetryMs / 1000ULL);
+        const uint64_t wait = GpuRetryMs(++m_gpuInitFailures);
+        const auto seconds = static_cast<unsigned long long>(wait / 1000);
+        if (m_gpuInitFailures == 1 || m_gpuInitFailures % 30 == 0) {
+            if (hr == E_NOTIMPL) Log("%s; trying again in %llu s", kNoGpu, seconds);
+            else Log("GPU pipeline init failed 0x%08X, trying again in %llu s", static_cast<unsigned>(hr), seconds);
         }
-        m_gpuRetryAt = now + kGpuRetryMs;
+        m_gpuRetryAt = now + wait;
         return false;
     }
     if (m_gpuInitFailures) Log("GPU pipeline ready on %s", p->GpuName().c_str());

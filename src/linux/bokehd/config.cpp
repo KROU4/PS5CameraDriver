@@ -182,14 +182,14 @@ BokehConfig ParseConfig(std::string_view text, const std::string& path, std::set
     return c;
 }
 
-bool LoadConfig(const std::string& path, std::set<std::string>& warnedKeys, BokehConfig& config)
+bool LoadConfig(const std::string& path, std::set<std::string>& warnedKeys, BokehConfig& config, FileStamp* stamp)
 {
     const FileStamp before = StatFile(path);
     std::string text;
     int error = 0;
     const bool read = ReadFile(path, text, error);
-    // An editor that truncates and then writes must not give the defaults for a moment.
     if (!(StatFile(path) == before)) return false;
+    if (stamp) *stamp = before;
     if (!read) {
         Log("%s: %s, using the defaults", path.c_str(), error == ENOENT ? "no such file" : strerror(error));
         config = BokehConfig();
@@ -225,13 +225,13 @@ FileStamp StatFile(const std::string& path)
     return s;
 }
 
-bool FileWatch::Changed()
+bool FileWatch::Settled()
 {
     const FileStamp now = StatFile(m_path);
-    if (!m_first && now == m_last) return false;
-    m_first = false;
-    m_last = now;
-    return true;
+    const bool stable = m_havePrevious && now == m_previous;
+    m_previous = now;
+    m_havePrevious = true;
+    return stable && !(m_haveRead && now == m_read);
 }
 
 }  // namespace ps5cam

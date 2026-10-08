@@ -45,7 +45,8 @@ the service runs the camera while any program has "PS5 Camera" open, even just t
 With always_on = 1 (below) the camera and the GPU run whenever the camera is connected, and other
 programs cannot open "USB Camera-OV580" then.
 
-Settings are in /etc/ps5cam/bokeh.conf and apply as soon as the file is saved (defaults in brackets):
+Settings are in /etc/ps5cam/bokeh.conf and apply a couple of seconds after the file is saved
+(defaults in brackets):
   mode            0 bokeh, 1 main sensor, 2 second sensor, 3 depth, 4 both sensors side by side (0)
   blur            background blur 0..100 (60)
   autofocus       1 focus follows the subject, 0 focus stays at "focus" (1)

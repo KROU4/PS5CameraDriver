@@ -39,6 +39,7 @@ public:
 
     // The UVC power line frequency control (V4L2_CID_POWER_LINE_FREQUENCY: 0 off, 1 50 Hz, 2 60 Hz).
     bool SetPowerLine(int value, std::string& error);
+    bool GetPowerLine(int& value);
 
 private:
     struct Buffer {

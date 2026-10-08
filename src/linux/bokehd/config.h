@@ -25,10 +25,13 @@ struct BokehConfig : PictureSettings {
 // the first time (warnedKeys remembers them across reloads).
 BokehConfig ParseConfig(std::string_view text, const std::string& path, std::set<std::string>& warnedKeys);
 
+struct FileStamp;
+
 // Reads the file at path into config: the defaults when it does not exist or cannot be read (logged).
 // False, with config untouched, when the file changed while it was read (an editor writing it):
-// read it again later.
-bool LoadConfig(const std::string& path, std::set<std::string>& warnedKeys, BokehConfig& config);
+// read it again later. stamp (optional) gets the version that was read.
+bool LoadConfig(const std::string& path, std::set<std::string>& warnedKeys, BokehConfig& config,
+    FileStamp* stamp = nullptr);
 
 // The settings as the GPU pipeline takes them.
 inline void ApplyConfig(const BokehConfig& c, EffectSettings& e)
@@ -53,18 +56,28 @@ struct FileStamp {
 };
 FileStamp StatFile(const std::string& path);
 
-// Says when a file changed since the last call.
+// Says when to read a file again: once it differs from the version last read and has stayed the
+// same for one poll interval, so that an editor that truncates and then writes it is never caught
+// in between (stat may look the same before and after a read that falls into the gap).
 class FileWatch {
 public:
     explicit FileWatch(std::string path) : m_path(std::move(path)) {}
     const std::string& Path() const { return m_path; }
-    // True on the first call and whenever the file differs from the previous call.
-    bool Changed();
+    // Called on every poll.
+    bool Settled();
+    // The version that was read (LoadConfig's stamp).
+    void MarkRead(const FileStamp& read)
+    {
+        m_read = read;
+        m_haveRead = true;
+    }
 
 private:
     std::string m_path;
-    bool m_first = true;
-    FileStamp m_last;
+    FileStamp m_previous;  // at the previous poll
+    bool m_havePrevious = false;
+    FileStamp m_read;
+    bool m_haveRead = false;
 };
 
 }  // namespace ps5cam
