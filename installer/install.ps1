@@ -140,6 +140,12 @@ try {
     }
     if ($Original -and -not (Test-Path -LiteralPath $Original)) { throw ((T 'нет файла ' 'no such file: ') + $Original) }
     if ($Original) { $Original = (Resolve-Path -LiteralPath $Original).ProviderPath }  # .NET reads relative to another folder
+    # The service runs programs and firmware.ps1 from here as SYSTEM: Program Files only (the MSI's
+    # launch condition compares the text; this resolves "..").
+    $full = [IO.Path]::GetFullPath($target) + '\'
+    $inside = @($env:ProgramW6432, $env:ProgramFiles) | Where-Object { $_ } |
+        Where-Object { $full.StartsWith($_.TrimEnd('\') + '\', [StringComparison]::OrdinalIgnoreCase) }
+    if (-not $inside) { throw ((T 'Папка установки должна быть внутри ' 'The installation folder must be inside ') + $env:ProgramW6432) }
 
     if ($Bokeh -eq 'ask') {
         Write-Host (T 'PS5 HD Camera: как должна работать камера?' 'PS5 HD Camera: how should the camera work?') -ForegroundColor Cyan
@@ -357,7 +363,9 @@ try {
             T 'или положите оригинал рядом с установщиком как sony-firmware.bin и запустите его снова' `
                 'or put the original next to the installer as sony-firmware.bin and run it again'
         }
-        $offline = if (Test-Path -LiteralPath (Join-Path $target 'firmware.bin')) {
+        $kept = Get-Item -LiteralPath (Join-Path $target 'firmware.bin') -ErrorAction SilentlyContinue
+        # (the sizes the service accepts, LoadFirmwareFile in src\common\firmware.cpp)
+        $offline = if ($kept -and $kept.Length -ge 4096 -and $kept.Length -le 0x40000) {
             T "Камера пока работает с прошивкой прежней установки: для новой запустите установку снова, когда появится интернет ($retry)." `
                 "The camera keeps the previous installation's firmware for now: for the new one run the installation again once the computer is online ($retry)."
         } else {

@@ -198,7 +198,7 @@ unless specifically requested by the user or the person installing or operating 
 network access is downloading Sony's original firmware from the addresses in
 [firmware/ps5cam-firmware.json](firmware/ps5cam-firmware.json) (copies on GitHub) when it is not
 placed next to the installer: by the installer, and, if the installation could not download it, by
-the service (at most every 10 minutes while a camera waits for its firmware). Nothing is sent
+the service (about every 10 minutes while a camera waits for its firmware). Nothing is sent
 besides these requests. Camera video is processed on this computer only.
 
 ## License

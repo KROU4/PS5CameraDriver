@@ -2,17 +2,19 @@
 # driver's byte changes from ps5cam-firmware.json, the original and the result both checked by hash.
 # The installer runs it, and so does the service (as SYSTEM) when firmware.bin is missing or broken
 # because the installation had no internet access.
-#   firmware.ps1 -Patch ps5cam-firmware.json -Out firmware.bin [-Original FILE]
+#   firmware.ps1 -Patch ps5cam-firmware.json -Out firmware.bin [-Original FILE] [-Utf8Output]
 # Exit code: 0 built (or already built), 2 the original could not be downloaded, 1 another failure
 # (an -Original that is not Sony's original among them: the user asked for that file).
+# -Utf8Output (the service, whose log file gets the output): UTF-8 rather than the OEM code page; not
+# for the installer, which runs this in its own process and console.
 param(
     [Parameter(Mandatory = $true)][string]$Patch,
     [Parameter(Mandatory = $true)][string]$Out,
-    [string]$Original
+    [string]$Original,
+    [switch]$Utf8Output
 )
 $ErrorActionPreference = 'Stop'
-# Run by the service, the output goes to a log file: UTF-8 rather than the OEM code page.
-try { [Console]::OutputEncoding = New-Object Text.UTF8Encoding($false) } catch { }
+if ($Utf8Output) { try { [Console]::OutputEncoding = New-Object Text.UTF8Encoding($false) } catch { } }
 $russian = (Get-UICulture).TwoLetterISOLanguageName -eq 'ru'
 function T([string]$ru, [string]$en) { if ($script:russian) { $ru } else { $en } }
 function Sha256([byte[]]$bytes) {
@@ -79,8 +81,15 @@ try {
             [IO.File]::WriteAllBytes($tmp, $bytes)
             # (a $null backup path would reach .NET as "": [NullString] passes a real null)
             if ([IO.File]::Exists($Out)) { [IO.File]::Replace($tmp, $Out, [NullString]::Value) } else { [IO.File]::Move($tmp, $Out) }
+        } catch {
+            # The other builder (installer or service) may have put the same image there first, or a
+            # reader may hold the file: fine as long as the right image is in place.
+            if (-not ([IO.File]::Exists($Out) -and (Sha256 ([IO.File]::ReadAllBytes($Out))) -eq $p.result.sha256)) { throw }
         } finally {
-            if ([IO.File]::Exists($tmp)) { [IO.File]::Delete($tmp) }
+            # A replacement that failed half way can leave no firmware.bin: the checked image goes there.
+            if ([IO.File]::Exists($tmp)) {
+                if ([IO.File]::Exists($Out)) { [IO.File]::Delete($tmp) } else { [IO.File]::Move($tmp, $Out) }
+            }
         }
         exit 0
     }

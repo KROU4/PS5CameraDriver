@@ -14,7 +14,7 @@ Install
    confirm the administrator rights prompt. The installer downloads Sony's original firmware
    and builds the driver's firmware from it; without internet access the installation still
    completes, and the service fetches the firmware itself when the camera is plugged into a
-   computer that is online (it tries every 10 minutes). Bokeh is on after the first
+   computer that is online (it tries about every 10 minutes). Bokeh is on after the first
    installation; an update keeps your choice.
    Unattended: msiexec /i PS5CameraDriver.msi /qn [BOKEH=on|off] [TRAY=1]
    [SONYFIRMWARE=C:\path\to\sony-firmware.bin]; the log is %ProgramData%\PS5Camera\install.log.

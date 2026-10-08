@@ -195,7 +195,7 @@ bool BuildFirmware()
         MoveFileExW(logPath, (std::wstring(logPath) + L".old").c_str(), MOVEFILE_REPLACE_EXISTING);
     std::wstring cmd = L"\"" + std::wstring(system) + L"\\WindowsPowerShell\\v1.0\\powershell.exe\" -NoProfile "
                        L"-NonInteractive -ExecutionPolicy Bypass -File \"" + dir + L"\\firmware.ps1\" -Patch \"" + dir +
-                       L"\\ps5cam-firmware.json\" -Out \"" + dir + L"\\firmware.bin\"";
+                       L"\\ps5cam-firmware.json\" -Out \"" + dir + L"\\firmware.bin\" -Utf8Output";
     SECURITY_ATTRIBUTES inherit = {sizeof(inherit), nullptr, TRUE};
     HANDLE log = CreateFileW(logPath, FILE_APPEND_DATA, FILE_SHARE_READ, &inherit, OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
     STARTUPINFOW si = {sizeof(si)};
