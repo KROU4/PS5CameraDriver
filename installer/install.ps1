@@ -131,9 +131,16 @@ if (-not $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administra
 }
 
 try {
+    # Windows 10 is not refused (nothing this installation does needs Windows 11), only warned: the
+    # driver has only been tested on Windows 11, and Windows 10 has neither the background effects
+    # settings nor virtual cameras.
     if ([Environment]::OSVersion.Version.Build -lt 22000) {
-        throw (T 'Нужна Windows 11 (сборка 22000 и новее): драйвер проверялся только на ней.' `
-            'Windows 11 (build 22000 or later) is required: the driver has only been tested on it.')
+        if ($VirtualCamera) {
+            throw (T 'Виртуальной камере нужна Windows 11 (сборка 22000 и новее).' `
+                'The virtual camera needs Windows 11 (build 22000 or later).')
+        }
+        Write-Host (T '    Внимание: драйвер проверялся только на Windows 11. На Windows 10 нет параметров эффектов фона: боке включается командой ps5cam-ctl set mode 0.' `
+            '    Warning: the driver has only been tested on Windows 11. Windows 10 has no background effects settings: bokeh is turned on with ps5cam-ctl set mode 0.') -ForegroundColor Yellow
     }
     foreach ($f in $files + 'driver\ps5cam-boot.inf') {
         if (-not (Test-Path (Join-Path $src $f))) { throw ((T 'В папке установщика нет файла ' 'The installer folder lacks the file ') + $f) }
