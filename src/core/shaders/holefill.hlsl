@@ -11,7 +11,11 @@
 Texture2D<float> DispIn : register(t0);    // -1 = unknown
 Texture2D<float> DispPrev : register(t1);  // the previous frame's result, -1 = none
 Texture2D<float> WorkMain : register(t2);  // luma at work resolution
+Texture2D<float> WorkPrev : register(t3);  // the previous depth frame's luma at work resolution
+Texture2D<float> FrameIn : register(t4);   // the previous frame's FrameOut (read only where DispPrev has a value)
+Texture2D<float> PrevShare : register(t5); // the previous frame's subject share (subject.hlsl)
 FORMAT("r32f") RWTexture2D<float> DispOut : register(u0);
+FORMAT("r32f") RWTexture2D<float> FrameOut : register(u1);  // this frame's value before the temporal smoothing
 
 // Sample distances along a direction: dense nearby, sparse far away (reaches 256 work pixels). A
 // valid strip narrower than a far step can be skipped; the ray then takes the next value beyond it.
@@ -31,6 +35,41 @@ static const int kSimilarSteps = 8;
 // only if its brightness is closer to the hole's by kLumaMargin.
 static const float kSplit = 2.0;
 static const float kLumaMargin = 0.01;
+// Where the picture did not change, the depth did not either: a jump there is a mismatch or a fill
+// that chose the other side this time (on a head mostly hair filled with the wall's depth, which
+// made the bokeh pulse there). Such a jump is held until the previous frame shows the same value
+// (within kConfirm): a one-frame spike is dropped, and a pixel flicking between two depths keeps
+// the one it has until the picture moves or the other one shows twice in a row, while a real
+// change, which persists, comes a frame later. (Letting held jumps leak in a little instead let
+// the subject's depth creep into the background beside it: a sharp halo.) Off the subject (the
+// previous frame's share below kOnSubject) a drop stays immediate: that is the background beside a
+// head taking its own depth, which must not keep a sharp patch. Small changes at a still pixel take
+// kStillBlend of the usual weight (smoothed 2.5 times as long), which calms the depth of a still
+// head and wall (and with it the blur's size); what moves is not slowed, though a slow change of a
+// plain area, below the stillness threshold, now follows more slowly. Where the picture moves, all
+// is as before. Still: the 3x3 mean of the luma change below kStillNoise times the measured noise
+// (noiseLevel, a 3x3 mean's typical change, about one work pixel's; kNoiseUnknown while the noise
+// reduction, which measures it, is off) plus kStillFloor.
+static const float kConfirm = 2.0;
+static const float kStillBlend = 0.4;
+static const float kOnSubject = 0.5;
+static const float kStillNoise = 3.0;
+static const float kStillFloor = 0.004;
+static const float kNoiseUnknown = 0.008;  // between daylight (~0.003) and a dim room (~0.014)
+
+bool Still(int2 p)
+{
+    float change = 0;
+    [unroll] for (int dy = -1; dy <= 1; ++dy)
+    {
+        [unroll] for (int dx = -1; dx <= 1; ++dx)
+        {
+            int2 q = clamp(p + int2(dx, dy), int2(0, 0), int2(workSize) - 1);
+            change += abs(WorkMain[q] - WorkPrev[q]);
+        }
+    }
+    return change / 9.0 < kStillNoise * (noiseLevel > 0 ? noiseLevel : kNoiseUnknown) + kStillFloor;
+}
 
 [numthreads(16, 8, 1)]
 void main(uint3 id : SV_DispatchThreadID)
@@ -127,9 +166,26 @@ void main(uint3 id : SV_DispatchThreadID)
     // nearer turns a patch of background sharp: it follows slowly. Only a large drop (the subject
     // moved away and uncovered the background) is taken at once, so no sharp ghost trails it; a
     // fast drop for small changes too would ratchet noisy fills on the subject towards the back.
-    if (prev >= 0 && abs(prev - d) < 2.0)
-        d = lerp(prev, d, temporalAlpha);
-    else if (prev >= 0 && !measured && d > prev - kFillDrop)
-        d = lerp(prev, d, max(temporalAlpha * kFillRate, 0.05));  // not seconds at the lowest temporal setting
+    // A jump where the picture stood still waits for the previous frame to confirm it (kConfirm),
+    // except a drop off the subject.
+    FrameOut[p] = d;
+    if (prev >= 0)
+    {
+        const bool still = Still(p);
+        if (abs(prev - d) < 2.0)
+        {
+            // temporal 1 means no smoothing; the lowest settings stay well under a second.
+            const float alpha = still && temporalAlpha < 1.0 ? max(temporalAlpha * kStillBlend, 0.05) : temporalAlpha;
+            d = lerp(prev, d, alpha);
+        }
+        else if (still && !(abs(FrameIn[p] - d) < kConfirm) && (d > prev || PrevShare[p] >= kOnSubject))
+        {
+            d = prev;
+        }
+        else if (!measured && d > prev - kFillDrop)
+        {
+            d = lerp(prev, d, max(temporalAlpha * kFillRate, 0.05));  // not seconds at the lowest temporal setting
+        }
+    }
     DispOut[p] = d;
 }

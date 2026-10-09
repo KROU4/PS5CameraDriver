@@ -4,6 +4,7 @@
 // Depth comes from census + 4-path SGM on the two sensors, the main sensor image is shown
 // with a disparity-driven depth-of-field (bokeh) effect, or one of the diagnostic views.
 // Runs on Direct3D 11 on Windows and on Vulkan elsewhere (gpu.h).
+#include <array>
 #include <cstdint>
 #include <memory>
 #include <mutex>
@@ -171,6 +172,11 @@ private:
     int m_focusCandidate = -1;                          // peak waiting to take the focus over
     uint32_t m_focusCandidateFrames = 0;
     float m_gain = 1;
+    float m_gainTarget = -1;       // the auto brightness's smoothed measurement, < 0: none yet
+    bool m_gainSettling = false;   // the gain left the stable zone and moves to the target
+    static constexpr uint32_t kGainHistory = 7;  // measurements the auto brightness takes the middle of
+    std::array<float, kGainHistory> m_gainHistory = {};
+    uint32_t m_gainHistoryNext = 0, m_gainHistoryCount = 0;
     float m_subjectLuma = 0;  // FrameStats::subjectLuma of the latest metering
     float m_noise = -1;  // < 0: not measured yet
     bool m_haveHistory = false;

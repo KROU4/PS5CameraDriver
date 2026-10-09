@@ -22,6 +22,18 @@ constexpr uint32_t kMeterCellsX = 32, kMeterCellsY = 18, kMeterSamples = 64;
 // Mean luma the auto brightness aims at: of the picture, and with depth of the subject's head.
 constexpr double kFrameTarget = 0.42;
 constexpr double kSubjectTarget = 0.42;
+// Auto brightness's stable zone (UpdateGain): the gain follows once the target is this far off...
+constexpr float kGainStart = 0.04f;
+// ...and stops once it is this close.
+constexpr float kGainStop = 0.01f;
+// A measurement this far from the smoothed one replaces it at once.
+constexpr float kGainJump = 0.3f;
+// The head's light (MeasureSubject): this share of its cells, by subject weight, is darker...
+constexpr double kHeadPercentile = 0.75;
+// ...counting the cells at least this much on the subject; its columns are where the top rows are
+// at least kHeadColumn on it.
+constexpr float kHeadCell = 0.5f;
+constexpr float kHeadColumn = 0.25f;
 
 // Mirrors cbuffer Constants in shaders/common.hlsli.
 struct GpuConstants {
@@ -64,10 +76,12 @@ struct StereoPipeline::Impl {
     GpuImage *smallCur = nullptr, *smallPrev = nullptr, *motionCoarse = nullptr, *motion[2] = {};
     uint32_t motionIndex = 0;  // which motion holds the latest vectors
     GpuImage *workMain = nullptr, *workSecond = nullptr; // R32_FLOAT work res
+    GpuImage* workPrev = nullptr;   // the previous depth frame's workMain (they swap): a still picture for holefill.hlsl
     GpuImage *censusMain = nullptr, *censusSecond = nullptr;  // R32G32_UINT work res
     GpuImage *dispMain = nullptr, *dispSecond = nullptr;      // R32_FLOAT work res
     GpuImage* dispFill = nullptr;   // after the LR check and the fill of short gaps, -1 = still unknown
     GpuImage* dispHist[2] = {};     // filled disparity, ping-pong for temporal smoothing
+    GpuImage* dispFrame[2] = {};    // the same before the smoothing (holefill.hlsl confirms jumps with it), ping-pong alike
     GpuImage* leftValid = nullptr;
     GpuImage *gfA = nullptr, *gfB = nullptr, *gfC = nullptr;  // R32G32B32A32_FLOAT work res
     // The subject's silhouette (subject.hlsl), R32_FLOAT work res: the guided disparity, the cost of
@@ -163,6 +177,7 @@ HRESULT StereoPipeline::CreateResources()
     // Process binds them (as none) only to kernels that do not read them in Main view.
     if (!m_stereo.mono) {
         TRY(g.CreateImage(ww, wh, GpuFormat::R32_FLOAT, rw, &d.workMain));
+        TRY(g.CreateImage(ww, wh, GpuFormat::R32_FLOAT, rw, &d.workPrev));
         TRY(g.CreateImage(ww, wh, GpuFormat::R32_FLOAT, rw, &d.workSecond));
         TRY(g.CreateImage(ww, wh, GpuFormat::RG32_UINT, rw, &d.censusMain));
         TRY(g.CreateImage(ww, wh, GpuFormat::RG32_UINT, rw, &d.censusSecond));
@@ -171,6 +186,8 @@ HRESULT StereoPipeline::CreateResources()
         TRY(g.CreateImage(ww, wh, GpuFormat::R32_FLOAT, rw, &d.dispFill));
         TRY(g.CreateImage(ww, wh, GpuFormat::R32_FLOAT, rw, &d.dispHist[0]));
         TRY(g.CreateImage(ww, wh, GpuFormat::R32_FLOAT, rw, &d.dispHist[1]));
+        TRY(g.CreateImage(ww, wh, GpuFormat::R32_FLOAT, rw, &d.dispFrame[0]));
+        TRY(g.CreateImage(ww, wh, GpuFormat::R32_FLOAT, rw, &d.dispFrame[1]));
         TRY(g.CreateImage(ww, wh, GpuFormat::R32_FLOAT, rw, &d.leftValid));
         TRY(g.CreateImage(ww, wh, GpuFormat::RGBA32_FLOAT, rw, &d.gfA));
         TRY(g.CreateImage(ww, wh, GpuFormat::RGBA32_FLOAT, rw, &d.gfB));
@@ -205,6 +222,11 @@ void StereoPipeline::Reset()
     m_noise = -1;  // another stream may run at another gain
     m_focus = -1;
     RestartFocus();
+    // The auto brightness measures afresh (another stream, other light); the gain itself stays as
+    // where it starts from.
+    m_gainHistoryNext = m_gainHistoryCount = 0;
+    m_gainTarget = -1;
+    m_gainSettling = false;
     if (m_impl) m_impl->pending = -1;
 }
 
@@ -310,6 +332,8 @@ void StereoPipeline::RunDepth(const EffectSettings& s)
     auto& d = *m_impl;
     const uint32_t ww = m_workW, wh = m_workH;
 
+    // The last depth frame's work luma stays for the hole fill (it matters only where there is history).
+    std::swap(d.workMain, d.workPrev);
     g.Dispatch(Kernel::Downscale, {d.mainYuv, d.secondYuv}, {d.workMain, d.workSecond}, DivUp(ww, 16), DivUp(wh, 8));
     g.Dispatch(Kernel::Census, {d.workMain, d.workSecond}, {d.censusMain, d.censusSecond}, DivUp(ww, 16), DivUp(wh, 8));
 
@@ -324,9 +348,12 @@ void StereoPipeline::RunDepth(const EffectSettings& s)
     uint32_t cur = d.histIndex ^ 1, prev = d.histIndex;
     const bool hadHistory = m_haveHistory;
     if (!m_haveHistory) g.ClearFloat(d.dispHist[prev], -1);
+    // The hole fill reads the previous frame's silhouette (where a drop is the subject's own); one
+    // that is not from the frame just before (none made, or the bokeh just switched on) reads as none.
+    if (!(s.subjectRange > 0 && m_frame == m_lastShareFrame + 1)) g.ClearFloat(d.Share(), 0);
     g.Dispatch(Kernel::LrFill, {d.dispMain, d.dispSecond}, {d.dispFill, d.leftValid}, DivUp(wh, 64), 1);
-    g.Dispatch(Kernel::HoleFill, {d.dispFill, d.dispHist[prev], d.workMain}, {d.dispHist[cur]}, DivUp(ww, 16),
-        DivUp(wh, 8));
+    g.Dispatch(Kernel::HoleFill, {d.dispFill, d.dispHist[prev], d.workMain, d.workPrev, d.dispFrame[prev], d.Share()},
+        {d.dispHist[cur], d.dispFrame[cur]}, DivUp(ww, 16), DivUp(wh, 8));
     d.histIndex = cur;
     m_haveHistory = true;
 
@@ -435,9 +462,11 @@ void StereoPipeline::UpdateFocus(const uint32_t* histogram, const EffectSettings
 
 StereoPipeline::SubjectLight StereoPipeline::MeasureSubject(const float* cells)
 {
-    // The subject is what the bokeh keeps sharp; its head is the top of it: the rows from the first
-    // one it covers to 40% of the way down to its last (head and shoulders, as a webcam frames a
-    // person), at least two rows.
+    // The subject is what the bokeh keeps sharp; its head is the top of it: the columns of its top
+    // two rows (one cell more either side, the crown being narrower than the face) and, from its
+    // first row, as many rows as those columns are wide (a head is about that tall in square cells),
+    // at most 40% of the way down to its last (head and shoulders, as a webcam frames a person), at
+    // least two. Shoulders and a light shirt beside or below the head stay out.
     SubjectLight light;
     float rowWeight[kMeterCellsY] = {};
     float total = 0;
@@ -454,17 +483,56 @@ StereoPipeline::SubjectLight StereoPipeline::MeasureSubject(const float* cells)
         bottom = int(y);
     }
     if (top < 0 || coverage < 0.02f) return light;
-    const int headRows = std::max(2, int(std::lround(0.4 * (bottom - top + 1))));
-    double weight = 0, luma = 0;
-    for (int y = top; y < std::min<int>(top + headRows, kMeterCellsY); ++y) {
-        for (uint32_t x = 0; x < kMeterCellsX; ++x) {
-            weight += cells[(y * kMeterCellsX + x) * 3];
-            luma += cells[(y * kMeterCellsX + x) * 3 + 1];
+    const auto weightAt = [&](int x, int y) { return cells[(y * kMeterCellsX + x) * 3]; };
+    int colMin = int(kMeterCellsX), colMax = -1;
+    for (int y = top; y <= std::min(top + 1, bottom); ++y) {
+        for (int x = 0; x < int(kMeterCellsX); ++x) {
+            if (weightAt(x, y) < kHeadColumn * kMeterSamples) continue;
+            colMin = std::min(colMin, x);
+            colMax = std::max(colMax, x);
         }
     }
-    if (weight <= 0) return light;
-    light.valid = true;
-    light.headLuma = float(luma / weight);
+    if (colMax < 0) return light;  // only slivers of subject on top: no head to meter
+    colMin = std::max(0, colMin - 1);
+    colMax = std::min(int(kMeterCellsX) - 1, colMax + 1);
+    const int maxRows = std::max(2, int(std::lround(0.4 * (bottom - top + 1))));
+    const int headRows = std::clamp(colMax - colMin + 1, 2, maxRows);
+    // The head's light is its face's: the brighter side (kHeadPercentile by subject weight) of its
+    // cells that lie wholly on the subject, not their mean, which hair and headphones, darker and
+    // counted in or out by the row, pull down, nor the edge cells, which take in some of what lies
+    // behind (a window behind a backlit face). Without whole cells the edge ones count.
+    std::array<std::pair<float, float>, kMeterCellsX * kMeterCellsY> head;  // (cell luma, subject weight)
+    for (const float minWeight : {kHeadCell * kMeterSamples, 0.0f}) {
+        size_t count = 0;
+        double weight = 0;
+        for (int y = top; y < std::min<int>(top + headRows, kMeterCellsY); ++y) {
+            for (int x = colMin; x <= colMax; ++x) {
+                const float w = weightAt(x, y), luma = cells[(y * kMeterCellsX + x) * 3 + 1] / w;
+                if (!(w > minWeight) || !std::isfinite(luma)) continue;
+                head[count++] = {luma, w};
+                weight += w;
+            }
+        }
+        if (count == 0) continue;
+        std::sort(head.begin(), head.begin() + count);
+        // Where the cumulative weight reaches the percentile, between that cell's luma and the one
+        // before it, so that a small shift of the weights moves the measurement a little.
+        const double want = weight * kHeadPercentile;
+        double acc = 0;
+        float before = head[0].first;
+        for (size_t i = 0; i < count; ++i) {
+            const auto [luma, w] = head[i];
+            if (acc + w >= want) {
+                light.headLuma = before + (luma - before) * float((want - acc) / w);
+                break;
+            }
+            acc += w;
+            before = luma;
+        }
+        light.valid = true;
+        break;
+    }
+    if (!light.valid) return light;
     // A small subject (far away, or the focus on a patch of wall) counts less, and so does one
     // filling most of the picture (an empty room or a wall in focus, not a person).
     auto smooth = [](float a, float b, float x) {
@@ -505,7 +573,29 @@ void StereoPipeline::UpdateGain(const uint32_t* h, const EffectSettings& s, cons
         target += (onSubject - target) * subject.confidence;
     }
     target = std::max(1.0, target);
-    m_gain += float(target - m_gain) * 0.08f;  // like a camera AE: settle over about half a second
+    // Like a camera's AE, steady: the measurement swings from frame to frame (the white point steps
+    // between two bins, the head's cells shift), so it is the middle of the last kGainHistory
+    // measurements that counts (the mean of the middle three, the median until there are that
+    // many), smoothed further, and the gain moves only once that is off by more than kGainStart, then
+    // settles over about half a second to within kGainStop. A change that persists for half the
+    // history and is large (a start, the light switched) is taken at once; a lowered maxGain holds at once.
+    m_gainHistory[m_gainHistoryNext] = float(target);
+    m_gainHistoryNext = (m_gainHistoryNext + 1) % kGainHistory;
+    m_gainHistoryCount = std::min(m_gainHistoryCount + 1, kGainHistory);
+    std::array<float, kGainHistory> recent = m_gainHistory;
+    std::sort(recent.begin(), recent.begin() + m_gainHistoryCount);
+    const uint32_t mid = m_gainHistoryCount / 2;
+    const float measured =
+        m_gainHistoryCount == kGainHistory ? (recent[mid - 1] + recent[mid] + recent[mid + 1]) / 3.0f : recent[mid];
+    if (m_gainTarget < 0 || std::fabs(measured / m_gainTarget - 1.0f) > kGainJump) m_gainTarget = measured;
+    else m_gainTarget += (measured - m_gainTarget) * 0.15f;
+    m_gainTarget = std::min(m_gainTarget, float(maxGain));
+    if (std::fabs(m_gainTarget / m_gain - 1.0f) > kGainStart) m_gainSettling = true;
+    if (m_gainSettling) {
+        m_gain += (m_gainTarget - m_gain) * 0.08f;
+        if (std::fabs(m_gainTarget / m_gain - 1.0f) < kGainStop) m_gainSettling = false;
+    }
+    m_gain = std::clamp(m_gain, 1.0f, float(maxGain));
 }
 
 void StereoPipeline::UpdateNoise(const uint32_t* h)
@@ -710,9 +800,11 @@ float StereoPipeline::ScoreAlignment(float dy, float rotationDeg)
     m_rect.dy = dy;
     m_rect.rotation = rotationDeg;
     UpdateConstants(nullptr, 0);
-    g.Dispatch(Kernel::Downscale, {d.mainYuv, d.secondYuv}, {d.workMain, d.workSecond}, DivUp(m_workW, 16),
+    // In workPrev, which the next RunDepth swaps in and overwrites: workMain keeps the last depth
+    // frame's luma, which the hole fill compares the next frame with.
+    g.Dispatch(Kernel::Downscale, {d.mainYuv, d.secondYuv}, {d.workPrev, d.workSecond}, DivUp(m_workW, 16),
         DivUp(m_workH, 8));
-    g.Dispatch(Kernel::Census, {d.workMain, d.workSecond}, {d.censusMain, d.censusSecond}, DivUp(m_workW, 16),
+    g.Dispatch(Kernel::Census, {d.workPrev, d.workSecond}, {d.censusMain, d.censusSecond}, DivUp(m_workW, 16),
         DivUp(m_workH, 8));
     g.ClearUint(d.scoreBuf);
     g.Dispatch(Kernel::Score, {d.censusMain, d.censusSecond}, {d.scoreBuf}, DivUp(m_workW, 16), DivUp(m_workH, 8));
