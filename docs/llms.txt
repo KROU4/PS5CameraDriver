@@ -1,0 +1,35 @@
+# PS5 HD Camera for PC
+
+> A free, open-source (GPL-3.0) driver that makes the PlayStation 5 HD Camera (model CFI-ZEY1) a regular webcam on a PC: native 1920x1080 at 60 fps and background blur (bokeh) from real stereo depth computed on the GPU, on Windows 11, with Linux (bokeh experimental, Vulkan) and macOS (no bokeh) support.
+
+Key facts:
+
+- Hardware: only the PlayStation 5 HD Camera (CFI-ZEY1). It plugs into a regular USB 3 port; no adapter is needed. On USB 2.0 it only delivers 640x400. The PS4 camera is a different device and is not supported, even through a USB adapter.
+- Windows 11: the camera appears as "PS5 Camera" in Zoom, Microsoft Teams, Discord, Telegram, OBS Studio, browsers and the Camera app (Media Foundation, WinRT, DirectShow). Install: download PS5CameraDriver.msi (English) or PS5CameraDriver-ru.msi (Russian) from https://github.com/KROU4/PS5CameraDriver/releases/latest and run it; unattended, from an administrator prompt: `msiexec /i PS5CameraDriver.msi /qn BOKEH=on|off`. A winget package `KROU4.PS5CameraDriver` is under review.
+- Bokeh without neural networks: depth from the camera's two sensors (census transform + semi-global matching) in Direct3D 11 shaders; the whole head stays sharp (silhouette from depth), with bokeh on, exposure is metered on the person's head, motion-compensated noise reduction and automatic anti-flicker help in dim rooms. It is switched like Windows' own camera effects: Settings → Bluetooth & devices → Cameras → PS5 Camera → Camera effects.
+- How it works on Windows: no kernel code and no test mode. A service uploads the camera firmware through Windows' built-in WinUSB; the camera then re-connects as a standard UVC camera; a Device MFT inside Windows Camera Frame Server does the GPU processing.
+- Firmware: the camera needs firmware every time it is plugged in. Sony's firmware is not redistributed: the installer downloads the original image from third-party copies on GitHub, checks its SHA-256 and applies a 90-byte patch (1080p at 60 fps, a depth mode, automatic exposure). On Windows an installation without internet access still completes and the service fetches the firmware later; on Linux and macOS the installer needs internet access or the original placed next to it as sony-firmware.bin.
+- Performance (RTX 3060 Ti, 1920x1080 at 60 fps): 2.6–2.9 ms GPU time per frame without effects, 8.6–9.0 ms with bokeh; about 60 MB / 100–130 MB of GPU memory. On Windows a GPU with Direct3D 11 is required, integrated graphics count (Vulkan 1.1 for the Linux bokeh); the plain camera on Linux and macOS needs no GPU.
+- Linux: `sudo bash install.sh` from PS5CameraDriver-linux.zip (systemd and udev required); the camera is "USB Camera-OV580". `--bokeh on` adds the experimental bokeh as a v4l2loopback camera "PS5 Camera" (x86_64 with glibc 2.34+, Vulkan 1.1; the installer installs the v4l2loopback kernel module, with Secure Boot its key must be enrolled).
+- macOS: `sudo bash install.sh` from PS5CameraDriver-macos.zip (Command Line Tools required); 1080p at 30/60 fps without bokeh; the camera is "USB Camera-OV580".
+- Limitations: one program uses the camera at a time; depth is measured from about half a metre.
+- Not affiliated with Sony Interactive Entertainment. PlayStation and PS5 are trademarks of Sony Interactive Entertainment Inc.
+
+## Docs
+
+- [Website (English)](https://krou4.github.io/PS5CameraDriver/): overview, install, performance, FAQ
+- [Website (Russian)](https://krou4.github.io/PS5CameraDriver/ru/): the same in Russian
+- [README](https://github.com/KROU4/PS5CameraDriver/blob/main/README.md): full description, firmware patch, architecture, building from source
+- [Windows install and troubleshooting](https://github.com/KROU4/PS5CameraDriver/blob/main/installer/README.txt): modes, settings, ps5cam-ctl commands
+- [Linux install](https://github.com/KROU4/PS5CameraDriver/blob/main/installer/linux/README.txt): plain camera and Vulkan bokeh
+
+## Downloads
+
+- [Latest release](https://github.com/KROU4/PS5CameraDriver/releases/latest): MSI and ZIP for Windows, Linux and macOS packages
+- [Source code](https://github.com/KROU4/PS5CameraDriver): GPL-3.0
+
+## Optional
+
+- [Firmware patch](https://github.com/KROU4/PS5CameraDriver/blob/main/firmware/ps5cam-firmware.json): the original firmware hash, its public sources and the byte changes
+- [Discussions](https://github.com/KROU4/PS5CameraDriver/discussions): questions and hardware reports
+- [Issues](https://github.com/KROU4/PS5CameraDriver/issues): bug reports

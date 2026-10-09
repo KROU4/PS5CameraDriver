@@ -1,0 +1,4 @@
+User-agent: *
+Allow: /
+
+Sitemap: https://krou4.github.io/PS5CameraDriver/sitemap.xml
