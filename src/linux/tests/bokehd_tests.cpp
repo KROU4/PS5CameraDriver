@@ -99,8 +99,9 @@ void TestDefaults()
     CHECK(c.mainsHz == 50 && c.fps == 60 && !c.alwaysOn && c.camera.empty() && c.output.empty());
     EffectSettings e;
     ApplyConfig(c, e);
-    CHECK(e.mode == ViewMode::Bokeh && e.blurStrength == 0.6f && e.denoise == 0.9f && e.maxGain == 6.0f);
+    CHECK(e.mode == ViewMode::Bokeh && e.blurStrength == 0.25f && e.denoise == 0.9f && e.maxGain == 6.0f);
     CHECK(e.highlights == 1.5f && e.temporal == 0.4f && e.manualFocus == 0.5f && e.sharpen == 0.5f);
+    CHECK(e.brightness == 0.0f && e.contrast == 1.0f && e.saturation == 1.0f);  // 50 each: the picture as it is
 #ifdef PS5CAM_BOKEH_CONF
     // The installed file spells out every default.
     std::set<std::string> warned;
