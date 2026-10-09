@@ -20,6 +20,7 @@ namespace ps5cam {
 
 class FrameProcessor {
 public:
+    ~FrameProcessor() { EndRecording(L"stopped with the transform"); }
     // Input: the camera's UVC format; output: one of OutputTypes(). False if either is not ours.
     bool Configure(IMFMediaType* input, IMFMediaType* output);
     void Reset();  // stream stopped: drop the GPU pipeline and temporal state
@@ -43,6 +44,10 @@ private:
     void Calibrate(const uint8_t* yuy2, uint32_t pitch);
     IMFSample* NewOutputSample(BYTE** scan0, LONG* pitch, Microsoft::WRL::ComPtr<IMF2DBuffer2>& lockOut);
     void PublishStatus();
+    // Debug recording of raw camera frames (settings.h TakeRecordRequest), as the virtual camera does.
+    void StartRecording(uint32_t frames);
+    void Record(const BYTE* scan0, LONG pitch, uint32_t rowBytes, uint32_t rows);
+    void EndRecording(const wchar_t* why);
 
     bool m_configured = false;  // Configure succeeded since the last Reset
     SensorMode m_mode = {};
@@ -68,6 +73,10 @@ private:
     bool m_mains60 = false;
     int m_powerLineRequest = -1;
     std::vector<float> m_rowMeans;
+
+    HANDLE m_record = INVALID_HANDLE_VALUE;
+    uint32_t m_recordLeft = 0;
+    uint32_t m_recordFrameBytes = 0;  // frame size the file started with; another one ends it
 
     ULONGLONG m_statusTick = 0;
     uint32_t m_framesInWindow = 0;

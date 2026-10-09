@@ -23,6 +23,7 @@ public:
         if (!m_pending) Start(true, frame);
     }
     bool Pending() const { return m_pending; }
+    uint32_t Failures() const { return m_failures; }  // in a row, at most 5
     bool Due(uint32_t frame) const { return m_pending && frame >= m_next; }
     void Succeeded()
     {

@@ -218,7 +218,7 @@ void TestCalibration(const std::string& dir)
     const mode_t oldMask = umask(077);  // like the service (UMask=0077)
     Rectification r;
     CHECK(!LoadCalibration(dir, r));
-    CHECK(SaveCalibration(dir, {-2.345f, 0.1234f, 0.5f}));
+    CHECK(SaveCalibration(dir, {-2.345f, 0.1234f, 0.5f, 0.2f}));
     umask(oldMask);
     Rectification back;
     CHECK(LoadCalibration(dir, back));

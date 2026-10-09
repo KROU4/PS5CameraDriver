@@ -602,7 +602,7 @@ bool Daemon::EnsurePipeline(uint64_t now)
     m_gpuInitFailures = 0;
     Rectification saved;
     const bool calibrated = LoadCalibration(m_stateDir, saved);
-    if (calibrated) p->SetRectification({saved.dy, saved.rotation, 0});
+    if (calibrated) p->SetRectification({saved.dy, saved.rotation, 0, 0});
     m_calibration.Start(!calibrated, m_frameCount);
     m_pipeline = std::move(p);
     return true;
@@ -617,7 +617,13 @@ void Daemon::Calibrate(const uint8_t* frame, uint32_t pitch)
         SaveCalibration(m_stateDir, r);
         Log("calibrated: dy %.2f roll %.2f (score %.2f)", r.dy, r.rotation, r.quality);
     } else {
-        m_calibration.Failed(m_frameCount, m_config.fps);  // dark or featureless scene: try again later
+        // Dark or featureless scene, or nothing at a usable distance: try again later.
+        if (m_calibration.Failures() < 3) {
+            if (r.contrast == -2) Log("calibration: best offset at the end of the search, trying later");
+            else if (r.contrast < 0) Log("calibration: too little texture, trying later");
+            else Log("calibration: no clear alignment (contrast %.1f%%), trying later", r.contrast * 100);
+        }
+        m_calibration.Failed(m_frameCount, m_config.fps);
     }
 }
 
