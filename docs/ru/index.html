@@ -1,0 +1,288 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Камера PS5 для ПК — бесплатный драйвер веб-камеры 1080p60 с размытием фона по глубине</title>
+<meta name="description" content="Камера PlayStation 5 HD Camera (CFI-ZEY1) как веб-камера на компьютере: родные 1920x1080 при 60 к/с и размытие фона по настоящей глубине на Windows 11, а также Linux и macOS. Бесплатно и с открытым кодом (GPL-3.0).">
+<link rel="canonical" href="https://krou4.github.io/PS5CameraDriver/ru/">
+<link rel="alternate" hreflang="en" href="https://krou4.github.io/PS5CameraDriver/">
+<link rel="alternate" hreflang="ru" href="https://krou4.github.io/PS5CameraDriver/ru/">
+<link rel="alternate" hreflang="x-default" href="https://krou4.github.io/PS5CameraDriver/">
+<link rel="icon" href="../favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="../assets/style.css">
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="Камера PS5 для ПК">
+<meta property="og:title" content="Камера PS5 для ПК — веб-камера 1080p60 с размытием по настоящей глубине">
+<meta property="og:description" content="Бесплатный драйвер с открытым кодом: камера PlayStation 5 HD Camera становится обычной веб-камерой на Windows 11, Linux и macOS.">
+<meta property="og:url" content="https://krou4.github.io/PS5CameraDriver/ru/">
+<meta property="og:image" content="https://krou4.github.io/PS5CameraDriver/assets/og-ru.png">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta property="og:locale" content="ru_RU">
+<meta property="og:locale:alternate" content="en_US">
+<meta name="twitter:card" content="summary_large_image">
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "SoftwareApplication",
+  "name": "PS5 HD Camera for PC",
+  "alternateName": ["Камера PS5 для ПК", "PS5CameraDriver", "Драйвер камеры PS5"],
+  "description": "Драйвер, который делает камеру PlayStation 5 HD Camera (CFI-ZEY1) обычной веб-камерой: родные 1920x1080 при 60 к/с и размытие фона (боке) по настоящей стерео-глубине, которую считает видеокарта. Windows 11, Linux (боке экспериментально) и macOS (без боке).",
+  "applicationCategory": "MultimediaApplication",
+  "applicationSubCategory": "Драйвер веб-камеры",
+  "operatingSystem": "Windows 11, Linux, macOS",
+  "url": "https://krou4.github.io/PS5CameraDriver/ru/",
+  "downloadUrl": "https://github.com/KROU4/PS5CameraDriver/releases/latest",
+  "codeRepository": "https://github.com/KROU4/PS5CameraDriver",
+  "license": "https://www.gnu.org/licenses/gpl-3.0.html",
+  "isAccessibleForFree": true,
+  "offers": { "@type": "Offer", "price": "0", "priceCurrency": "USD" },
+  "author": { "@type": "Person", "name": "KROU4", "url": "https://github.com/KROU4" },
+  "inLanguage": ["ru", "en"]
+}
+</script>
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "FAQPage",
+  "inLanguage": "ru",
+  "mainEntity": [
+    { "@type": "Question", "name": "Можно ли подключить камеру PS5 к компьютеру?",
+      "acceptedAnswer": { "@type": "Answer", "text": "Да. Этот бесплатный драйвер с открытым кодом делает камеру PlayStation 5 HD Camera (CFI-ZEY1) обычной веб-камерой: на Windows 11 — родные 1920x1080 при 60 к/с и по желанию размытие фона по настоящей глубине, на Linux — 1080p при 30 и 60 к/с (боке экспериментально), на macOS — 1080p при 30 и 60 к/с без боке." } },
+    { "@type": "Question", "name": "Нужен ли переходник для камеры PS5 на ПК?",
+      "acceptedAnswer": { "@type": "Answer", "text": "Переходник не нужен: камера подключается в порт USB 3. В порту USB 2.0 камера отдаёт только 640x400." } },
+    { "@type": "Question", "name": "Работает ли камера PS5 в Zoom, Teams, Discord и OBS?",
+      "acceptedAnswer": { "@type": "Answer", "text": "Да. С драйвером камера видна как «PS5 Camera» во всех программах, которые работают с веб-камерами: Zoom, Microsoft Teams, Discord, Telegram, OBS Studio, браузерах и приложении «Камера» Windows." } },
+    { "@type": "Question", "name": "Как размывается фон без нейросетей?",
+      "acceptedAnswer": { "@type": "Answer", "text": "У камеры два сенсора. Драйвер сравнивает два изображения стерео-алгоритмом (census-преобразование и semi-global matching) на видеокарте, получает расстояние до каждой точки и размывает то, что дальше человека, как объектив с малой глубиной резкости. Нейросети не используются." } },
+    { "@type": "Question", "name": "Какой нужен компьютер?",
+      "acceptedAnswer": { "@type": "Answer", "text": "Windows 11, порт USB 3 и видеокарта с Direct3D 11 (на Linux — Vulkan 1.1). На RTX 3060 Ti кадр 1080p60 занимает 2,6–2,9 мс времени видеокарты без эффектов и около 9 мс с боке. Без видеокарты картинка не успевает считаться." } },
+    { "@type": "Question", "name": "Это безопасно? Ставится ли драйвер ядра?",
+      "acceptedAnswer": { "@type": "Answer", "text": "Кода в ядре нет, тестовый режим не нужен. Эффект работает в пользовательском режиме как Device MFT внутри Windows Camera Frame Server; для загрузочного режима камеры используется встроенный в Windows драйвер WinUSB. Исходный код открыт под GPL-3.0." } },
+    { "@type": "Question", "name": "Зачем установщик скачивает прошивку Sony?",
+      "acceptedAnswer": { "@type": "Answer", "text": "Камере нужна прошивка при каждом подключении. Прошивка Sony не распространяется с драйвером: установщик скачивает оригинальный образ из публичных копий, проверяет его SHA-256 и вносит изменения драйвера — 90 байт (1080p при 60 к/с, режим глубины, автоматическая экспозиция). Без интернета установка всё равно завершается, а прошивку позже соберёт служба." } },
+    { "@type": "Question", "name": "Подойдёт ли камера PS4?",
+      "acceptedAnswer": { "@type": "Answer", "text": "Нет. Драйвер для камеры PlayStation 5 HD Camera (CFI-ZEY1), которая подключается в обычный порт USB 3. У камеры PS4 собственный разъём и другая прошивка." } },
+    { "@type": "Question", "name": "Это бесплатно?",
+      "acceptedAnswer": { "@type": "Answer", "text": "Да. Драйвер бесплатный, с открытым кодом под GNU GPL 3.0. Прошивка камеры принадлежит Sony и в проект не входит." } }
+  ]
+}
+</script>
+</head>
+<body>
+<header class="top">
+  <div class="wrap">
+    <a class="brand" href="./" aria-label="Камера PS5 для ПК">
+      <svg viewBox="0 0 32 32" aria-hidden="true"><rect x="2" y="9" width="28" height="14" rx="7" fill="currentColor" opacity=".16"/><rect x="2" y="9" width="28" height="14" rx="7" fill="none" stroke="currentColor" stroke-width="1.6"/><circle cx="11" cy="16" r="3.6" fill="var(--accent)"/><circle cx="21" cy="16" r="3.6" fill="var(--accent)"/></svg>
+      <span>Камера PS5 для ПК</span>
+    </a>
+    <nav class="nav">
+      <a href="#features" class="hide-sm">Возможности</a>
+      <a href="#install">Установка</a>
+      <a href="#performance" class="hide-sm">Производительность</a>
+      <a href="#faq">Вопросы</a>
+      <a href="../" hreflang="en" lang="en">English</a>
+    </nav>
+  </div>
+</header>
+
+<main>
+<section class="hero">
+  <div class="wrap hero-grid">
+    <div>
+      <p class="eyebrow">Бесплатный драйвер с открытым кодом</p>
+      <h1>Камера PS5 как веб‑камера для компьютера</h1>
+      <p class="lead">Родные 1920×1080 при 60 к/с и размытие фона по настоящей глубине: два сенсора камеры измеряют, что как далеко, а видеокарта размывает то, что за вами, как объектив. Без нейросетей и без драйвера ядра.</p>
+      <div class="cta">
+        <a class="btn primary" href="https://github.com/KROU4/PS5CameraDriver/releases/latest/download/PS5CameraDriver-ru.msi">Скачать для Windows 11 <small>MSI</small></a>
+        <a class="btn" href="https://github.com/KROU4/PS5CameraDriver/releases/latest">Linux и macOS</a>
+        <a class="btn" href="https://github.com/KROU4/PS5CameraDriver">Код на GitHub</a>
+      </div>
+      <p class="meta">Windows 11 · Linux · macOS · GPL-3.0 · для <span class="nw">PlayStation 5 HD Camera (CFI-ZEY1)</span></p>
+    </div>
+    <figure class="figure">
+      <svg viewBox="0 0 480 300" role="img" aria-labelledby="fig-title">
+        <title id="fig-title">Два сенсора дают глубину: фон размыт, человек резкий</title>
+        <defs>
+          <linearGradient id="g-depth" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#1b2030"/><stop offset="1" stop-color="#3a4258"/></linearGradient>
+          <linearGradient id="g-room" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#3b4a6b"/><stop offset="1" stop-color="#6d5a4a"/></linearGradient>
+          <filter id="f-blur" x="-20%" y="-20%" width="140%" height="140%"><feGaussianBlur stdDeviation="5"/></filter>
+          <clipPath id="c-left"><rect x="20" y="118" width="200" height="150" rx="12"/></clipPath>
+          <clipPath id="c-right"><rect x="260" y="118" width="200" height="150" rx="12"/></clipPath>
+        </defs>
+        <rect x="150" y="16" width="180" height="62" rx="31" fill="var(--bg-soft)" stroke="var(--line)" stroke-width="2"/>
+        <circle cx="205" cy="47" r="17" fill="#0b0d12" stroke="var(--accent)" stroke-width="3"/>
+        <circle cx="275" cy="47" r="17" fill="#0b0d12" stroke="var(--accent)" stroke-width="3"/>
+        <circle cx="200" cy="42" r="4" fill="#ffffff" opacity=".6"/>
+        <circle cx="270" cy="42" r="4" fill="#ffffff" opacity=".6"/>
+        <path d="M205 82 L120 112 M275 82 L360 112" stroke="var(--muted)" stroke-width="2" stroke-dasharray="4 5" fill="none"/>
+        <g clip-path="url(#c-left)">
+          <rect x="20" y="118" width="200" height="150" fill="url(#g-depth)"/>
+          <rect x="30" y="140" width="40" height="110" fill="#2a3043"/>
+          <path d="M70 268 C74 228 96 214 120 210 C144 214 166 228 170 268 Z" fill="#e8ebf2"/>
+          <ellipse cx="120" cy="178" rx="26" ry="31" fill="#f5f7fb"/>
+        </g>
+        <g clip-path="url(#c-right)">
+          <rect x="260" y="118" width="200" height="150" fill="url(#g-room)"/>
+          <g filter="url(#f-blur)">
+            <rect x="270" y="134" width="44" height="120" fill="#a9b8d8" opacity=".55"/>
+            <circle cx="420" cy="150" r="16" fill="#ffd28a" opacity=".85"/>
+            <circle cx="392" cy="176" r="9" fill="#ffe6b8" opacity=".8"/>
+            <circle cx="436" cy="200" r="11" fill="#ffd28a" opacity=".6"/>
+            <rect x="330" y="130" width="70" height="14" fill="#c9b49a" opacity=".5"/>
+          </g>
+          <path d="M310 268 C314 228 336 214 360 210 C384 214 406 228 410 268 Z" fill="#283147"/>
+          <ellipse cx="360" cy="178" rx="26" ry="31" fill="#e2b99a"/>
+          <path d="M334 170 C334 146 386 146 386 170 C380 158 340 158 334 170 Z" fill="#3a2a22"/>
+        </g>
+        <rect x="20" y="118" width="200" height="150" rx="12" fill="none" stroke="var(--line)" stroke-width="2"/>
+        <rect x="260" y="118" width="200" height="150" rx="12" fill="none" stroke="var(--line)" stroke-width="2"/>
+        <path d="M226 193 L252 193 M244 185 L252 193 L244 201" stroke="var(--accent)" stroke-width="3" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
+        <text x="120" y="290" text-anchor="middle" fill="var(--muted)" font-size="15" font-family="system-ui, sans-serif">Глубина (ближе — светлее)</text>
+        <text x="360" y="290" text-anchor="middle" fill="var(--muted)" font-size="15" font-family="system-ui, sans-serif">Вы резкий, комната размыта</text>
+      </svg>
+      <p>Схема того, что видеокарта делает с каждым кадром, 60 раз в секунду.</p>
+    </figure>
+  </div>
+</section>
+
+<section id="features">
+  <div class="wrap">
+    <h2>Что вы получаете</h2>
+    <p class="sub">У камеры PlayStation 5 HD Camera два сенсора Full HD. Sony использует их для приставки, а этот драйвер делает из неё одну из лучших веб-камер, которые можно подключить к компьютеру.</p>
+    <div class="grid">
+      <div class="card">
+        <div class="icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><rect x="3" y="6" width="18" height="12" rx="2"/><path d="M8 10v4M8 12h3M11 10v4M14 10h2a2 2 0 0 1 0 4h-2z"/></svg></div>
+        <h3>Родные 1080p при 60 к/с</h3>
+        <p>Каждая программа получает Full HD при 60 кадрах в секунду прямо с сенсора камеры, без растягивания. Прошивка Sony ограничивает 1080p тридцатью кадрами, изменения драйвера разрешают 60.</p>
+      </div>
+      <div class="card">
+        <div class="icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="12" cy="9" r="3.5"/><path d="M5 20c1-4 4-6 7-6s6 2 7 6"/><circle cx="4" cy="5" r="1.5"/><circle cx="20" cy="6" r="1"/><circle cx="19" cy="11" r="1.5"/></svg></div>
+        <h3>Размытие фона по настоящей глубине</h3>
+        <p>Глубину дают два сенсора (стерео-сопоставление на видеокарте), поэтому размытие идёт по вашему настоящему контуру и расстоянию. Включается как собственные эффекты камеры Windows: Параметры → Bluetooth и устройства → Камеры → PS5 Camera.</p>
+      </div>
+      <div class="card">
+        <div class="icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M12 3a6 6 0 0 0-6 6c0 3 1.5 5 3 6v3h6v-3c1.5-1 3-3 3-6a6 6 0 0 0-6-6z"/><path d="M4 9H2M22 9h-2"/></svg></div>
+        <h3>Голова резкая целиком</h3>
+        <p>Уши, волосы и наушники драйвер находит по вашему силуэту, поэтому они остаются в фокусе, а комната прямо за вами размыта.</p>
+      </div>
+      <div class="card">
+        <div class="icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M2 12h2M20 12h2M5 5l1.5 1.5M17.5 17.5 19 19M5 19l1.5-1.5M17.5 6.5 19 5"/></svg></div>
+        <h3>Экспозиция по вам</h3>
+        <p>Яркость меряется по вашему лицу, а не по всему кадру: на фоне яркого окна вы больше не превращаетесь в тёмный силуэт.</p>
+      </div>
+      <div class="card">
+        <div class="icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/></svg></div>
+        <h3>Чистая картинка в полутьме</h3>
+        <p>Шумоподавление следит за движением, поэтому руки в кадре не смазываются, а автоматическая защита от мерцания убирает полосы и пульсацию от ламп.</p>
+      </div>
+      <div class="card">
+        <div class="icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><rect x="3" y="4" width="18" height="13" rx="2"/><path d="M8 21h8M12 17v4"/></svg></div>
+        <h3>Работает во всех программах</h3>
+        <p>Камера видна как «PS5 Camera» в Zoom, Teams, Discord, Telegram, OBS, браузерах и приложении «Камера». Без драйвера ядра и тестового режима.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="how">
+  <div class="wrap">
+    <h2>Как это устроено на Windows</h2>
+    <p class="sub">Всё работает в пользовательском режиме, на собственном стеке камер Windows.</p>
+    <div class="steps">
+      <div class="step"><h3>Подключение</h3><p>Камера стартует в загрузочном режиме; служба драйвера загружает в неё прошивку через встроенный в Windows WinUSB.</p></div>
+      <div class="step"><h3>Камера появляется</h3><p>Она переподключается как обычная UVC-камера со стандартным драйвером Windows.</p></div>
+      <div class="step"><h3>Глубина на видеокарте</h3><p>Device MFT внутри Windows Camera Frame Server считает глубину (census + SGM) и размытие на Direct3D 11.</p></div>
+      <div class="step"><h3>Её видят программы</h3><p>Программы получают «PS5 Camera» через Media Foundation, WinRT и DirectShow.</p></div>
+    </div>
+  </div>
+</section>
+
+<section id="install">
+  <div class="wrap">
+    <h2>Установка</h2>
+    <p class="sub">Нужен порт <strong>USB 3</strong>: в USB 2.0 камера отдаёт только 640×400. Переходник не нужен.</p>
+    <div class="os">
+      <div class="card">
+        <h3>Windows 11</h3>
+        <ul>
+          <li>Скачайте <a href="https://github.com/KROU4/PS5CameraDriver/releases/latest/download/PS5CameraDriver-ru.msi">PS5CameraDriver-ru.msi</a> (на английском — <a href="https://github.com/KROU4/PS5CameraDriver/releases/latest/download/PS5CameraDriver.msi">PS5CameraDriver.msi</a>) и запустите.</li>
+          <li>В программах выберите «PS5 Camera». После первой установки боке включено.</li>
+          <li>Пока релизы без цифровой подписи, SmartScreen может предупредить о неизвестном издателе.</li>
+        </ul>
+        <pre><code>msiexec /i PS5CameraDriver-ru.msi /qn BOKEH=on</code></pre>
+      </div>
+      <div class="card">
+        <h3>Linux</h3>
+        <ul>
+          <li>Из <a href="https://github.com/KROU4/PS5CameraDriver/releases/latest">PS5CameraDriver-linux.zip</a>; нужны systemd и udev.</li>
+          <li><code>--bokeh on</code> добавляет экспериментальное боке: x86_64, видеокарта с Vulkan 1.1, v4l2loopback.</li>
+        </ul>
+        <pre><code>sudo bash install.sh --bokeh on</code></pre>
+      </div>
+      <div class="card">
+        <h3>macOS</h3>
+        <ul>
+          <li>Из <a href="https://github.com/KROU4/PS5CameraDriver/releases/latest">PS5CameraDriver-macos.zip</a>; камера 1080p при 30 и 60 к/с, без боке.</li>
+          <li>Нужны Command Line Tools: <code>xcode-select --install</code>.</li>
+        </ul>
+        <pre><code>sudo bash install.sh</code></pre>
+      </div>
+    </div>
+    <p class="note">Пакет winget (<code>KROU4.PS5CameraDriver</code>) на проверке. Установщик скачивает оригинальную прошивку камеры Sony из публичных копий, проверяет её и вносит изменения драйвера; без интернета установка всё равно завершается, а прошивку позже скачает служба. Подробности — в <a href="https://github.com/KROU4/PS5CameraDriver/blob/main/installer/README.ru.txt">installer/README.ru.txt</a>.</p>
+  </div>
+</section>
+
+<section id="performance">
+  <div class="wrap">
+    <h2>Производительность</h2>
+    <p class="sub">Картинку считает видеокарта. Замеры на RTX 3060 Ti и Ryzen 5 5600, 1920×1080 при 60 к/с: первые две строки — с живой камеры, остальные — на записанных кадрах камеры, поданных с частотой 60 к/с. Версия на Vulkan (Linux) требует примерно столько же: 3,0 мс без эффектов и 9,2 мс с боке.</p>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Режим</th><th>Время видеокарты на кадр</th><th>Занятость видеокарты при 60 к/с</th><th>Память видеокарты</th><th>Процессор (драйвер)</th></tr></thead>
+        <tbody>
+          <tr><td>Камера без эффектов</td><td class="num">2,6–2,9 мс</td><td class="num">~17%</td><td class="num">~60 МБ</td><td class="num">~9% одного ядра</td></tr>
+          <tr><td>Боке</td><td class="num">8,6–9,0 мс</td><td class="num">~53%</td><td class="num">~100–130 МБ</td><td class="num">~12% одного ядра</td></tr>
+          <tr><td>Боке, выход 1280×720</td><td class="num">8,1 мс</td><td class="num">~49%</td><td class="num">~120 МБ</td><td class="num">—</td></tr>
+          <tr><td>Боке и камера глубины</td><td class="num">9,9 мс</td><td class="num">~59%</td><td class="num">~160 МБ</td><td class="num">—</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p class="note">Без видеокарты (программный рендер Windows на 6-ядерном процессоре) кадр считается 165 мс без эффектов и 550 мс с боке, так что видеокарта обязательна. Работа на кадр одинакова на любой карте: для боке при 60 к/с нужна карта примерно не слабее 60% RTX 3060 Ti; встроенная графика, скорее всего, потянет боке только при 30 к/с или камеру без эффектов (это оценка, а не замер). Поделитесь своими цифрами из <code>ps5cam-ctl status</code> в <a href="https://github.com/KROU4/PS5CameraDriver/discussions">Discussions</a>.</p>
+  </div>
+</section>
+
+<section id="faq" class="faq">
+  <div class="wrap">
+    <h2>Вопросы</h2>
+    <p class="sub">Ответы на то, что спрашивают о камере PS5 на компьютере.</p>
+    <details open><summary>Можно ли подключить камеру PS5 к компьютеру?</summary><div><p>Да. Этот бесплатный драйвер с открытым кодом делает камеру PlayStation 5 HD Camera (CFI-ZEY1) обычной веб-камерой: на Windows 11 — родные 1920×1080 при 60 к/с и по желанию размытие фона по настоящей глубине, на Linux — 1080p при 30 и 60 к/с (боке экспериментально), на macOS — 1080p при 30 и 60 к/с без боке.</p></div></details>
+    <details><summary>Нужен ли переходник?</summary><div><p>Переходник не нужен: камера подключается в порт USB 3. В порту USB 2.0 камера отдаёт только 640×400.</p></div></details>
+    <details><summary>Работает ли она в Zoom, Teams, Discord и OBS?</summary><div><p>Да. С драйвером камера видна как «PS5 Camera» во всех программах, которые работают с веб-камерами: Zoom, Microsoft Teams, Discord, Telegram, OBS Studio, браузерах и приложении «Камера» Windows.</p></div></details>
+    <details><summary>Как размывается фон без нейросетей?</summary><div><p>У камеры два сенсора. Драйвер сравнивает два изображения стерео-алгоритмом (census-преобразование и semi-global matching) на видеокарте, получает расстояние до каждой точки и размывает то, что дальше человека, как объектив с малой глубиной резкости. Нейросети не используются.</p></div></details>
+    <details><summary>Какой нужен компьютер?</summary><div><p>Windows 11, порт USB 3 и видеокарта с Direct3D 11 (на Linux — Vulkan 1.1). На RTX 3060 Ti кадр 1080p60 занимает 2,6–2,9 мс времени видеокарты без эффектов и около 9 мс с боке. Без видеокарты картинка не успевает считаться.</p></div></details>
+    <details><summary>Это безопасно? Ставится ли драйвер ядра?</summary><div><p>Кода в ядре нет, тестовый режим не нужен. Эффект работает в пользовательском режиме как Device MFT внутри Windows Camera Frame Server; для загрузочного режима камеры используется встроенный в Windows драйвер WinUSB. Исходный код открыт под GPL-3.0, а в сеть программа ничего не отправляет: она только скачивает прошивку.</p></div></details>
+    <details><summary>Зачем установщик скачивает прошивку Sony?</summary><div><p>Камере нужна прошивка при каждом подключении. Прошивка Sony не распространяется с драйвером: установщик скачивает оригинальный образ из публичных копий, проверяет его SHA-256 и вносит изменения драйвера — 90 байт (1080p при 60 к/с, режим глубины, автоматическая экспозиция). Без интернета установка всё равно завершается, а прошивку позже соберёт служба.</p></div></details>
+    <details><summary>Подойдёт ли камера PS4?</summary><div><p>Нет. Драйвер для камеры PlayStation 5 HD Camera (CFI-ZEY1), которая подключается в обычный порт USB 3. У камеры PS4 собственный разъём и другая прошивка.</p></div></details>
+    <details><summary>Какие есть ограничения?</summary><div><p>Камерой пользуется одна программа за раз, как с любой веб-камерой. Глубину камера измеряет примерно с полуметра: то, что ближе, размывается неровно. Боке на Linux экспериментальное, а на macOS его нет (нужно системное расширение камеры, которое macOS запускает только с подписью разработчика Apple).</p></div></details>
+    <details><summary>Это бесплатно?</summary><div><p>Да. Драйвер бесплатный, с открытым кодом под GNU GPL 3.0. Прошивка камеры принадлежит Sony и в проект не входит.</p></div></details>
+  </div>
+</section>
+</main>
+
+<footer>
+  <div class="wrap">
+    <div class="links">
+      <a href="https://github.com/KROU4/PS5CameraDriver">GitHub</a>
+      <a href="https://github.com/KROU4/PS5CameraDriver/releases">Релизы</a>
+      <a href="https://github.com/KROU4/PS5CameraDriver/issues">Ошибки и идеи</a>
+      <a href="https://github.com/KROU4/PS5CameraDriver/discussions">Обсуждения</a>
+      <a href="https://github.com/KROU4/PS5CameraDriver/blob/main/LICENSE">Лицензия (GPL-3.0)</a>
+      <a href="../" hreflang="en" lang="en">English</a>
+    </div>
+    <p>Независимый проект с открытым кодом, не связанный с Sony Interactive Entertainment и не одобренный ею. PlayStation и PS5 — товарные знаки Sony Interactive Entertainment Inc.</p>
+  </div>
+</footer>
+</body>
+</html>

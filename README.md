@@ -13,7 +13,7 @@
 
 **English** · [Русский](README.ru.md)
 
-[Download](https://github.com/KROU4/PS5CameraDriver/releases/latest) · [Install](#install) · [Performance](#performance) · [How it works](#how-it-works-windows) · [Code signing policy](#code-signing-policy)
+[Website](https://krou4.github.io/PS5CameraDriver/) · [Download](https://github.com/KROU4/PS5CameraDriver/releases/latest) · [Install](#install) · [Performance](#performance) · [How it works](#how-it-works-windows) · [Code signing policy](#code-signing-policy)
 
 </div>
 
