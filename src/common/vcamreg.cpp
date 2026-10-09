@@ -14,6 +14,7 @@
 #include <wrl/client.h>
 
 #include <algorithm>
+#include <atomic>
 #include <vector>
 
 #include "ids.h"
@@ -52,11 +53,14 @@ struct MfInit {
 HRESULT CreateVirtualCamera(LPCWSTR name, LPCWSTR clsid, ComPtr<IMFVirtualCamera>& vcam)
 {
     using CreateFn = decltype(&MFCreateVirtualCamera);
-    static const CreateFn create = [] {
+    static std::atomic<CreateFn> found{nullptr};  // only a success is kept: a failed load is tried again
+    CreateFn create = found.load();
+    if (!create) {
         HMODULE dll = LoadLibraryExW(L"mfsensorgroup.dll", nullptr, LOAD_LIBRARY_SEARCH_SYSTEM32);
-        return dll ? reinterpret_cast<CreateFn>(GetProcAddress(dll, "MFCreateVirtualCamera")) : nullptr;
-    }();
-    if (!create) return HRESULT_FROM_WIN32(ERROR_PROC_NOT_FOUND);  // Windows 10: no virtual cameras
+        if (dll) create = reinterpret_cast<CreateFn>(GetProcAddress(dll, "MFCreateVirtualCamera"));
+        if (!create) return HRESULT_FROM_WIN32(ERROR_PROC_NOT_FOUND);  // Windows 10: no virtual cameras
+        found.store(create);
+    }
     return create(MFVirtualCameraType_SoftwareCameraSource, MFVirtualCameraLifetime_System,
         MFVirtualCameraAccess_AllUsers, name, clsid, nullptr, 0, &vcam);
 }

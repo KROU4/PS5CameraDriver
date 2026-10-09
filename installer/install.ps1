@@ -384,7 +384,7 @@ try {
     if ($Tray) {
         Write-Host (T 'Значок в трее: клик включает и выключает боке, правый клик открывает настройки.' `
             'Tray icon: a click turns bokeh on and off, a right click opens the settings.')
-    } elseif (-not $VirtualCamera) {
+    } elseif (-not $VirtualCamera -and [Environment]::OSVersion.Version.Build -ge 22000) {  # Windows 10: no such page
         Write-Host (T 'Боке включается и выключается в Параметры → Bluetooth и устройства → Камеры → PS5 Camera →' `
             'Bokeh is switched on and off in Settings → Bluetooth & devices → Cameras → PS5 Camera →')
         Write-Host (T '  Эффекты камеры (размытие фона: портретное или стандартное), а также в приложениях с эффектами камеры.' `
