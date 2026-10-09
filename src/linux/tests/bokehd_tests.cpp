@@ -93,13 +93,15 @@ void TestDefaults()
     const BokehConfig c = Parse("");
     const BokehConfig defaults;
     CHECK(DescribeConfig(c) == DescribeConfig(defaults));
-    CHECK(c.mode == 0 && c.blur == 60 && c.autoFocus && c.focus == 50 && c.highlights == 150 && c.temporal == 40);
+    CHECK(c.mode == 0 && c.blur == 25 && c.autoFocus && c.focus == 50 && c.highlights == 150 && c.temporal == 40);
     CHECK(c.autoBrightness && c.maxGain == 60 && c.denoise == 90 && c.antiFlicker == 0 && c.sharpen == 50);
+    CHECK(c.brightness == 50 && c.contrast == 50 && c.saturation == 50);
     CHECK(c.mainsHz == 50 && c.fps == 60 && !c.alwaysOn && c.camera.empty() && c.output.empty());
     EffectSettings e;
     ApplyConfig(c, e);
-    CHECK(e.mode == ViewMode::Bokeh && e.blurStrength == 0.6f && e.denoise == 0.9f && e.maxGain == 6.0f);
+    CHECK(e.mode == ViewMode::Bokeh && e.blurStrength == 0.25f && e.denoise == 0.9f && e.maxGain == 6.0f);
     CHECK(e.highlights == 1.5f && e.temporal == 0.4f && e.manualFocus == 0.5f && e.sharpen == 0.5f);
+    CHECK(e.brightness == 0.0f && e.contrast == 1.0f && e.saturation == 1.0f);  // 50 each: the picture as it is
 #ifdef PS5CAM_BOKEH_CONF
     // The installed file spells out every default.
     std::set<std::string> warned;
@@ -180,7 +182,7 @@ void TestFiles(const std::string& dir)
     bool loaded = false;
     const std::string missing = dir + "/missing.conf";
     const std::string log = CaptureLog([&] { loaded = LoadConfig(missing, warned, c); });
-    CHECK(loaded && c.blur == 60);
+    CHECK(loaded && c.blur == 25);
     CHECK(Count(log, "no such file, using the defaults") == 1);
 
     // Every Settled() call below is one poll of the daemon.

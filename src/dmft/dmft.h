@@ -166,6 +166,9 @@ private:
     // Windows' "Background effects" (KSPROPERTY_CAMERACONTROL_EXTENDED_BACKGROUNDSEGMENTATION), which
     // the camera itself does not have: the bokeh, on and off, as portrait or standard blur.
     HRESULT BackgroundSegmentation(PKSPROPERTY p, LPVOID d, ULONG dl, ULONG* r);
+    // Brightness, contrast, saturation and sharpness of the video processing amplifier: the
+    // picture settings of the same names, 0..100 (kTones in dmft.cpp).
+    HRESULT ToneControl(ULONG index, PKSPROPERTY p, LPVOID d, ULONG dl, ULONG* r);
 
     // Guards the streams and the camera transform. Held while a frame is processed (a few ms on
     // the GPU), never while calling the event queue or the camera's IKsControl.

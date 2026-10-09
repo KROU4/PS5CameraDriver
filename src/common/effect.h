@@ -10,8 +10,9 @@ namespace ps5cam {
 inline void ApplySettings(const Settings& s, EffectSettings& e)
 {
     ApplyPicture(s, e);
-    // Windows' "Standard blur" is meant to hide the room rather than to look like a lens.
-    if (s.mode == 0 && s.blurStyle == kBlurStandard) e.blurStrength = 1.0f;
+    // Windows' "Standard blur" hides the room at a fixed strength, stronger than the default
+    // "Portrait blur" (the blur setting, light unless changed).
+    if (s.mode == 0 && s.blurStyle == kBlurStandard) e.blurStrength = kStandardBlurStrength;
     e.depthView = s.depthView;
 }
 

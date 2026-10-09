@@ -63,9 +63,11 @@ struct GpuConstants {
     float denoiseSpatial;
     float sharpen, sharpenCore;
     float subjectRange;
-    float pad;
+    float contrast;
+    float saturation;
+    float pad[3];
 };
-static_assert(sizeof(GpuConstants) == 192, "constant buffer layout");
+static_assert(sizeof(GpuConstants) == 208, "constant buffer layout");
 // kNumDisp mirrors MAX_DISP in shaders/common.hlsli.
 
 uint32_t DivUp(uint32_t a, uint32_t b) { return (a + b - 1) / b; }
@@ -313,7 +315,11 @@ void StereoPipeline::UpdateConstants(const EffectSettings* s, uint32_t pathDir)
         c.mode = static_cast<uint32_t>(s->mode);
         c.focusDisp = focus;
         c.outFormat = static_cast<uint32_t>(o.format);
-        c.lumaGain = s->autoBrightness ? m_gain : 1.0f;
+        // The brightness setting adds to the auto brightness after it metered the picture, so the
+        // two do not fight.
+        c.lumaGain = (s->autoBrightness ? m_gain : 1.0f) * std::exp2(std::clamp(s->brightness, -1.0f, 1.0f));
+        c.contrast = std::clamp(s->contrast, 0.5f, 1.5f);
+        c.saturation = std::clamp(s->saturation, 0.0f, 2.0f);
         c.depthView = s->depthView;
         // Strongest setting: a still pixel keeps 12% of each new frame (noise std / ~4 once settled).
         const float denoise = std::clamp(s->denoise, 0.0f, 1.0f);

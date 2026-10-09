@@ -43,6 +43,9 @@ struct EffectSettings {
     float denoise = 0.9f;         // temporal noise reduction of the image, 0 (off) .. 1
     bool motionCompensation = true;  // ... averaging along the motion of what moves (shaders/motion.hlsl)
     float sharpen = 0.5f;         // edge sharpening of the picture (noise-aware), 0 (off) .. 1
+    float brightness = 0.0f;      // stops on top of the auto brightness (-1..1)
+    float contrast = 1.0f;        // luma gain around mid grey
+    float saturation = 1.0f;      // colour gain
     bool depthPlane = false;      // also render the depth camera's plane (computes depth in any view)
     uint32_t depthView = 0;       // that plane: 0 disparity (near = bright), 1 subject matte
 };

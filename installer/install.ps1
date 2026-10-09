@@ -264,12 +264,17 @@ try {
     # Settings of 1.1.0 and earlier, where the installer wrote every default: the noise reduction
     # then defaulted to 70 (its weak level to 40). A value still at one of those moves once to the
     # new level (90, 50); SettingsVersion 2 marks the settings as migrated.
+    # Up to 1.2.5 the blur defaulted to 60, which no choice of the tray gives (25, 50, 75, 100): a
+    # blur still there moves once to the new default, light (25), the "Portrait blur" of Windows;
+    # SettingsVersion 3.
     $saved = Get-ItemProperty 'HKLM:\SOFTWARE\PS5Camera' -ErrorAction SilentlyContinue
-    if ($hadSettings -and -not ($saved.PSObject.Properties['SettingsVersion'] -and $saved.SettingsVersion -ge 2)) {
+    $version = if ($saved -and $saved.PSObject.Properties['SettingsVersion']) { [int]$saved.SettingsVersion } else { 0 }
+    if ($hadSettings -and $version -lt 2) {
         if ($saved.Denoise -eq 70) { Run $ctl @('set', 'denoise', '90') | Out-Null }
         elseif ($saved.Denoise -eq 40) { Run $ctl @('set', 'denoise', '50') | Out-Null }
     }
-    & reg.exe add 'HKLM\SOFTWARE\PS5Camera' /v SettingsVersion /t REG_DWORD /d 2 /f 2>&1 | Out-Null
+    if ($hadSettings -and $version -lt 3 -and $saved.Blur -eq 60) { Run $ctl @('set', 'blur', '25') | Out-Null }
+    & reg.exe add 'HKLM\SOFTWARE\PS5Camera' /v SettingsVersion /t REG_DWORD /d 3 /f 2>&1 | Out-Null
     if ($Bokeh -eq 'keep') {
         # An update keeps the user's choice; a first installation starts with bokeh.
         $Bokeh = if ($hadSettings -and (Get-ItemProperty 'HKLM:\SOFTWARE\PS5Camera').Mode -ne 0) { 'off' } else { 'on' }

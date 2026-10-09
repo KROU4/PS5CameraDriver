@@ -48,7 +48,7 @@ programs cannot open "USB Camera-OV580" then.
 Settings are in /etc/ps5cam/bokeh.conf and apply a couple of seconds after the file is saved
 (defaults in brackets):
   mode            0 bokeh, 1 main sensor, 2 second sensor, 3 depth, 4 both sensors side by side (0)
-  blur            background blur 0..100 (60)
+  blur            background blur 0..100: 25 light, 50 medium, 75 strong, 100 maximum (25)
   autofocus       1 focus follows the subject, 0 focus stays at "focus" (1)
   focus           manual focus 0 far .. 100 near (50)
   highlights      emphasis of bright spots in the blur, percent 0..400 (150)
@@ -57,6 +57,7 @@ Settings are in /etc/ps5cam/bokeh.conf and apply a couple of seconds after the f
   maxgain         the most it may amplify, in tenths 10..160 (60, that is 6x)
   denoise         noise reduction 0..100 (90)
   sharpen         edge sharpening that leaves the noise alone 0..100 (50)
+  brightness, contrast, saturation  the picture's tone 0..100, 50 = as the camera gives it (50)
   antiflicker     lamp flicker: 0 auto, 1 50 Hz, 2 60 Hz, 3 off (0)
   mains           mains frequency 50 or 60 (50)
   fps             frame rate 30 or 60 (60)
