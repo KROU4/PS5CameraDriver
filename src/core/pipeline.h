@@ -173,8 +173,10 @@ private:
     static constexpr uint32_t kFocusSwitchFrames = 20;  // ~1/3 s at 60 fps
     static constexpr uint32_t kFocusAcquireFrames = 30; // after a start, the focus follows at once
     static constexpr float kFocusProminence = 1.5f;     // a subject's peak over its surroundings (UpdateFocus)
+    static constexpr double kFocusHoldShare = 0.10;     // a followed peak this large keeps farther ones off
     uint32_t m_focusFrames = 0;                         // histograms the autofocus used since a start
     int m_focusPeak = -1;                               // histogram peak (bin) autofocus follows
+    bool m_focusAcquired = false;                       // ...and it is the one picked while acquiring
     int m_focusCandidate = -1;                          // peak waiting to take the focus over
     uint32_t m_focusCandidateFrames = 0;
     float m_focusTarget = -1;                           // where the focus glides to, < 0: nowhere yet

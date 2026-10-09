@@ -405,6 +405,7 @@ void StereoPipeline::RestartFocus()
     m_focusCandidate = -1;
     m_focusCandidateFrames = 0;
     m_focusTarget = -1;
+    m_focusAcquired = false;
 }
 
 void StereoPipeline::UpdateFocus(const uint32_t* histogram, const EffectSettings& s)
@@ -446,11 +447,16 @@ void StereoPipeline::UpdateFocus(const uint32_t* histogram, const EffectSettings
     };
     // Nearest prominent peak that holds a meaningful share of the central area: the subject. A
     // subject off-centre or far away fills only ~10% of the weighted area, hence the low share.
-    int pick = -1, globalMax = 2;
+    // While acquiring, the nearest peak with that share even if it does not stand out: a person a
+    // few steps away stands close to the wall, and their peak is a shoulder on the wall's.
+    int pick = -1, nearest = -1, globalMax = 2;
     for (int i = kNumDisp - 2; i >= 2; --i) {
         if (smooth[i] > smooth[globalMax]) globalMax = i;
-        if (pick < 0 && isPeak(i) && share(i) >= 0.07 && prominent(i)) pick = i;
+        if (!isPeak(i) || share(i) < 0.07) continue;
+        if (nearest < 0) nearest = i;
+        if (pick < 0 && prominent(i)) pick = i;
     }
+    if (acquiring && nearest >= 0) pick = nearest;
     // The peak being followed, if it still is one: the prominent local maximum next to it, which
     // moves with the subject. Without one there the focus keeps to the bin it follows while that
     // still holds a share (a subject that does not stand out, sitting against a sofa); a plain local
@@ -480,8 +486,20 @@ void StereoPipeline::UpdateFocus(const uint32_t* histogram, const EffectSettings
     }
     if (followed >= 0) m_focusPeak = followed;
     // While the subject being followed is still there, another peak (a hand raised towards the
-    // camera, a share hovering around the threshold) takes over only after kFocusSwitchFrames.
-    if (!acquiring && m_focusPeak >= 2 && std::abs(pick - m_focusPeak) > 2 && share(m_focusPeak) >= 0.05) {
+    // camera, a share hovering around the threshold) takes over only after kFocusSwitchFrames. A
+    // farther one (the wall behind, standing out more than a person in front of it) does not take
+    // over at all while a local peak next to the followed bin still holds kFocusHoldShare of the
+    // centre and is the subject acquired at the start: a person, not the tail of a wall's peak or a
+    // tooth of a desk, nor a hand that took over later and rests on the desk, which give way as before.
+    bool subjectHolds = false;
+    if (followed >= 0 && m_focusAcquired)
+        for (int k = std::max(2, followed - 1); k <= std::min<int>(kNumDisp - 2, followed + 1); ++k)
+            subjectHolds = subjectHolds || (isPeak(k) && share(k) >= kFocusHoldShare);
+    if (!acquiring && subjectHolds && pick < m_focusPeak - 2) {
+        m_focusCandidate = -1;
+        m_focusCandidateFrames = 0;
+        pick = m_focusPeak;
+    } else if (!acquiring && m_focusPeak >= 2 && std::abs(pick - m_focusPeak) > 2 && share(m_focusPeak) >= 0.05) {
         if (std::abs(pick - m_focusCandidate) <= 2) ++m_focusCandidateFrames;
         else m_focusCandidateFrames = 1;
         m_focusCandidate = pick;
@@ -491,6 +509,8 @@ void StereoPipeline::UpdateFocus(const uint32_t* histogram, const EffectSettings
         m_focusCandidate = -1;
         m_focusCandidateFrames = 0;
     }
+    if (acquiring) m_focusAcquired = true;
+    else if (std::abs(pick - m_focusPeak) > 2) m_focusAcquired = false;  // another subject took over
     // The focus value from every point around the subject's peak (the second histogram), in the
     // disparity the blur compares with.
     const uint32_t* all = histogram + kNumDisp;
