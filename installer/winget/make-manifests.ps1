@@ -47,7 +47,7 @@ InstallModes:
 - silent
 - silentWithProgress
 UpgradeBehavior: install
-ElevationRequirement: elevatesSelf
+ElevationRequirement: elevationRequired
 AppsAndFeaturesEntries:
 - UpgradeCode: '$upgradeCode'
 Installers:
