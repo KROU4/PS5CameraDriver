@@ -43,13 +43,9 @@ std::wstring CameraInterface()
 
 constexpr HRESULT kNotConnected = HRESULT_FROM_WIN32(ERROR_DEVICE_NOT_CONNECTED);
 
-// Calls visit for every saved default of the background effect (there may be one per
-// configuration type); saves the collection if visit returns true for any. With removeIfNone, a
-// default that is not listed is removed: Windows keeps "off" (set in Settings, or written here)
-// out of the list but still applies it at every start.
-HRESULT VisitBackgroundEffectDefaults(
-    const std::function<bool(KSCAMERA_EXTENDEDPROP_HEADER&, MF_CAMERA_CONTROL_CONFIGURATION_TYPE)>& visit,
-    bool removeIfNone = false, bool* removed = nullptr)
+// Loads the camera's saved defaults (of the user running this), lets edit change them, and saves
+// them if it returns true.
+HRESULT EditDefaults(const std::function<bool(IMFCameraControlDefaultsCollection*)>& edit)
 {
     const std::wstring link = CameraInterface();
     if (link.empty()) return kNotConnected;
@@ -63,8 +59,25 @@ HRESULT VisitBackgroundEffectDefaults(
         if (SUCCEEDED(hr)) hr = MFCreateAttributes(&camera, 1);
         if (SUCCEEDED(hr)) hr = camera->SetString(MF_DEVSOURCE_ATTRIBUTE_SOURCE_TYPE_VIDCAP_SYMBOLIC_LINK, link.c_str());
         if (SUCCEEDED(hr)) hr = manager->LoadDefaults(camera.Get(), &defaults);
+        if (SUCCEEDED(hr) && edit(defaults.Get())) hr = manager->SaveDefaults(defaults.Get());
+        if (manager) manager->Shutdown();
+        MFShutdown();
+    }
+    if (SUCCEEDED(com)) CoUninitialize();
+    return hr;
+}
+
+// Calls visit for every saved default of the background effect (there may be one per
+// configuration type); saves the collection if visit returns true for any. With removeIfNone, a
+// default that is not listed is removed: Windows keeps "off" (set in Settings, or written here)
+// out of the list but still applies it at every start.
+HRESULT VisitBackgroundEffectDefaults(
+    const std::function<bool(KSCAMERA_EXTENDEDPROP_HEADER&, MF_CAMERA_CONTROL_CONFIGURATION_TYPE)>& visit,
+    bool removeIfNone = false, bool* removed = nullptr)
+{
+    return EditDefaults([&](IMFCameraControlDefaultsCollection* defaults) {
         bool changed = false, listed = false;
-        for (ULONG i = 0; SUCCEEDED(hr) && i < defaults->GetControlCount(); ++i) {
+        for (ULONG i = 0; i < defaults->GetControlCount(); ++i) {
             ComPtr<IMFCameraControlDefaults> control;
             void* property = nullptr;
             void* data = nullptr;
@@ -81,18 +94,14 @@ HRESULT VisitBackgroundEffectDefaults(
             }
             control->UnlockControlData();
         }
-        if (SUCCEEDED(hr) && removeIfNone && !listed &&
+        if (removeIfNone && !listed &&
             SUCCEEDED(defaults->RemoveControl(KSPROPERTYSETID_ExtendedCameraControl,
                 KSPROPERTY_CAMERACONTROL_EXTENDED_BACKGROUNDSEGMENTATION))) {
             changed = true;
             if (removed) *removed = true;
         }
-        if (SUCCEEDED(hr) && changed) hr = manager->SaveDefaults(defaults.Get());
-        if (manager) manager->Shutdown();
-        MFShutdown();
-    }
-    if (SUCCEEDED(com)) CoUninitialize();
-    return hr;
+        return changed;
+    });
 }
 
 const wchar_t* FlagsText(uint64_t flags)
@@ -131,6 +140,35 @@ HRESULT SyncBackgroundEffectDefault(const Settings& s, std::wstring* message)
                    : updated           ? std::wstring(L"updated to ") + FlagsText(flags)
                                        : L"nothing to update";
     return FAILED(hr) ? hr : (updated || removed) ? S_OK : S_FALSE;
+}
+
+HRESULT ResetOldToneDefaults(std::wstring* message)
+{
+    static const wchar_t kMarker[] = L"ToneDefaultsReset";
+    DWORD done = 0, size = sizeof(done);
+    if (RegGetValueW(HKEY_CURRENT_USER, L"Software\\PS5Camera", kMarker, RRF_RT_REG_DWORD, nullptr, &done, &size) ==
+            ERROR_SUCCESS &&
+        done) {
+        if (message) *message = L"done before";
+        return S_FALSE;
+    }
+    int count = 0;
+    const HRESULT hr = EditDefaults([&](IMFCameraControlDefaultsCollection* defaults) {
+        for (ULONG id : {KSPROPERTY_VIDEOPROCAMP_BRIGHTNESS, KSPROPERTY_VIDEOPROCAMP_CONTRAST,
+                 KSPROPERTY_VIDEOPROCAMP_SATURATION, KSPROPERTY_VIDEOPROCAMP_SHARPNESS})
+            if (SUCCEEDED(defaults->RemoveControl(PROPSETID_VIDCAP_VIDEOPROCAMP, id))) ++count;
+        return count > 0;
+    });
+    if (SUCCEEDED(hr)) {
+        const DWORD one = 1;
+        RegSetKeyValueW(HKEY_CURRENT_USER, L"Software\\PS5Camera", kMarker, REG_DWORD, &one, sizeof(one));
+    }
+    if (message)
+        *message = hr == kNotConnected ? L"camera not connected"
+                   : FAILED(hr)        ? L"failed"
+                   : count             ? L"removed " + std::to_wstring(count)
+                                       : L"none saved";
+    return FAILED(hr) ? hr : count ? S_OK : S_FALSE;
 }
 
 std::wstring DescribeBackgroundEffectDefault()

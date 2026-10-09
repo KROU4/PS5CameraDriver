@@ -38,6 +38,8 @@ cbuffer Constants : register(b0)
     float  sharpen;        // composite.hlsl: unsharp-mask amount on the sharp picture (0 off .. 1)
     float  sharpenCore;    // detail up to this size is noise and left alone (luma 0..1)
     float  subjectRange;   // subject.hlsl: widening of the sharp zone over the subject's own surface
+    float  contrast;       // composite.hlsl: luma gain around mid grey (1 = as is)
+    float  saturation;     // composite.hlsl: colour gain (1 = as is)
 };
 
 SamplerState LinearClamp : register(s0);

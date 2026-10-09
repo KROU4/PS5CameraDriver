@@ -33,9 +33,11 @@ with bokeh. The previous way — a separate virtual camera "PS5 Camera (Windows 
 Camera)" with the USB camera itself hidden: Install.cmd -VirtualCamera.
 
 Bokeh on and off: Settings → Bluetooth & devices → Cameras → PS5 Camera → Camera effects
-→ Background effects ("Portrait blur" is the bokeh as set, "Standard blur" the strongest),
-or the camera effects of programs that offer them. Windows remembers the choice there and
-applies it whenever a program opens the camera. From a command prompt (cmd):
+→ Background effects ("Portrait blur" is light by default, "Standard blur" stronger), or the
+camera effects of programs that offer them. Windows remembers the choice there and applies it
+whenever a program opens the camera. The same page's Basic settings (brightness, contrast,
+saturation, sharpness) are the driver's own and act on the finished picture. From a command
+prompt (cmd):
   "C:\Program Files\PS5Camera\ps5cam-ctl.exe" set mode 0   (with bokeh)
   "C:\Program Files\PS5Camera\ps5cam-ctl.exe" set mode 1   (without bokeh)
 (in PowerShell put & before the command); the service then updates Windows' remembered

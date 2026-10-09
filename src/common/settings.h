@@ -25,9 +25,11 @@ struct Settings : PictureSettings {
 uint32_t RegionMainsHz();
 inline bool Mains60(const Settings& s) { return (s.mainsHz ? s.mainsHz : RegionMainsHz()) == 60; }
 
-// Windows' camera effects: "Portrait blur" is our bokeh as it is, "Standard blur" the strongest.
+// Windows' camera effects: "Portrait blur" is our bokeh at the blur setting (light by default),
+// "Standard blur" a fixed, stronger one.
 constexpr uint32_t kBlurPortrait = 0;
 constexpr uint32_t kBlurStandard = 1;
+constexpr float kStandardBlurStrength = 0.6f;
 
 struct Status {
     bool streaming = false;

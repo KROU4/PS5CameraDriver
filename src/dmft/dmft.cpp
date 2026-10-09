@@ -726,11 +726,145 @@ HRESULT DeviceMft::BackgroundSegmentation(PKSPROPERTY p, LPVOID d, ULONG dl, ULO
     return HRESULT_FROM_WIN32(ERROR_NOT_SUPPORTED);
 }
 
+namespace {
+
+// Windows' camera settings ("Basic settings": Brightness, Contrast, Saturation, Sharpness) and the
+// video controls of apps: the driver's own picture settings, applied on the GPU to the finished
+// picture (ToneControl), not the camera's processing unit, whose changes would reach both sensors
+// and the stereo matching.
+struct Tone {
+    ULONG id;
+    const wchar_t* name;  // registry value (settings.cpp)
+    uint32_t PictureSettings::*value;
+};
+constexpr Tone kTones[] = {
+    {KSPROPERTY_VIDEOPROCAMP_BRIGHTNESS, L"Brightness", &PictureSettings::brightness},
+    {KSPROPERTY_VIDEOPROCAMP_CONTRAST, L"Contrast", &PictureSettings::contrast},
+    {KSPROPERTY_VIDEOPROCAMP_SATURATION, L"Saturation", &PictureSettings::saturation},
+    {KSPROPERTY_VIDEOPROCAMP_SHARPNESS, L"Sharpen", &PictureSettings::sharpen},
+};
+constexpr LONG kToneMin = 0, kToneMax = 100, kToneDefault = 50;
+
+}  // namespace
+
+HRESULT DeviceMft::ToneControl(ULONG index, PKSPROPERTY p, LPVOID d, ULONG dl, ULONG* r)
+{
+    const Tone& t = kTones[index];
+    *r = 0;
+    // Range and default as KS reports them: the description, then member lists (a stepped range,
+    // the default value). BASICSUPPORT gives both, DEFAULTVALUES the default only; a caller may ask
+    // for the access flags alone (a ULONG) or the description alone, to learn the size.
+    const bool basic = (p->Flags & KSPROPERTY_TYPE_BASICSUPPORT) != 0;
+    if (basic || (p->Flags & KSPROPERTY_TYPE_DEFAULTVALUES)) {
+        const ULONG rangeBytes = sizeof(KSPROPERTY_MEMBERSHEADER) + sizeof(KSPROPERTY_STEPPING_LONG);
+        const ULONG defaultBytes = sizeof(KSPROPERTY_MEMBERSHEADER) + sizeof(LONG);
+        const ULONG full = sizeof(KSPROPERTY_DESCRIPTION) + (basic ? rangeBytes : 0) + defaultBytes;
+        const ULONG access = KSPROPERTY_TYPE_GET | KSPROPERTY_TYPE_SET | KSPROPERTY_TYPE_BASICSUPPORT |
+                             KSPROPERTY_TYPE_DEFAULTVALUES;
+        if (!d || dl == 0) {
+            *r = full;
+            return HRESULT_FROM_WIN32(ERROR_MORE_DATA);
+        }
+        if (dl < sizeof(KSPROPERTY_DESCRIPTION)) {
+            if (dl < sizeof(ULONG)) return HRESULT_FROM_WIN32(ERROR_INSUFFICIENT_BUFFER);
+            *static_cast<ULONG*>(d) = access;
+            *r = sizeof(ULONG);
+            return S_OK;
+        }
+        auto* desc = static_cast<KSPROPERTY_DESCRIPTION*>(d);
+        desc->AccessFlags = access;
+        desc->DescriptionSize = full;
+        desc->PropTypeSet.Set = KSPROPTYPESETID_General;
+        desc->PropTypeSet.Id = VT_I4;
+        desc->PropTypeSet.Flags = 0;
+        desc->MembersListCount = basic ? 2 : 1;
+        desc->Reserved = 0;
+        // Then as many whole member lists as fit, the range first: a caller after the range alone
+        // (IAMVideoProcAmp::GetRange) leaves room for that only.
+        ULONG used = sizeof(KSPROPERTY_DESCRIPTION), lists = 0;
+        auto* at = reinterpret_cast<BYTE*>(desc + 1);
+        if (basic && dl >= used + rangeBytes) {
+            auto* h = reinterpret_cast<KSPROPERTY_MEMBERSHEADER*>(at);
+            h->MembersFlags = KSPROPERTY_MEMBER_STEPPEDRANGES;
+            h->MembersSize = sizeof(KSPROPERTY_STEPPING_LONG);
+            h->MembersCount = 1;
+            h->Flags = 0;
+            auto* range = reinterpret_cast<KSPROPERTY_STEPPING_LONG*>(h + 1);
+            range->SteppingDelta = 1;
+            range->Reserved = 0;
+            range->Bounds.SignedMinimum = kToneMin;
+            range->Bounds.SignedMaximum = kToneMax;
+            at += rangeBytes;
+            used += rangeBytes;
+            ++lists;
+        }
+        if ((!basic || lists == 1) && dl >= used + defaultBytes) {
+            auto* h = reinterpret_cast<KSPROPERTY_MEMBERSHEADER*>(at);
+            h->MembersFlags = KSPROPERTY_MEMBER_VALUES;
+            h->MembersSize = sizeof(LONG);
+            h->MembersCount = 1;
+            h->Flags = KSPROPERTY_MEMBER_FLAG_DEFAULT;
+            *reinterpret_cast<LONG*>(h + 1) = kToneDefault;
+            used += defaultBytes;
+            ++lists;
+        }
+        if (lists) desc->MembersListCount = lists;  // the description alone keeps the total count
+        *r = used;
+        return S_OK;
+    }
+    // The value: after a KSPROPERTY, or after a KSP_NODE when the caller addresses the processing
+    // unit's node (KSPROPERTY_TYPE_TOPOLOGY).
+    const bool node = (p->Flags & KSPROPERTY_TYPE_TOPOLOGY) != 0;
+    const ULONG size = node ? sizeof(KSPROPERTY_VIDEOPROCAMP_NODE_S) : sizeof(KSPROPERTY_VIDEOPROCAMP_S);
+    LONG* current = nullptr;
+    ULONG *flags = nullptr, *caps = nullptr;
+    if (d && dl >= size) {
+        if (node) {
+            auto* v = static_cast<KSPROPERTY_VIDEOPROCAMP_NODE_S*>(d);
+            current = &v->Value, flags = &v->Flags, caps = &v->Capabilities;
+        } else {
+            auto* v = static_cast<KSPROPERTY_VIDEOPROCAMP_S*>(d);
+            current = &v->Value, flags = &v->Flags, caps = &v->Capabilities;
+        }
+    }
+    if (p->Flags & KSPROPERTY_TYPE_GET) {
+        if (!current) {
+            *r = size;
+            return dl == 0 ? HRESULT_FROM_WIN32(ERROR_MORE_DATA) : HRESULT_FROM_WIN32(ERROR_INSUFFICIENT_BUFFER);
+        }
+        const Settings s = LoadSettings();
+        *current = static_cast<LONG>(s.*t.value);
+        *flags = KSPROPERTY_VIDEOPROCAMP_FLAGS_MANUAL;
+        *caps = KSPROPERTY_VIDEOPROCAMP_FLAGS_MANUAL;
+        *r = size;
+        return S_OK;
+    }
+    if (p->Flags & KSPROPERTY_TYPE_SET) {
+        if (!current) return HRESULT_FROM_WIN32(ERROR_INSUFFICIENT_BUFFER);
+        const LONG wanted = *current;
+        if (wanted < kToneMin || wanted > kToneMax) return E_INVALIDARG;
+        // Like the background effects: a setting of the camera, shared with ps5cam-ctl; the frames
+        // follow within half a second (FrameProcessor::RefreshSettings).
+        if (LoadSettings().*t.value != static_cast<uint32_t>(wanted)) {
+            if (!WriteSetting(t.name, static_cast<uint32_t>(wanted))) return E_ACCESSDENIED;
+            Log(L"%ls set to %ld by Windows or an app", t.name, wanted);
+        }
+        return S_OK;
+    }
+    return HRESULT_FROM_WIN32(ERROR_NOT_SUPPORTED);
+}
+
 STDMETHODIMP DeviceMft::KsProperty(PKSPROPERTY p, ULONG pl, LPVOID d, ULONG dl, ULONG* r)
 {
     if (p && pl >= sizeof(KSPROPERTY) && IsEqualGUID(p->Set, KSPROPERTYSETID_ExtendedCameraControl) &&
         p->Id == KSPROPERTY_CAMERACONTROL_EXTENDED_BACKGROUNDSEGMENTATION)
         return r ? BackgroundSegmentation(p, d, dl, r) : E_POINTER;
+    // (Other requests about them, e.g. KSPROPERTY_TYPE_SETSUPPORT, go to the camera as before.)
+    if (p && pl >= sizeof(KSPROPERTY) && IsEqualGUID(p->Set, PROPSETID_VIDCAP_VIDEOPROCAMP) &&
+        (p->Flags & (KSPROPERTY_TYPE_GET | KSPROPERTY_TYPE_SET | KSPROPERTY_TYPE_BASICSUPPORT |
+                        KSPROPERTY_TYPE_DEFAULTVALUES)))
+        for (ULONG i = 0; i < ARRAYSIZE(kTones); ++i)
+            if (p->Id == kTones[i].id) return r ? ToneControl(i, p, d, dl, r) : E_POINTER;
     if (p && pl >= sizeof(KSPROPERTY) && IsEqualGUID(p->Set, PROPSETID_VIDCAP_VIDEOPROCAMP) &&
         p->Id == KSPROPERTY_VIDEOPROCAMP_POWERLINE_FREQUENCY && (p->Flags & KSPROPERTY_TYPE_SET)) {
         // An app (or Windows' saved default) chooses the anti-flicker itself: its choice stands for

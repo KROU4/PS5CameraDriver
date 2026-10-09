@@ -106,9 +106,10 @@ float3 Shade(float2 outPx)
         float3 blurred = BokehHalf.SampleLevel(LinearClamp, outPx / float2(outSize), 0).xyz;
         result = lerp(sharp, blurred, smoothstep(0.5, 2.5, coc));
     }
-    // Digital exposure for dim rooms: linear gain with a soft shoulder so highlights do not clip
-    // hard; chroma follows the luma ratio so colours keep their saturation.
-    if (lumaGain > 1.01 && mode != 3 && mode < 8)
+    // Digital exposure for dim rooms (and the brightness setting, which may also darken): linear
+    // gain with a soft shoulder so highlights do not clip hard; chroma follows the luma ratio so
+    // colours keep their saturation.
+    if (abs(lumaGain - 1.0) > 0.01 && mode != 3 && mode < 8)
     {
         float y = result.x * lumaGain;
         const float knee = 0.75;
@@ -116,6 +117,12 @@ float3 Shade(float2 outPx)
         float ratio = result.x > 0.002 ? boosted / result.x : lumaGain;
         result.x = boosted;
         result.yz = 0.5 + (result.yz - 0.5) * min(ratio, lumaGain);
+    }
+    // Contrast around mid grey and colour saturation (Windows' camera settings); 1 leaves them be.
+    if ((abs(contrast - 1.0) > 0.005 || abs(saturation - 1.0) > 0.005) && mode != 3 && mode < 8)
+    {
+        result.x = 0.5 + (result.x - 0.5) * contrast;
+        result.yz = 0.5 + (result.yz - 0.5) * saturation;
     }
     // The sensor delivers full-range YUV; cameras are expected to output studio range (16-235).
     result = saturate(result);

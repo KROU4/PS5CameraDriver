@@ -93,8 +93,9 @@ void TestDefaults()
     const BokehConfig c = Parse("");
     const BokehConfig defaults;
     CHECK(DescribeConfig(c) == DescribeConfig(defaults));
-    CHECK(c.mode == 0 && c.blur == 60 && c.autoFocus && c.focus == 50 && c.highlights == 150 && c.temporal == 40);
+    CHECK(c.mode == 0 && c.blur == 25 && c.autoFocus && c.focus == 50 && c.highlights == 150 && c.temporal == 40);
     CHECK(c.autoBrightness && c.maxGain == 60 && c.denoise == 90 && c.antiFlicker == 0 && c.sharpen == 50);
+    CHECK(c.brightness == 50 && c.contrast == 50 && c.saturation == 50);
     CHECK(c.mainsHz == 50 && c.fps == 60 && !c.alwaysOn && c.camera.empty() && c.output.empty());
     EffectSettings e;
     ApplyConfig(c, e);
@@ -180,7 +181,7 @@ void TestFiles(const std::string& dir)
     bool loaded = false;
     const std::string missing = dir + "/missing.conf";
     const std::string log = CaptureLog([&] { loaded = LoadConfig(missing, warned, c); });
-    CHECK(loaded && c.blur == 60);
+    CHECK(loaded && c.blur == 25);
     CHECK(Count(log, "no such file, using the defaults") == 1);
 
     // Every Settled() call below is one poll of the daemon.

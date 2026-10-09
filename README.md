@@ -25,7 +25,8 @@ Telegram, OBS, browsers and any other program.
   just like on the PS5. No neural networks: the GPU computes depth with a stereo algorithm
   (census + SGM) in Direct3D 11 shaders. The camera shows up as "PS5 Camera", with no separate
   virtual camera, and the bokeh is switched like Windows' own camera effects: Settings →
-  Cameras → Background effects (standard or portrait blur). The whole head stays sharp
+  Cameras → Background effects (portrait blur is light by default, standard blur stronger), and the same
+  page's brightness, contrast, saturation and sharpness act on the driver's picture. The whole head stays sharp
   (ears, hair, headphones), the exposure follows the person, not the window behind them, and
   motion-compensated noise reduction and automatic anti-flicker help in dim rooms.
 - **Linux:** native 1920x1080 at 30 and 60 fps, and (experimental, x86_64) the same bokeh computed
