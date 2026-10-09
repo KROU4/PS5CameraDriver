@@ -2,6 +2,8 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <vector>
 
@@ -28,6 +30,10 @@ constexpr float kGainStart = 0.04f;
 constexpr float kGainStop = 0.01f;
 // A measurement this far from the smoothed one replaces it at once.
 constexpr float kGainJump = 0.3f;
+// Stereo self-calibration (Calibrate): the well textured pixels (score.hlsl) a score needs, and how
+// far the best vertical offset must stand out below the sweep's median.
+constexpr uint32_t kCalibrationPixels = 2000;
+constexpr float kCalibrationContrast = 0.08f;
 // The head's light (MeasureSubject): this share of its cells, by subject weight, is darker...
 constexpr double kHeadPercentile = 0.75;
 // ...counting the cells at least this much on the subject; its columns are where the top rows are
@@ -206,7 +212,7 @@ HRESULT StereoPipeline::CreateResources()
     TRY(g.CreateImage(ow / 2, oh, GpuFormat::RGBA8_UNORM, rwBack, &d.outYuy2));
     if (!m_stereo.mono) TRY(g.CreateImage(ow, oh, GpuFormat::R8_UNORM, rwBack, &d.depthPlane));
 
-    TRY(g.CreateBuffer(kNumDisp * 4, true, &d.hist));
+    TRY(g.CreateBuffer(2 * kNumDisp * 4, true, &d.hist));  // measured points, then all (histogram.hlsl)
     TRY(g.CreateBuffer(16, true, &d.scoreBuf));
     TRY(g.CreateBuffer(kNumDisp * 4, true, &d.lumaHist));
     TRY(g.CreateBuffer(kNoiseBins * 4, true, &d.noiseHist));
@@ -398,6 +404,8 @@ void StereoPipeline::RestartFocus()
     m_focusPeak = -1;
     m_focusCandidate = -1;
     m_focusCandidateFrames = 0;
+    m_focusTarget = -1;
+    m_focusAcquired = false;
 }
 
 void StereoPipeline::UpdateFocus(const uint32_t* histogram, const EffectSettings& s)
@@ -426,18 +434,72 @@ void StereoPipeline::UpdateFocus(const uint32_t* histogram, const EffectSettings
         for (int k = std::max(2, i - 2); k <= std::min<int>(kNumDisp - 1, i + 2); ++k) mass += histogram[k];
         return mass / total;
     };
-    // Nearest peak that holds a meaningful share of the central area: the subject. A subject
-    // off-centre or far away fills only ~10% of the weighted area, hence the low share.
-    int pick = -1, globalMax = 2;
+    auto isPeak = [&](int i) { return smooth[i] >= smooth[i - 1] && smooth[i] >= smooth[i + 1]; };
+    // A subject stands out of what lies around it in depth: its peak rises kFocusProminence times
+    // above the valleys that part it from anything as high on either side (or from the ends of the
+    // range), however broad the subject's own peak is. A desk, a shelf or a wall at many depths gives
+    // a comb of small peaks with shallow valleys between them, which swap places from frame to frame.
+    auto prominent = [&](int i) {
+        float left = smooth[i], right = smooth[i];
+        for (int k = i - 1; k >= 2 && smooth[k] <= smooth[i]; --k) left = std::min(left, smooth[k]);
+        for (int k = i + 1; k < int(kNumDisp) && smooth[k] <= smooth[i]; ++k) right = std::min(right, smooth[k]);
+        return smooth[i] >= kFocusProminence * std::max(left, right);
+    };
+    // Nearest prominent peak that holds a meaningful share of the central area: the subject. A
+    // subject off-centre or far away fills only ~10% of the weighted area, hence the low share.
+    // While acquiring, the nearest peak with that share even if it does not stand out: a person a
+    // few steps away stands close to the wall, and their peak is a shoulder on the wall's.
+    int pick = -1, nearest = -1, globalMax = 2;
     for (int i = kNumDisp - 2; i >= 2; --i) {
         if (smooth[i] > smooth[globalMax]) globalMax = i;
-        bool peak = smooth[i] >= smooth[i - 1] && smooth[i] >= smooth[i + 1];
-        if (pick < 0 && peak && share(i) >= 0.07) pick = i;
+        if (!isPeak(i) || share(i) < 0.07) continue;
+        if (nearest < 0) nearest = i;
+        if (pick < 0 && prominent(i)) pick = i;
     }
-    if (pick < 0) pick = globalMax;
+    if (acquiring && nearest >= 0) pick = nearest;
+    // The peak being followed, if it still is one: the prominent local maximum next to it, which
+    // moves with the subject. Without one there the focus keeps to the bin it follows while that
+    // still holds a share (a subject that does not stand out, sitting against a sofa); a plain local
+    // maximum is not followed, since on a slope or a comb of small peaks the mean around it moved up
+    // a little every frame and the focus crept along. -1: the subject is gone.
+    int followed = -1;
+    if (!acquiring && m_focusPeak >= 2) {
+        for (int k = std::max(2, m_focusPeak - 1); k <= std::min<int>(kNumDisp - 2, m_focusPeak + 1); ++k)
+            if (isPeak(k) && prominent(k) && (followed < 0 || smooth[k] > smooth[followed])) followed = k;
+        if (followed < 0) followed = m_focusPeak;
+        if (share(followed) < 0.05) followed = -1;
+    }
+    // No prominent peak (nobody in front of the camera, a desk or a wall sloping away): the focus
+    // stays with the subject it follows, or where it is (finishing a glide under way), rather than
+    // chasing whatever is largest, which wandered from frame to frame.
+    if (pick < 0) {
+        if (acquiring || m_focus < 0) {
+            pick = globalMax;
+        } else if (followed >= 0) {
+            pick = followed;
+        } else {
+            m_focusCandidate = -1;
+            m_focusCandidateFrames = 0;
+            GlideFocus(m_focusTarget, false);
+            return;
+        }
+    }
+    if (followed >= 0) m_focusPeak = followed;
     // While the subject being followed is still there, another peak (a hand raised towards the
-    // camera, a share hovering around the threshold) takes over only after kFocusSwitchFrames.
-    if (!acquiring && m_focusPeak >= 2 && std::abs(pick - m_focusPeak) > 2 && share(m_focusPeak) >= 0.05) {
+    // camera, a share hovering around the threshold) takes over only after kFocusSwitchFrames. A
+    // farther one (the wall behind, standing out more than a person in front of it) does not take
+    // over at all while a local peak next to the followed bin still holds kFocusHoldShare of the
+    // centre and is the subject acquired at the start: a person, not the tail of a wall's peak or a
+    // tooth of a desk, nor a hand that took over later and rests on the desk, which give way as before.
+    bool subjectHolds = false;
+    if (followed >= 0 && m_focusAcquired)
+        for (int k = std::max(2, followed - 1); k <= std::min<int>(kNumDisp - 2, followed + 1); ++k)
+            subjectHolds = subjectHolds || (isPeak(k) && share(k) >= kFocusHoldShare);
+    if (!acquiring && subjectHolds && pick < m_focusPeak - 2) {
+        m_focusCandidate = -1;
+        m_focusCandidateFrames = 0;
+        pick = m_focusPeak;
+    } else if (!acquiring && m_focusPeak >= 2 && std::abs(pick - m_focusPeak) > 2 && share(m_focusPeak) >= 0.05) {
         if (std::abs(pick - m_focusCandidate) <= 2) ++m_focusCandidateFrames;
         else m_focusCandidateFrames = 1;
         m_focusCandidate = pick;
@@ -447,14 +509,25 @@ void StereoPipeline::UpdateFocus(const uint32_t* histogram, const EffectSettings
         m_focusCandidate = -1;
         m_focusCandidateFrames = 0;
     }
+    if (acquiring) m_focusAcquired = true;
+    else if (std::abs(pick - m_focusPeak) > 2) m_focusAcquired = false;  // another subject took over
+    // The focus value from every point around the subject's peak (the second histogram), in the
+    // disparity the blur compares with.
+    const uint32_t* all = histogram + kNumDisp;
     double wsum = 0, dsum = 0;
     for (int k = std::max(2, pick - 2); k <= std::min<int>(kNumDisp - 1, pick + 2); ++k) {
-        wsum += histogram[k];
-        dsum += double(histogram[k]) * k;
+        wsum += all[k];
+        dsum += double(all[k]) * k;
     }
-    float target = wsum > 0 ? float(dsum / wsum) : float(pick);
-    m_focusPeak = static_cast<int>(std::lround(target));  // follows the subject moving closer or away
-    if (m_focus < 0 || acquiring)
+    m_focusPeak = pick;  // a bin of the measured histogram, where the next frame looks for it
+    m_focusTarget = wsum > 0 ? float(dsum / wsum) : float(pick);
+    GlideFocus(m_focusTarget, acquiring);
+}
+
+void StereoPipeline::GlideFocus(float target, bool atOnce)
+{
+    if (target < 0) return;
+    if (m_focus < 0 || atOnce)
         m_focus = target;
     else if (std::fabs(target - m_focus) > 0.6f)
         m_focus += (target - m_focus) * 0.15f;  // glide, like a lens refocusing
@@ -703,7 +776,7 @@ HRESULT StereoPipeline::Process(const uint8_t* yuy2, uint32_t yuy2Pitch, const E
         RunDepth(s);
         UpdateConstants(&s, 0);
         g.ClearUint(d.hist);
-        g.Dispatch(Kernel::Histogram, {image, d.gfC}, {d.hist}, DivUp(ow / 4, 16), DivUp(oh / 4, 8));
+        g.Dispatch(Kernel::Histogram, {image, d.gfC, d.dispFill}, {d.hist}, DivUp(ow / 4, 16), DivUp(oh / 4, 8));
         g.CopyToReadback(d.hist, slot);
     }
     // With depth the auto brightness meters the subject (meter.hlsl: 32x18 cells, 8x8 per group).
@@ -807,13 +880,27 @@ float StereoPipeline::ScoreAlignment(float dy, float rotationDeg)
     g.Dispatch(Kernel::Census, {d.workPrev, d.workSecond}, {d.censusMain, d.censusSecond}, DivUp(m_workW, 16),
         DivUp(m_workH, 8));
     g.ClearUint(d.scoreBuf);
-    g.Dispatch(Kernel::Score, {d.censusMain, d.censusSecond}, {d.scoreBuf}, DivUp(m_workW, 16), DivUp(m_workH, 8));
+    g.Dispatch(Kernel::Score, {d.censusMain, d.censusSecond, d.workPrev}, {d.scoreBuf}, DivUp(m_workW, 16),
+        DivUp(m_workH, 8));
     g.Unbind();
     g.CopyToReadback(d.scoreBuf, 0);
     GpuMapped m;
     if (FAILED(g.Map(d.scoreBuf, 0, &m))) return 1e9f;
     const uint32_t* v = reinterpret_cast<const uint32_t*>(m.data);
-    float score = v[1] > 500 ? float(v[0]) / v[1] : 1e9f;
+    float score = v[1] >= kCalibrationPixels ? float(v[0]) / v[1] : 1e9f;
+    // The curve the calibration decides on, for tools/calcurve.py (bench).
+#ifdef _MSC_VER
+#pragma warning(push)
+#pragma warning(disable : 4996)  // getenv: read only, nothing to free
+#endif
+    static const char* traceEnv = std::getenv("PS5CAM_DEBUGCAL");
+    static const bool trace = traceEnv && *traceEnv && *traceEnv != '0';
+#ifdef _MSC_VER
+#pragma warning(pop)
+#endif
+    if (trace)
+        std::fprintf(stderr, "CAL dy %.2f rot %.2f mean %.4f n %u decisive %u\n", dy, rotationDeg,
+            v[1] ? float(v[0]) / v[1] : 0.0f, v[1], v[2]);
     g.Unmap(d.scoreBuf, 0);
     return score;
 }
@@ -821,6 +908,7 @@ float StereoPipeline::ScoreAlignment(float dy, float rotationDeg)
 HRESULT StereoPipeline::Calibrate(const uint8_t* yuy2, uint32_t yuy2Pitch, Rectification* result)
 {
     std::lock_guard lock(m_lock);
+    if (result) result->contrast = -1;
     if (!m_impl || m_stereo.mono) return E_NOT_VALID_STATE;
     auto& d = *m_impl;
     Rectification saved = m_rect;
@@ -829,8 +917,10 @@ HRESULT StereoPipeline::Calibrate(const uint8_t* yuy2, uint32_t yuy2Pitch, Recti
     m_gpu->Dispatch(Kernel::Unpack, {d.packed}, {d.mainYuv, d.secondYuv}, DivUp(m_stereo.eyeWidth / 2, 16),
         DivUp(m_stereo.eyeHeight, 8));
 
-    // Bail out cheaply on dark or featureless frames.
-    if (ScoreAlignment(0, 0) >= 1e8f) {
+    // Bail out cheaply on dark or featureless frames (the pixels counted come from the main sensor
+    // alone, so their number is the same at every offset).
+    const float atZero = ScoreAlignment(0, 0);
+    if (atZero >= 1e8f) {
         m_rect = saved;
         return E_FAIL;
     }
@@ -838,14 +928,18 @@ HRESULT StereoPipeline::Calibrate(const uint8_t* yuy2, uint32_t yuy2Pitch, Recti
     float bestDy = 0, bestRot = 0, best = 1e9f;
     std::vector<float> sweep;
     for (float dy = -12; dy <= 12; dy += 1.0f) {
-        float sc = ScoreAlignment(dy, 0);
+        float sc = dy == 0 ? atZero : ScoreAlignment(dy, 0);
         sweep.push_back(sc);
         if (sc < best) best = sc, bestDy = dy;
     }
-    // Noise-only frames give a flat curve; require a clear minimum before trusting the result.
+    // Noise-only frames give a flat curve; require a clear minimum, inside the sweep, before trusting
+    // the result. (Real frames, counting only well textured pixels: 13-15% below the median at the
+    // right offset; a desk right in front of the camera, nearer than the disparity range: 2.5%.)
     std::nth_element(sweep.begin(), sweep.begin() + sweep.size() / 2, sweep.end());
-    float median = sweep[sweep.size() / 2];
-    if (median <= 0 || (median - best) / median < 0.12f) {
+    const float median = sweep[sweep.size() / 2];
+    const float contrast = median > 0 && median < 1e8f ? (median - best) / median : 0.0f;
+    if (result) result->contrast = std::fabs(bestDy) >= 12 ? -2 : contrast;
+    if (contrast < kCalibrationContrast || std::fabs(bestDy) >= 12) {
         m_rect = saved;
         return E_FAIL;
     }
@@ -855,11 +949,7 @@ HRESULT StereoPipeline::Calibrate(const uint8_t* yuy2, uint32_t yuy2Pitch, Recti
             float sc = ScoreAlignment(dy, rot);
             if (sc < best) best = sc, bestDy = dy, bestRot = rot;
         }
-    if (best >= 1e8f) {
-        m_rect = saved;
-        return E_FAIL;  // not enough texture to decide
-    }
-    m_rect = {bestDy, bestRot, best};
+    m_rect = {bestDy, bestRot, best, contrast};
     m_haveHistory = false;
     RestartFocus();  // the disparities shift with the new alignment
     if (result) *result = m_rect;

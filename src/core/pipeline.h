@@ -97,6 +97,10 @@ struct Rectification {
     float dy = 0;        // vertical offset of the second sensor, eye pixels
     float rotation = 0;  // degrees
     float quality = 0;   // mean best census cost of the last calibration (lower is better), 0 = unknown
+    // How far the chosen offset stood out: (median - best) / median of the vertical sweep; -1: too
+    // little texture to try, -2: the best offset at the end of the sweep. Calibrate sets it on failure
+    // too, for the log.
+    float contrast = 0;
 };
 
 struct FrameStats {
@@ -146,8 +150,9 @@ private:
     void UpdateConstants(const EffectSettings* s, uint32_t pathDir);
     void RunDepth(const EffectSettings& s);
     float ScoreAlignment(float dy, float rotationDeg);
-    void UpdateFocus(const uint32_t* histogram, const EffectSettings& s);
+    void UpdateFocus(const uint32_t* histogram, const EffectSettings& s);  // 2 x kNumDisp bins (histogram.hlsl)
     void RestartFocus();  // the next histograms acquire the subject anew (kFocusAcquireFrames)
+    void GlideFocus(float target, bool atOnce);  // moves m_focus towards target like a lens refocusing
     // The subject's light from the meter grid (shaders/meter.hlsl): the mean luma of its head, and
     // how far to trust it (0 .. 1, by how much of the picture is subject).
     struct SubjectLight {
@@ -167,10 +172,14 @@ private:
     float m_focus = -1;
     static constexpr uint32_t kFocusSwitchFrames = 20;  // ~1/3 s at 60 fps
     static constexpr uint32_t kFocusAcquireFrames = 30; // after a start, the focus follows at once
+    static constexpr float kFocusProminence = 1.5f;     // a subject's peak over its surroundings (UpdateFocus)
+    static constexpr double kFocusHoldShare = 0.10;     // a followed peak this large keeps farther ones off
     uint32_t m_focusFrames = 0;                         // histograms the autofocus used since a start
     int m_focusPeak = -1;                               // histogram peak (bin) autofocus follows
+    bool m_focusAcquired = false;                       // ...and it is the one picked while acquiring
     int m_focusCandidate = -1;                          // peak waiting to take the focus over
     uint32_t m_focusCandidateFrames = 0;
+    float m_focusTarget = -1;                           // where the focus glides to, < 0: nowhere yet
     float m_gain = 1;
     float m_gainTarget = -1;       // the auto brightness's smoothed measurement, < 0: none yet
     bool m_gainSettling = false;   // the gain left the stable zone and moves to the target

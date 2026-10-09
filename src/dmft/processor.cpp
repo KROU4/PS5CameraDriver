@@ -1,7 +1,10 @@
 #include "processor.h"
 
+#include <knownfolders.h>
 #include <mfapi.h>
 #include <mferror.h>
+#include <sddl.h>
+#include <shlobj.h>
 
 #include <algorithm>
 #include <cmath>
@@ -92,6 +95,7 @@ int FrameProcessor::TakePowerLineRequest()
 void FrameProcessor::Reset()
 {
     m_pipeline.reset();  // releases the GPU device and its ~65 MB while nobody streams
+    EndRecording(L"stopped with the stream");
     m_lastTime = -1;
     m_flickerStarted = false;
     m_powerLineHeld = false;
@@ -145,12 +149,12 @@ bool FrameProcessor::EnsurePipeline()
     }
     StoredCalibration cal = m_stereo.mono ? StoredCalibration{} : LoadCalibration(m_mode.key);
     if (cal.valid) {
-        p->SetRectification({cal.dy, cal.rotation, 0});
+        p->SetRectification({cal.dy, cal.rotation, 0, 0});
     } else if (m_stereo.halfSecond) {
         // Same sensors as the full 1080 stereo mode with the roles swapped: its alignment, inverted,
         // is a good start until this mode's own calibration succeeds.
         StoredCalibration full = LoadCalibration(L"1080");
-        if (full.valid) p->SetRectification({-full.dy, -full.rotation, 0});
+        if (full.valid) p->SetRectification({-full.dy, -full.rotation, 0, 0});
     }
     m_calib.Start(!m_stereo.mono && (!cal.valid || LoadCalibrationRequest() != LoadCalibrationHandled()), m_frameCount);
     m_pipeline = std::move(p);
@@ -168,7 +172,16 @@ void FrameProcessor::Calibrate(const uint8_t* yuy2, uint32_t pitch)
         SaveCalibrationHandled(request);
         Log(L"calibrated %ls: dy %.2f roll %.2f (score %.2f)", m_mode.key, r.dy, r.rotation, r.quality);
     } else {
-        m_calib.Failed(m_frameCount, m_fps);  // dark or featureless scene
+        // Dark or featureless scene, or nothing at a usable distance: tried again later. The first
+        // few failures go to the log, so a camera that never calibrates can be told apart.
+        if (m_calib.Failures() < 3) {
+            if (r.contrast == -2) Log(L"calibration %ls: best offset at the end of the search, trying later", m_mode.key);
+            else if (r.contrast < 0) Log(L"calibration %ls: too little texture, trying later", m_mode.key);
+            else
+                Log(L"calibration %ls: no clear alignment (contrast %.1f%%), trying later", m_mode.key,
+                    r.contrast * 100);
+        }
+        m_calib.Failed(m_frameCount, m_fps);
     }
 }
 
@@ -223,6 +236,10 @@ ComPtr<IMFSample> FrameProcessor::Process(IMFSample* input)
     ComPtr<IMFSample> out;
     if (!otherMode && pitch >= static_cast<LONG>(rowBytes) && available >= size_t(pitch) * (rows - 1) + rowBytes) {
         ++m_frameCount;
+        // Taken only while frames flow, so the file is named after the sensor mode actually streaming.
+        if (!m_recordLeft)
+            if (uint32_t frames = TakeRecordRequest()) StartRecording(frames);
+        if (m_recordLeft) Record(scan0, pitch, rowBytes, rows);
         Calibrate(scan0, static_cast<uint32_t>(pitch));
         MainRowMeans(scan0, static_cast<uint32_t>(pitch), m_stereo, m_rowMeans);
         if (const int pl = m_flicker.Update(m_rowMeans); pl >= 0) {
@@ -269,6 +286,58 @@ ComPtr<IMFSample> FrameProcessor::Process(IMFSample* input)
     if (twoD) b2->Unlock2D();
     else buf->Unlock();
     return out;
+}
+
+void FrameProcessor::StartRecording(uint32_t frames)
+{
+    PWSTR programData = nullptr;
+    if (FAILED(SHGetKnownFolderPath(FOLDERID_ProgramData, 0, nullptr, &programData))) {
+        Log(L"recording: no ProgramData folder");
+        return;
+    }
+    std::wstring path = std::wstring(programData) + L"\\PS5Camera\\record-" + m_mode.key + L".raw";
+    CoTaskMemFree(programData);
+    // The frames show whoever sits at the camera: SYSTEM, admins and Frame Server's account only,
+    // not the users who may read the log folder. A new file, since an existing one would keep its ACL.
+    DeleteFileW(path.c_str());
+    SECURITY_ATTRIBUTES sa = {sizeof(sa)};
+    DWORD error = 0;
+    if (ConvertStringSecurityDescriptorToSecurityDescriptorW(L"D:P(A;;FA;;;SY)(A;;FA;;;BA)(A;;FA;;;LS)", SDDL_REVISION_1,
+            &sa.lpSecurityDescriptor, nullptr)) {
+        m_record = CreateFileW(path.c_str(), GENERIC_WRITE, 0, &sa, CREATE_NEW, FILE_ATTRIBUTE_NORMAL, nullptr);
+        error = GetLastError();
+        LocalFree(sa.lpSecurityDescriptor);
+    }
+    m_recordLeft = m_record != INVALID_HANDLE_VALUE ? frames : 0;
+    m_recordFrameBytes = 0;
+    if (m_recordLeft) Log(L"recording %u raw frames to %ls", frames, path.c_str());
+    else Log(L"recording to %ls failed (error %lu; the old file open elsewhere?)", path.c_str(), error);
+}
+
+void FrameProcessor::Record(const BYTE* scan0, LONG pitch, uint32_t rowBytes, uint32_t rows)
+{
+    // Debug aid: ~5 MB per frame written synchronously, so a few frames get dropped meanwhile.
+    const uint32_t frameBytes = rowBytes * rows;
+    if (!m_recordFrameBytes) m_recordFrameBytes = frameBytes;
+    bool written = frameBytes == m_recordFrameBytes;
+    const bool packed = pitch == static_cast<LONG>(rowBytes);  // usually: the whole frame in one write
+    for (uint32_t y = 0; written && y < (packed ? 1 : rows); ++y) {
+        const DWORD bytes = packed ? frameBytes : rowBytes;
+        DWORD done = 0;
+        written = WriteFile(m_record, scan0 + size_t(pitch) * y, bytes, &done, nullptr) && done == bytes;
+    }
+    if (!written) EndRecording(L"stopped (sensor mode changed or disk error)");
+    else if (--m_recordLeft == 0) EndRecording(L"finished");
+}
+
+void FrameProcessor::EndRecording(const wchar_t* why)
+{
+    if (m_record != INVALID_HANDLE_VALUE) {
+        CloseHandle(m_record);
+        m_record = INVALID_HANDLE_VALUE;
+        Log(L"recording %ls", why);
+    }
+    m_recordLeft = 0;
 }
 
 void FrameProcessor::PublishStatus()

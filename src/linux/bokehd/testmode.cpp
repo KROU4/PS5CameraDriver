@@ -84,13 +84,13 @@ int RunTest(const TestOptions& o)
     double cpuTotal = 0, gpuTotal = 0;
     while (n < o.frames && in.read(reinterpret_cast<char*>(frame.data()), std::streamsize(frameBytes))) {
         if (n == 0 && o.haveDy) {
-            p.SetRectification({o.dy, 0, 0});
+            p.SetRectification({o.dy, 0, 0, 0});
         } else if (n == 0) {
             Rectification r;
             const auto t0 = std::chrono::steady_clock::now();
             hr = p.Calibrate(frame.data(), pitch, &r);
-            printf("calibration %s: dy %.2f px, roll %.2f deg, score %.2f (%.0f ms)\n", SUCCEEDED(hr) ? "ok" : "failed",
-                r.dy, r.rotation, r.quality, MsSince(t0));
+            printf("calibration %s: dy %.2f px, roll %.2f deg, score %.2f, contrast %.1f%% (%.0f ms)\n",
+                SUCCEEDED(hr) ? "ok" : "failed", r.dy, r.rotation, r.quality, r.contrast * 100, MsSince(t0));
         }
         FrameStats st;
         const auto t0 = std::chrono::steady_clock::now();

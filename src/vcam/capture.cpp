@@ -283,13 +283,13 @@ bool CaptureEngine::EnsurePipeline()
     }
     StoredCalibration cal = m_stereo.mono ? StoredCalibration{} : LoadCalibration(m_sensorKey);
     if (cal.valid) {
-        p->SetRectification({cal.dy, cal.rotation, 0});
+        p->SetRectification({cal.dy, cal.rotation, 0, 0});
     } else if (m_stereo.halfSecond) {
         // Same sensors as the full 1080 stereo mode with the roles swapped: its alignment, inverted,
         // is a good start until this mode's own calibration succeeds.
         StoredCalibration full = LoadCalibration(L"1080");
         if (full.valid) {
-            p->SetRectification({-full.dy, -full.rotation, 0});
+            p->SetRectification({-full.dy, -full.rotation, 0, 0});
             Log(L"%ls not calibrated yet, starting from the inverted 1080 one: dy %.2f roll %.2f", m_sensorKey,
                 -full.dy, -full.rotation);
         }
@@ -574,7 +574,15 @@ void CaptureEngine::Deliver(const uint8_t* yuy2, uint32_t pitch)
             SaveCalibrationHandled(request);
             Log(L"calibrated %ls: dy %.2f roll %.2f (score %.2f)", m_sensorKey, r.dy, r.rotation, r.quality);
         } else {
-            m_calib.Failed(m_frameCount, m_req.fps);  // dark or featureless scene
+            // Dark or featureless scene, or nothing at a usable distance: tried again later.
+            if (m_calib.Failures() < 3) {
+                if (r.contrast == -2) Log(L"calibration %ls: best offset at the end of the search, trying later", m_sensorKey);
+                else if (r.contrast < 0) Log(L"calibration %ls: too little texture, trying later", m_sensorKey);
+                else
+                    Log(L"calibration %ls: no clear alignment (contrast %.1f%%), trying later", m_sensorKey,
+                        r.contrast * 100);
+            }
+            m_calib.Failed(m_frameCount, m_req.fps);
         }
     }
     MainRowMeans(yuy2, pitch, m_stereo, m_rowMeans);
