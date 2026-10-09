@@ -19,6 +19,7 @@
 <meta property="og:image" content="https://krou4.github.io/PS5CameraDriver/assets/og.png">
 <meta property="og:image:width" content="1200">
 <meta property="og:image:height" content="630">
+<meta property="og:image:alt" content="PS5 HD Camera as your PC webcam: 1080p at 60 fps and background blur from real depth">
 <meta property="og:locale" content="en_US">
 <meta property="og:locale:alternate" content="ru_RU">
 <meta name="twitter:card" content="summary_large_image">
@@ -34,7 +35,6 @@
   "operatingSystem": "Windows 11, Linux, macOS",
   "url": "https://krou4.github.io/PS5CameraDriver/",
   "downloadUrl": "https://github.com/KROU4/PS5CameraDriver/releases/latest",
-  "codeRepository": "https://github.com/KROU4/PS5CameraDriver",
   "license": "https://www.gnu.org/licenses/gpl-3.0.html",
   "isAccessibleForFree": true,
   "offers": { "@type": "Offer", "price": "0", "priceCurrency": "USD" },
@@ -46,25 +46,88 @@
 {
   "@context": "https://schema.org",
   "@type": "FAQPage",
+  "inLanguage": "en",
   "mainEntity": [
-    { "@type": "Question", "name": "Can I use the PS5 HD Camera on a PC?",
-      "acceptedAnswer": { "@type": "Answer", "text": "Yes. This free, open-source driver makes the PlayStation 5 HD Camera (CFI-ZEY1) a regular webcam: on Windows 11 at native 1920x1080 and 60 fps with optional background blur from real depth, on Linux at 1080p 30/60 fps (bokeh experimental) and on macOS at 1080p 30/60 fps without bokeh." } },
-    { "@type": "Question", "name": "Do I need an adapter for the PS5 camera on PC?",
-      "acceptedAnswer": { "@type": "Answer", "text": "No adapter is needed: plug the camera into a USB 3 port. On a USB 2.0 port the camera only delivers 640x400." } },
-    { "@type": "Question", "name": "Does the PS5 camera work in Zoom, Teams, Discord and OBS?",
-      "acceptedAnswer": { "@type": "Answer", "text": "Yes. With the driver installed the camera appears as \"PS5 Camera\" in every program that uses webcams: Zoom, Microsoft Teams, Discord, Telegram, OBS Studio, web browsers and the Windows Camera app." } },
-    { "@type": "Question", "name": "How does the background blur work without AI?",
-      "acceptedAnswer": { "@type": "Answer", "text": "The camera has two image sensors. The driver compares the two images with a stereo algorithm (census transform and semi-global matching) on the graphics card, which gives the distance of every pixel, and blurs what lies behind the person like a camera lens with a shallow depth of field. No neural networks are used." } },
-    { "@type": "Question", "name": "What computer do I need?",
-      "acceptedAnswer": { "@type": "Answer", "text": "Windows 11, a USB 3 port and a graphics card with Direct3D 11 (Vulkan 1.1 on Linux). On an RTX 3060 Ti a 1080p60 frame takes 2.6–2.9 ms of GPU time without effects and about 9 ms with bokeh. Without a graphics card the picture cannot be computed fast enough." } },
-    { "@type": "Question", "name": "Is it safe? Does it install a kernel driver?",
-      "acceptedAnswer": { "@type": "Answer", "text": "There is no kernel code and no test mode. The effect runs in user mode as a Device MFT inside Windows Camera Frame Server; the camera's boot mode uses Windows' built-in WinUSB driver. The source code is public under GPL-3.0." } },
-    { "@type": "Question", "name": "Why does the installer download Sony firmware?",
-      "acceptedAnswer": { "@type": "Answer", "text": "The camera needs firmware every time it is plugged in. Sony's firmware is not redistributed: the installer downloads the original image from public copies, checks its SHA-256 and applies the driver's 90-byte change (1080p at 60 fps, the depth mode, automatic exposure). Without internet access the installation still completes and the service fetches the firmware later." } },
-    { "@type": "Question", "name": "Does it work with the PS4 camera?",
-      "acceptedAnswer": { "@type": "Answer", "text": "No. The driver is for the PlayStation 5 HD Camera (CFI-ZEY1), which plugs into a regular USB 3 port. The PS4 camera uses a proprietary connector and different firmware." } },
-    { "@type": "Question", "name": "Is it free?",
-      "acceptedAnswer": { "@type": "Answer", "text": "Yes. The driver is free and open source under the GNU GPL 3.0. Sony's camera firmware is not part of the project." } }
+    {
+      "@type": "Question",
+      "name": "Can I use the PS5 HD Camera on a PC?",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "Yes. This free, open-source driver makes the PlayStation 5 HD Camera (CFI-ZEY1) a regular webcam: on Windows 11 at native 1920×1080 and 60 fps with optional background blur from real depth, on Linux at 1080p 30/60 fps (bokeh experimental) and on macOS at 1080p 30/60 fps without bokeh."
+      }
+    },
+    {
+      "@type": "Question",
+      "name": "Do I need an adapter for the PS5 camera on PC?",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "No adapter is needed: plug the camera into a USB 3 port. On a USB 2.0 port the camera only delivers 640×400."
+      }
+    },
+    {
+      "@type": "Question",
+      "name": "Does the PS5 camera work in Zoom, Teams, Discord and OBS?",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "Yes, in every program that uses webcams: Zoom, Microsoft Teams, Discord, Telegram, OBS Studio, web browsers and the Windows Camera app. On Windows, and on Linux with bokeh, the camera is called “PS5 Camera”; on macOS and on Linux without bokeh, “USB Camera-OV580”."
+      }
+    },
+    {
+      "@type": "Question",
+      "name": "How does the background blur work without AI?",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "The camera has two image sensors. The driver compares the two images with a stereo algorithm (census transform and semi-global matching) on the graphics card, which gives the distance of every pixel, and blurs what lies behind the person like a camera lens with a shallow depth of field. No neural networks are used."
+      }
+    },
+    {
+      "@type": "Question",
+      "name": "What computer do I need?",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "On Windows: Windows 11, a USB 3 port and a graphics card with Direct3D 11; integrated graphics count. The driver processes the picture on the GPU: on an RTX 3060 Ti a 1080p60 frame takes 2.6–2.9 ms without effects and about 9 ms with bokeh, and without a graphics card it cannot keep up. On Linux the bokeh needs Vulkan 1.1; the plain camera on Linux and macOS needs no GPU."
+      }
+    },
+    {
+      "@type": "Question",
+      "name": "Is it safe? Does it install a kernel driver?",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "On Windows there is no kernel code and no test mode. The effect runs in user mode as a Device MFT inside Windows Camera Frame Server, and the camera's boot mode uses Windows' built-in WinUSB driver: the installer adds a certificate created on your computer to the trusted stores to install that driver package and deletes its private key right away, so nothing else can be signed with it. On Windows nothing is sent over the network except the firmware download. On Linux the bokeh uses the v4l2loopback kernel module, which the installer installs. The source code is public under GPL-3.0."
+      }
+    },
+    {
+      "@type": "Question",
+      "name": "Why does the installer download Sony firmware?",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "The camera needs firmware every time it is plugged in. Sony's firmware is not redistributed: the installer downloads the original image from third-party copies on GitHub, checks its SHA-256 and applies the driver's 90-byte change (1080p at 60 fps, the depth mode, automatic exposure). On Windows an installation without internet access still completes and the service fetches the firmware later; on Linux and macOS the installer needs internet access or the original placed next to it as sony-firmware.bin."
+      }
+    },
+    {
+      "@type": "Question",
+      "name": "Does it work with the PS4 camera?",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "No. The driver is for the PlayStation 5 HD Camera (CFI-ZEY1) only. The PS4 camera is a different device and is not supported, even through a USB adapter."
+      }
+    },
+    {
+      "@type": "Question",
+      "name": "What are the limitations?",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "One program uses the camera at a time, as with any webcam. The camera measures depth from about half a metre: anything closer is blurred unevenly. Bokeh on Linux is experimental, and macOS has no bokeh (it would need a camera system extension, which macOS only runs with an Apple developer signature)."
+      }
+    },
+    {
+      "@type": "Question",
+      "name": "Is it free?",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "Yes. The driver is free and open source under the GNU GPL 3.0. Sony's camera firmware is not part of the project."
+      }
+    }
   ]
 }
 </script>
@@ -92,7 +155,7 @@
     <div>
       <p class="eyebrow">Free, open-source driver</p>
       <h1>The PS5 HD Camera as your PC webcam</h1>
-      <p class="lead">Native 1920×1080 at 60 fps and a background blur from real depth: the camera's two sensors measure how far everything is, and your graphics card blurs what lies behind you, like a lens. No neural networks, no kernel driver.</p>
+      <p class="lead">Native 1920×1080 at 60 fps and a background blur from real depth: the camera's two sensors measure how far everything is, and your graphics card blurs what lies behind you, like a lens. No neural networks, and no kernel driver on Windows.</p>
       <div class="cta">
         <a class="btn primary" href="https://github.com/KROU4/PS5CameraDriver/releases/latest/download/PS5CameraDriver.msi">Download for Windows 11 <small>MSI</small></a>
         <a class="btn" href="https://github.com/KROU4/PS5CameraDriver/releases/latest">Linux &amp; macOS</a>
@@ -141,7 +204,7 @@
         <text x="120" y="290" text-anchor="middle" fill="var(--muted)" font-size="15" font-family="system-ui, sans-serif">Depth (near = bright)</text>
         <text x="360" y="290" text-anchor="middle" fill="var(--muted)" font-size="15" font-family="system-ui, sans-serif">Sharp you, blurred room</text>
       </svg>
-      <p>An illustration of what the GPU does with every frame, at 60 frames a second.</p>
+      <figcaption>An illustration of what the GPU does with every frame, at 60 frames a second.</figcaption>
     </figure>
   </div>
 </section>
@@ -149,7 +212,7 @@
 <section id="features">
   <div class="wrap">
     <h2>What you get</h2>
-    <p class="sub">The PlayStation 5 HD Camera has two Full HD sensors. Sony uses them for the console; this driver turns them into one of the best webcams you can plug into a PC.</p>
+    <p class="sub">The PlayStation 5 HD Camera has two Full HD sensors. Sony uses them for the console; this driver turns them into a Full HD webcam for your PC that knows how far everything is.</p>
     <div class="grid">
       <div class="card">
         <div class="icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><rect x="3" y="6" width="18" height="12" rx="2"/><path d="M8 10v4M8 12h3M11 10v4M14 10h2a2 2 0 0 1 0 4h-2z"/></svg></div>
@@ -169,7 +232,7 @@
       <div class="card">
         <div class="icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M2 12h2M20 12h2M5 5l1.5 1.5M17.5 17.5 19 19M5 19l1.5-1.5M17.5 6.5 19 5"/></svg></div>
         <h3>Exposure on you</h3>
-        <p>Brightness is measured on your face, not the whole frame: sitting in front of a bright window no longer leaves you as a dark shape.</p>
+        <p>With bokeh on, brightness is metered on your head, not the whole frame: sitting in front of a bright window no longer leaves you as a dark shape.</p>
       </div>
       <div class="card">
         <div class="icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/></svg></div>
@@ -179,7 +242,7 @@
       <div class="card">
         <div class="icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><rect x="3" y="4" width="18" height="13" rx="2"/><path d="M8 21h8M12 17v4"/></svg></div>
         <h3>Works in every program</h3>
-        <p>The camera shows up as “PS5 Camera” in Zoom, Teams, Discord, Telegram, OBS, browsers and the Camera app. No kernel driver, no test mode.</p>
+        <p>On Windows the camera shows up as “PS5 Camera” in Zoom, Teams, Discord, Telegram, OBS, browsers and the Camera app, with no kernel driver and no test mode.</p>
       </div>
     </div>
   </div>
@@ -208,28 +271,29 @@
         <ul>
           <li>Download <a href="https://github.com/KROU4/PS5CameraDriver/releases/latest/download/PS5CameraDriver.msi">PS5CameraDriver.msi</a> (in Russian: <a href="https://github.com/KROU4/PS5CameraDriver/releases/latest/download/PS5CameraDriver-ru.msi">-ru.msi</a>) and run it.</li>
           <li>Choose “PS5 Camera” in your programs. Bokeh is on after the first installation.</li>
-          <li>Until releases are code-signed, SmartScreen may warn about an unknown publisher.</li>
+          <li>Needs administrator rights. Until releases are code-signed, SmartScreen may warn about an unknown publisher.</li>
+          <li>Unattended, from an administrator prompt:</li>
         </ul>
         <pre><code>msiexec /i PS5CameraDriver.msi /qn BOKEH=on</code></pre>
       </div>
       <div class="card">
         <h3>Linux</h3>
         <ul>
-          <li>From <a href="https://github.com/KROU4/PS5CameraDriver/releases/latest">PS5CameraDriver-linux.zip</a>; systemd and udev required.</li>
-          <li><code>--bokeh on</code> adds the experimental blur: x86_64, a GPU with Vulkan 1.1, v4l2loopback.</li>
+          <li>From <a href="https://github.com/KROU4/PS5CameraDriver/releases/latest">PS5CameraDriver-linux.zip</a>; systemd and udev required. Choose “USB Camera-OV580” (plain camera) or, with bokeh, “PS5 Camera”.</li>
+          <li><code>--bokeh on</code> adds the experimental blur: x86_64 with glibc 2.34+ (Ubuntu 22.04, Debian 12, Fedora 35 or newer), a GPU with Vulkan 1.1. The installer installs the v4l2loopback kernel module; with Secure Boot, choose “Enroll MOK” on the next reboot.</li>
         </ul>
         <pre><code>sudo bash install.sh --bokeh on</code></pre>
       </div>
       <div class="card">
         <h3>macOS</h3>
         <ul>
-          <li>From <a href="https://github.com/KROU4/PS5CameraDriver/releases/latest">PS5CameraDriver-macos.zip</a>; the camera at 1080p 30/60 fps, without bokeh.</li>
+          <li>From <a href="https://github.com/KROU4/PS5CameraDriver/releases/latest">PS5CameraDriver-macos.zip</a>; the camera at 1080p 30/60 fps, without bokeh. Choose “USB Camera-OV580” in your program.</li>
           <li>Needs Command Line Tools: <code>xcode-select --install</code>.</li>
         </ul>
         <pre><code>sudo bash install.sh</code></pre>
       </div>
     </div>
-    <p class="note">A winget package (<code>KROU4.PS5CameraDriver</code>) is under review. The installer downloads Sony's original camera firmware from public copies, checks it and applies the driver's changes; without internet access the installation still completes and the service fetches it later. Details: <a href="https://github.com/KROU4/PS5CameraDriver/blob/main/installer/README.txt">installer/README.txt</a>.</p>
+    <p class="note">A winget package (<code>KROU4.PS5CameraDriver</code>) is under review. The installer downloads Sony's original camera firmware from third-party copies on GitHub, checks it and applies the driver's changes. On Windows an installation without internet access still completes and the service fetches the firmware later; on Linux and macOS the installer needs internet access, or put the original next to it as <code>sony-firmware.bin</code>. Details: <a href="https://github.com/KROU4/PS5CameraDriver/blob/main/installer/README.txt">Windows</a>, <a href="https://github.com/KROU4/PS5CameraDriver/blob/main/installer/linux/README.txt">Linux</a>, <a href="https://github.com/KROU4/PS5CameraDriver/blob/main/installer/macos/README.txt">macOS</a>.</p>
   </div>
 </section>
 
@@ -248,7 +312,7 @@
         </tbody>
       </table>
     </div>
-    <p class="note">Without a graphics card (Windows' software renderer on a 6-core CPU) a frame takes 165 ms without effects and 550 ms with bokeh, so a GPU is required. The work per frame is the same on any card: for bokeh at 60 fps a card needs to be roughly at least 60% as fast as an RTX 3060 Ti; integrated graphics will most likely manage bokeh only at 30 fps or the camera without effects (an estimate, not a measurement). Share your numbers from <code>ps5cam-ctl status</code> in <a href="https://github.com/KROU4/PS5CameraDriver/discussions">Discussions</a>.</p>
+    <p class="note">Without a graphics card (Windows' software renderer on a 6-core CPU) a frame takes 165 ms without effects and 550 ms with bokeh, so a GPU is required. The work per frame is the same on any card: for bokeh at 60 fps a card needs to be roughly at least 60% as fast as an RTX 3060 Ti, at 30 fps about a quarter (programs are offered 30 fps after <code>ps5cam-ctl set fullhdonly 0</code>, see <a href="https://github.com/KROU4/PS5CameraDriver/blob/main/installer/README.txt">installer/README.txt</a>); integrated graphics will most likely manage bokeh only at 30 fps or the camera without effects (an estimate, not a measurement). Share your numbers from <code>ps5cam-ctl status</code> in <a href="https://github.com/KROU4/PS5CameraDriver/discussions">Discussions</a>.</p>
   </div>
 </section>
 
@@ -258,12 +322,12 @@
     <p class="sub">Answers to what people ask about the PS5 camera on a PC.</p>
     <details open><summary>Can I use the PS5 HD Camera on a PC?</summary><div><p>Yes. This free, open-source driver makes the PlayStation 5 HD Camera (CFI-ZEY1) a regular webcam: on Windows 11 at native 1920×1080 and 60 fps with optional background blur from real depth, on Linux at 1080p 30/60 fps (bokeh experimental) and on macOS at 1080p 30/60 fps without bokeh.</p></div></details>
     <details><summary>Do I need an adapter for the PS5 camera on PC?</summary><div><p>No adapter is needed: plug the camera into a USB 3 port. On a USB 2.0 port the camera only delivers 640×400.</p></div></details>
-    <details><summary>Does it work in Zoom, Teams, Discord and OBS?</summary><div><p>Yes. With the driver installed the camera appears as “PS5 Camera” in every program that uses webcams: Zoom, Microsoft Teams, Discord, Telegram, OBS Studio, web browsers and the Windows Camera app.</p></div></details>
+    <details><summary>Does the PS5 camera work in Zoom, Teams, Discord and OBS?</summary><div><p>Yes, in every program that uses webcams: Zoom, Microsoft Teams, Discord, Telegram, OBS Studio, web browsers and the Windows Camera app. On Windows, and on Linux with bokeh, the camera is called “PS5 Camera”; on macOS and on Linux without bokeh, “USB Camera-OV580”.</p></div></details>
     <details><summary>How does the background blur work without AI?</summary><div><p>The camera has two image sensors. The driver compares the two images with a stereo algorithm (census transform and semi-global matching) on the graphics card, which gives the distance of every pixel, and blurs what lies behind the person like a camera lens with a shallow depth of field. No neural networks are used.</p></div></details>
-    <details><summary>What computer do I need?</summary><div><p>Windows 11, a USB 3 port and a graphics card with Direct3D 11 (Vulkan 1.1 on Linux). On an RTX 3060 Ti a 1080p60 frame takes 2.6–2.9 ms of GPU time without effects and about 9 ms with bokeh. Without a graphics card the picture cannot be computed fast enough.</p></div></details>
-    <details><summary>Is it safe? Does it install a kernel driver?</summary><div><p>There is no kernel code and no test mode. The effect runs in user mode as a Device MFT inside Windows Camera Frame Server; the camera's boot mode uses Windows' built-in WinUSB driver. The source code is public under GPL-3.0, and the program sends nothing over the network except the firmware download.</p></div></details>
-    <details><summary>Why does the installer download Sony firmware?</summary><div><p>The camera needs firmware every time it is plugged in. Sony's firmware is not redistributed: the installer downloads the original image from public copies, checks its SHA-256 and applies the driver's 90-byte change (1080p at 60 fps, the depth mode, automatic exposure). Without internet access the installation still completes and the service fetches the firmware later.</p></div></details>
-    <details><summary>Does it work with the PS4 camera?</summary><div><p>No. The driver is for the PlayStation 5 HD Camera (CFI-ZEY1), which plugs into a regular USB 3 port. The PS4 camera uses a proprietary connector and different firmware.</p></div></details>
+    <details><summary>What computer do I need?</summary><div><p>On Windows: Windows 11, a USB 3 port and a graphics card with Direct3D 11; integrated graphics count. The driver processes the picture on the GPU: on an RTX 3060 Ti a 1080p60 frame takes 2.6–2.9 ms without effects and about 9 ms with bokeh, and without a graphics card it cannot keep up. On Linux the bokeh needs Vulkan 1.1; the plain camera on Linux and macOS needs no GPU.</p></div></details>
+    <details><summary>Is it safe? Does it install a kernel driver?</summary><div><p>On Windows there is no kernel code and no test mode. The effect runs in user mode as a Device MFT inside Windows Camera Frame Server, and the camera's boot mode uses Windows' built-in WinUSB driver: the installer adds a certificate created on your computer to the trusted stores to install that driver package and deletes its private key right away, so nothing else can be signed with it. On Windows nothing is sent over the network except the firmware download. On Linux the bokeh uses the v4l2loopback kernel module, which the installer installs. The source code is public under GPL-3.0.</p></div></details>
+    <details><summary>Why does the installer download Sony firmware?</summary><div><p>The camera needs firmware every time it is plugged in. Sony's firmware is not redistributed: the installer downloads the original image from third-party copies on GitHub, checks its SHA-256 and applies the driver's 90-byte change (1080p at 60 fps, the depth mode, automatic exposure). On Windows an installation without internet access still completes and the service fetches the firmware later; on Linux and macOS the installer needs internet access or the original placed next to it as sony-firmware.bin.</p></div></details>
+    <details><summary>Does it work with the PS4 camera?</summary><div><p>No. The driver is for the PlayStation 5 HD Camera (CFI-ZEY1) only. The PS4 camera is a different device and is not supported, even through a USB adapter.</p></div></details>
     <details><summary>What are the limitations?</summary><div><p>One program uses the camera at a time, as with any webcam. The camera measures depth from about half a metre: anything closer is blurred unevenly. Bokeh on Linux is experimental, and macOS has no bokeh (it would need a camera system extension, which macOS only runs with an Apple developer signature).</p></div></details>
     <details><summary>Is it free?</summary><div><p>Yes. The driver is free and open source under the GNU GPL 3.0. Sony's camera firmware is not part of the project.</p></div></details>
   </div>

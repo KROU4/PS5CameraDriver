@@ -19,6 +19,7 @@
 <meta property="og:image" content="https://krou4.github.io/PS5CameraDriver/assets/og-ru.png">
 <meta property="og:image:width" content="1200">
 <meta property="og:image:height" content="630">
+<meta property="og:image:alt" content="Камера PS5 как веб-камера для ПК: 1080p при 60 к/с и размытие фона по настоящей глубине">
 <meta property="og:locale" content="ru_RU">
 <meta property="og:locale:alternate" content="en_US">
 <meta name="twitter:card" content="summary_large_image">
@@ -34,7 +35,6 @@
   "operatingSystem": "Windows 11, Linux, macOS",
   "url": "https://krou4.github.io/PS5CameraDriver/ru/",
   "downloadUrl": "https://github.com/KROU4/PS5CameraDriver/releases/latest",
-  "codeRepository": "https://github.com/KROU4/PS5CameraDriver",
   "license": "https://www.gnu.org/licenses/gpl-3.0.html",
   "isAccessibleForFree": true,
   "offers": { "@type": "Offer", "price": "0", "priceCurrency": "USD" },
@@ -48,24 +48,86 @@
   "@type": "FAQPage",
   "inLanguage": "ru",
   "mainEntity": [
-    { "@type": "Question", "name": "Можно ли подключить камеру PS5 к компьютеру?",
-      "acceptedAnswer": { "@type": "Answer", "text": "Да. Этот бесплатный драйвер с открытым кодом делает камеру PlayStation 5 HD Camera (CFI-ZEY1) обычной веб-камерой: на Windows 11 — родные 1920x1080 при 60 к/с и по желанию размытие фона по настоящей глубине, на Linux — 1080p при 30 и 60 к/с (боке экспериментально), на macOS — 1080p при 30 и 60 к/с без боке." } },
-    { "@type": "Question", "name": "Нужен ли переходник для камеры PS5 на ПК?",
-      "acceptedAnswer": { "@type": "Answer", "text": "Переходник не нужен: камера подключается в порт USB 3. В порту USB 2.0 камера отдаёт только 640x400." } },
-    { "@type": "Question", "name": "Работает ли камера PS5 в Zoom, Teams, Discord и OBS?",
-      "acceptedAnswer": { "@type": "Answer", "text": "Да. С драйвером камера видна как «PS5 Camera» во всех программах, которые работают с веб-камерами: Zoom, Microsoft Teams, Discord, Telegram, OBS Studio, браузерах и приложении «Камера» Windows." } },
-    { "@type": "Question", "name": "Как размывается фон без нейросетей?",
-      "acceptedAnswer": { "@type": "Answer", "text": "У камеры два сенсора. Драйвер сравнивает два изображения стерео-алгоритмом (census-преобразование и semi-global matching) на видеокарте, получает расстояние до каждой точки и размывает то, что дальше человека, как объектив с малой глубиной резкости. Нейросети не используются." } },
-    { "@type": "Question", "name": "Какой нужен компьютер?",
-      "acceptedAnswer": { "@type": "Answer", "text": "Windows 11, порт USB 3 и видеокарта с Direct3D 11 (на Linux — Vulkan 1.1). На RTX 3060 Ti кадр 1080p60 занимает 2,6–2,9 мс времени видеокарты без эффектов и около 9 мс с боке. Без видеокарты картинка не успевает считаться." } },
-    { "@type": "Question", "name": "Это безопасно? Ставится ли драйвер ядра?",
-      "acceptedAnswer": { "@type": "Answer", "text": "Кода в ядре нет, тестовый режим не нужен. Эффект работает в пользовательском режиме как Device MFT внутри Windows Camera Frame Server; для загрузочного режима камеры используется встроенный в Windows драйвер WinUSB. Исходный код открыт под GPL-3.0." } },
-    { "@type": "Question", "name": "Зачем установщик скачивает прошивку Sony?",
-      "acceptedAnswer": { "@type": "Answer", "text": "Камере нужна прошивка при каждом подключении. Прошивка Sony не распространяется с драйвером: установщик скачивает оригинальный образ из публичных копий, проверяет его SHA-256 и вносит изменения драйвера — 90 байт (1080p при 60 к/с, режим глубины, автоматическая экспозиция). Без интернета установка всё равно завершается, а прошивку позже соберёт служба." } },
-    { "@type": "Question", "name": "Подойдёт ли камера PS4?",
-      "acceptedAnswer": { "@type": "Answer", "text": "Нет. Драйвер для камеры PlayStation 5 HD Camera (CFI-ZEY1), которая подключается в обычный порт USB 3. У камеры PS4 собственный разъём и другая прошивка." } },
-    { "@type": "Question", "name": "Это бесплатно?",
-      "acceptedAnswer": { "@type": "Answer", "text": "Да. Драйвер бесплатный, с открытым кодом под GNU GPL 3.0. Прошивка камеры принадлежит Sony и в проект не входит." } }
+    {
+      "@type": "Question",
+      "name": "Можно ли подключить камеру PS5 к компьютеру?",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "Да. Этот бесплатный драйвер с открытым кодом делает камеру PlayStation 5 HD Camera (CFI-ZEY1) обычной веб-камерой: на Windows 11 — родные 1920×1080 при 60 к/с и по желанию размытие фона по настоящей глубине, на Linux — 1080p при 30 и 60 к/с (боке экспериментально), на macOS — 1080p при 30 и 60 к/с без боке."
+      }
+    },
+    {
+      "@type": "Question",
+      "name": "Нужен ли переходник для камеры PS5 на ПК?",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "Переходник не нужен: камера подключается в порт USB 3. В порту USB 2.0 камера отдаёт только 640×400."
+      }
+    },
+    {
+      "@type": "Question",
+      "name": "Работает ли камера PS5 в Zoom, Teams, Discord и OBS?",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "Да, во всех программах, которые работают с веб-камерами: Zoom, Microsoft Teams, Discord, Telegram, OBS Studio, браузерах и приложении «Камера» Windows. На Windows и на Linux с боке камера называется «PS5 Camera», на macOS и на Linux без боке — «USB Camera-OV580»."
+      }
+    },
+    {
+      "@type": "Question",
+      "name": "Как размывается фон без нейросетей?",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "У камеры два сенсора. Драйвер сравнивает два изображения стерео-алгоритмом (census-преобразование и semi-global matching) на видеокарте, получает расстояние до каждой точки и размывает то, что дальше человека, как объектив с малой глубиной резкости. Нейросети не используются."
+      }
+    },
+    {
+      "@type": "Question",
+      "name": "Какой нужен компьютер?",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "На Windows: Windows 11, порт USB 3 и видеокарта с Direct3D 11, встроенная графика тоже подходит. Картинку драйвер обрабатывает на видеокарте: на RTX 3060 Ti кадр 1080p60 занимает 2,6–2,9 мс без эффектов и около 9 мс с боке, а без видеокарты обработка не успевает. На Linux для боке нужен Vulkan 1.1; обычной камере на Linux и macOS видеокарта не нужна."
+      }
+    },
+    {
+      "@type": "Question",
+      "name": "Это безопасно? Ставится ли драйвер ядра?",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "На Windows кода в ядре нет, тестовый режим не нужен. Эффект работает в пользовательском режиме как Device MFT внутри Windows Camera Frame Server, а для загрузочного режима камеры используется встроенный в Windows драйвер WinUSB: чтобы поставить этот пакет драйвера, установщик добавляет в доверенные хранилища сертификат, созданный на вашем компьютере, и сразу удаляет его закрытый ключ, так что ничем другим им подписать нельзя. На Windows в сеть ничего не отправляется, кроме скачивания прошивки. На Linux боке использует модуль ядра v4l2loopback, который ставит установщик. Исходный код открыт под GPL-3.0."
+      }
+    },
+    {
+      "@type": "Question",
+      "name": "Зачем установщик скачивает прошивку Sony?",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "Камере нужна прошивка при каждом подключении. Прошивка Sony не распространяется с драйвером: установщик скачивает оригинальный образ из сторонних копий на GitHub, проверяет его SHA-256 и вносит изменения драйвера — 90 байт (1080p при 60 к/с, режим глубины, автоматическая экспозиция). На Windows без интернета установка всё равно завершается, а прошивку позже соберёт служба; на Linux и macOS установщику нужен интернет или оригинал рядом с ним как sony-firmware.bin."
+      }
+    },
+    {
+      "@type": "Question",
+      "name": "Подойдёт ли камера PS4?",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "Нет. Драйвер только для камеры PlayStation 5 HD Camera (CFI-ZEY1). Камера PS4 — другое устройство, и она не поддерживается, даже через USB-переходник."
+      }
+    },
+    {
+      "@type": "Question",
+      "name": "Какие есть ограничения?",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "Камерой пользуется одна программа за раз, как с любой веб-камерой. Глубину камера измеряет примерно с полуметра: то, что ближе, размывается неровно. Боке на Linux экспериментальное, а на macOS его нет (нужно системное расширение камеры, которое macOS запускает только с подписью разработчика Apple)."
+      }
+    },
+    {
+      "@type": "Question",
+      "name": "Это бесплатно?",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "Да. Драйвер бесплатный, с открытым кодом под GNU GPL 3.0. Прошивка камеры принадлежит Sony и в проект не входит."
+      }
+    }
   ]
 }
 </script>
@@ -93,7 +155,7 @@
     <div>
       <p class="eyebrow">Бесплатный драйвер с открытым кодом</p>
       <h1>Камера PS5 как веб‑камера для компьютера</h1>
-      <p class="lead">Родные 1920×1080 при 60 к/с и размытие фона по настоящей глубине: два сенсора камеры измеряют, что как далеко, а видеокарта размывает то, что за вами, как объектив. Без нейросетей и без драйвера ядра.</p>
+      <p class="lead">Родные 1920×1080 при 60 к/с и размытие фона по настоящей глубине: два сенсора камеры измеряют, что как далеко, а видеокарта размывает то, что за вами, как объектив. Без нейросетей, а на Windows и без драйвера ядра.</p>
       <div class="cta">
         <a class="btn primary" href="https://github.com/KROU4/PS5CameraDriver/releases/latest/download/PS5CameraDriver-ru.msi">Скачать для Windows 11 <small>MSI</small></a>
         <a class="btn" href="https://github.com/KROU4/PS5CameraDriver/releases/latest">Linux и macOS</a>
@@ -142,7 +204,7 @@
         <text x="120" y="290" text-anchor="middle" fill="var(--muted)" font-size="15" font-family="system-ui, sans-serif">Глубина (ближе — светлее)</text>
         <text x="360" y="290" text-anchor="middle" fill="var(--muted)" font-size="15" font-family="system-ui, sans-serif">Вы резкий, комната размыта</text>
       </svg>
-      <p>Схема того, что видеокарта делает с каждым кадром, 60 раз в секунду.</p>
+      <figcaption>Схема того, что видеокарта делает с каждым кадром, 60 раз в секунду.</figcaption>
     </figure>
   </div>
 </section>
@@ -150,7 +212,7 @@
 <section id="features">
   <div class="wrap">
     <h2>Что вы получаете</h2>
-    <p class="sub">У камеры PlayStation 5 HD Camera два сенсора Full HD. Sony использует их для приставки, а этот драйвер делает из неё одну из лучших веб-камер, которые можно подключить к компьютеру.</p>
+    <p class="sub">У камеры PlayStation 5 HD Camera два сенсора Full HD. Sony использует их для приставки, а этот драйвер делает из неё веб-камеру Full HD для компьютера, которая знает, что как далеко.</p>
     <div class="grid">
       <div class="card">
         <div class="icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><rect x="3" y="6" width="18" height="12" rx="2"/><path d="M8 10v4M8 12h3M11 10v4M14 10h2a2 2 0 0 1 0 4h-2z"/></svg></div>
@@ -170,7 +232,7 @@
       <div class="card">
         <div class="icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M2 12h2M20 12h2M5 5l1.5 1.5M17.5 17.5 19 19M5 19l1.5-1.5M17.5 6.5 19 5"/></svg></div>
         <h3>Экспозиция по вам</h3>
-        <p>Яркость меряется по вашему лицу, а не по всему кадру: на фоне яркого окна вы больше не превращаетесь в тёмный силуэт.</p>
+        <p>С включённым боке яркость меряется по вашей голове, а не по всему кадру: на фоне яркого окна вы больше не превращаетесь в тёмный силуэт.</p>
       </div>
       <div class="card">
         <div class="icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/></svg></div>
@@ -180,7 +242,7 @@
       <div class="card">
         <div class="icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><rect x="3" y="4" width="18" height="13" rx="2"/><path d="M8 21h8M12 17v4"/></svg></div>
         <h3>Работает во всех программах</h3>
-        <p>Камера видна как «PS5 Camera» в Zoom, Teams, Discord, Telegram, OBS, браузерах и приложении «Камера». Без драйвера ядра и тестового режима.</p>
+        <p>На Windows камера видна как «PS5 Camera» в Zoom, Teams, Discord, Telegram, OBS, браузерах и приложении «Камера», без драйвера ядра и тестового режима.</p>
       </div>
     </div>
   </div>
@@ -209,28 +271,29 @@
         <ul>
           <li>Скачайте <a href="https://github.com/KROU4/PS5CameraDriver/releases/latest/download/PS5CameraDriver-ru.msi">PS5CameraDriver-ru.msi</a> (на английском — <a href="https://github.com/KROU4/PS5CameraDriver/releases/latest/download/PS5CameraDriver.msi">PS5CameraDriver.msi</a>) и запустите.</li>
           <li>В программах выберите «PS5 Camera». После первой установки боке включено.</li>
-          <li>Пока релизы без цифровой подписи, SmartScreen может предупредить о неизвестном издателе.</li>
+          <li>Нужны права администратора. Пока релизы без цифровой подписи, SmartScreen может предупредить о неизвестном издателе.</li>
+          <li>Установка без окон, из консоли администратора:</li>
         </ul>
         <pre><code>msiexec /i PS5CameraDriver-ru.msi /qn BOKEH=on</code></pre>
       </div>
       <div class="card">
         <h3>Linux</h3>
         <ul>
-          <li>Из <a href="https://github.com/KROU4/PS5CameraDriver/releases/latest">PS5CameraDriver-linux.zip</a>; нужны systemd и udev.</li>
-          <li><code>--bokeh on</code> добавляет экспериментальное боке: x86_64, видеокарта с Vulkan 1.1, v4l2loopback.</li>
+          <li>Из <a href="https://github.com/KROU4/PS5CameraDriver/releases/latest">PS5CameraDriver-linux.zip</a>; нужны systemd и udev. Выберите «USB Camera-OV580» (обычная камера) или, с боке, «PS5 Camera».</li>
+          <li><code>--bokeh on</code> добавляет экспериментальное боке: x86_64 с glibc 2.34+ (Ubuntu 22.04, Debian 12, Fedora 35 и новее), видеокарта с Vulkan 1.1. Установщик ставит модуль ядра v4l2loopback; при Secure Boot на следующей перезагрузке выберите «Enroll MOK».</li>
         </ul>
         <pre><code>sudo bash install.sh --bokeh on</code></pre>
       </div>
       <div class="card">
         <h3>macOS</h3>
         <ul>
-          <li>Из <a href="https://github.com/KROU4/PS5CameraDriver/releases/latest">PS5CameraDriver-macos.zip</a>; камера 1080p при 30 и 60 к/с, без боке.</li>
+          <li>Из <a href="https://github.com/KROU4/PS5CameraDriver/releases/latest">PS5CameraDriver-macos.zip</a>; камера 1080p при 30 и 60 к/с, без боке. В программе выберите «USB Camera-OV580».</li>
           <li>Нужны Command Line Tools: <code>xcode-select --install</code>.</li>
         </ul>
         <pre><code>sudo bash install.sh</code></pre>
       </div>
     </div>
-    <p class="note">Пакет winget (<code>KROU4.PS5CameraDriver</code>) на проверке. Установщик скачивает оригинальную прошивку камеры Sony из публичных копий, проверяет её и вносит изменения драйвера; без интернета установка всё равно завершается, а прошивку позже скачает служба. Подробности — в <a href="https://github.com/KROU4/PS5CameraDriver/blob/main/installer/README.ru.txt">installer/README.ru.txt</a>.</p>
+    <p class="note">Пакет winget (<code>KROU4.PS5CameraDriver</code>) на проверке. Установщик скачивает оригинальную прошивку камеры Sony из сторонних копий на GitHub, проверяет её и вносит изменения драйвера. На Windows без интернета установка всё равно завершается, а прошивку позже соберёт служба; на Linux и macOS установщику нужен интернет, либо положите оригинал рядом с ним как <code>sony-firmware.bin</code>. Подробности: <a href="https://github.com/KROU4/PS5CameraDriver/blob/main/installer/README.ru.txt">Windows</a>, <a href="https://github.com/KROU4/PS5CameraDriver/blob/main/installer/linux/README.ru.txt">Linux</a>, <a href="https://github.com/KROU4/PS5CameraDriver/blob/main/installer/macos/README.ru.txt">macOS</a>.</p>
   </div>
 </section>
 
@@ -249,7 +312,7 @@
         </tbody>
       </table>
     </div>
-    <p class="note">Без видеокарты (программный рендер Windows на 6-ядерном процессоре) кадр считается 165 мс без эффектов и 550 мс с боке, так что видеокарта обязательна. Работа на кадр одинакова на любой карте: для боке при 60 к/с нужна карта примерно не слабее 60% RTX 3060 Ti; встроенная графика, скорее всего, потянет боке только при 30 к/с или камеру без эффектов (это оценка, а не замер). Поделитесь своими цифрами из <code>ps5cam-ctl status</code> в <a href="https://github.com/KROU4/PS5CameraDriver/discussions">Discussions</a>.</p>
+    <p class="note">Без видеокарты (программный рендер Windows на 6-ядерном процессоре) кадр считается 165 мс без эффектов и 550 мс с боке, так что видеокарта обязательна. Работа на кадр одинакова на любой карте: для боке при 60 к/с нужна карта примерно не слабее 60% RTX 3060 Ti, при 30 к/с — около четверти (30 к/с программам предлагаются после <code>ps5cam-ctl set fullhdonly 0</code>, см. <a href="https://github.com/KROU4/PS5CameraDriver/blob/main/installer/README.ru.txt">installer/README.ru.txt</a>); встроенная графика, скорее всего, потянет боке только при 30 к/с или камеру без эффектов (это оценка, а не замер). Поделитесь своими цифрами из <code>ps5cam-ctl status</code> в <a href="https://github.com/KROU4/PS5CameraDriver/discussions">Discussions</a>.</p>
   </div>
 </section>
 
@@ -258,13 +321,13 @@
     <h2>Вопросы</h2>
     <p class="sub">Ответы на то, что спрашивают о камере PS5 на компьютере.</p>
     <details open><summary>Можно ли подключить камеру PS5 к компьютеру?</summary><div><p>Да. Этот бесплатный драйвер с открытым кодом делает камеру PlayStation 5 HD Camera (CFI-ZEY1) обычной веб-камерой: на Windows 11 — родные 1920×1080 при 60 к/с и по желанию размытие фона по настоящей глубине, на Linux — 1080p при 30 и 60 к/с (боке экспериментально), на macOS — 1080p при 30 и 60 к/с без боке.</p></div></details>
-    <details><summary>Нужен ли переходник?</summary><div><p>Переходник не нужен: камера подключается в порт USB 3. В порту USB 2.0 камера отдаёт только 640×400.</p></div></details>
-    <details><summary>Работает ли она в Zoom, Teams, Discord и OBS?</summary><div><p>Да. С драйвером камера видна как «PS5 Camera» во всех программах, которые работают с веб-камерами: Zoom, Microsoft Teams, Discord, Telegram, OBS Studio, браузерах и приложении «Камера» Windows.</p></div></details>
+    <details><summary>Нужен ли переходник для камеры PS5 на ПК?</summary><div><p>Переходник не нужен: камера подключается в порт USB 3. В порту USB 2.0 камера отдаёт только 640×400.</p></div></details>
+    <details><summary>Работает ли камера PS5 в Zoom, Teams, Discord и OBS?</summary><div><p>Да, во всех программах, которые работают с веб-камерами: Zoom, Microsoft Teams, Discord, Telegram, OBS Studio, браузерах и приложении «Камера» Windows. На Windows и на Linux с боке камера называется «PS5 Camera», на macOS и на Linux без боке — «USB Camera-OV580».</p></div></details>
     <details><summary>Как размывается фон без нейросетей?</summary><div><p>У камеры два сенсора. Драйвер сравнивает два изображения стерео-алгоритмом (census-преобразование и semi-global matching) на видеокарте, получает расстояние до каждой точки и размывает то, что дальше человека, как объектив с малой глубиной резкости. Нейросети не используются.</p></div></details>
-    <details><summary>Какой нужен компьютер?</summary><div><p>Windows 11, порт USB 3 и видеокарта с Direct3D 11 (на Linux — Vulkan 1.1). На RTX 3060 Ti кадр 1080p60 занимает 2,6–2,9 мс времени видеокарты без эффектов и около 9 мс с боке. Без видеокарты картинка не успевает считаться.</p></div></details>
-    <details><summary>Это безопасно? Ставится ли драйвер ядра?</summary><div><p>Кода в ядре нет, тестовый режим не нужен. Эффект работает в пользовательском режиме как Device MFT внутри Windows Camera Frame Server; для загрузочного режима камеры используется встроенный в Windows драйвер WinUSB. Исходный код открыт под GPL-3.0, а в сеть программа ничего не отправляет: она только скачивает прошивку.</p></div></details>
-    <details><summary>Зачем установщик скачивает прошивку Sony?</summary><div><p>Камере нужна прошивка при каждом подключении. Прошивка Sony не распространяется с драйвером: установщик скачивает оригинальный образ из публичных копий, проверяет его SHA-256 и вносит изменения драйвера — 90 байт (1080p при 60 к/с, режим глубины, автоматическая экспозиция). Без интернета установка всё равно завершается, а прошивку позже соберёт служба.</p></div></details>
-    <details><summary>Подойдёт ли камера PS4?</summary><div><p>Нет. Драйвер для камеры PlayStation 5 HD Camera (CFI-ZEY1), которая подключается в обычный порт USB 3. У камеры PS4 собственный разъём и другая прошивка.</p></div></details>
+    <details><summary>Какой нужен компьютер?</summary><div><p>На Windows: Windows 11, порт USB 3 и видеокарта с Direct3D 11, встроенная графика тоже подходит. Картинку драйвер обрабатывает на видеокарте: на RTX 3060 Ti кадр 1080p60 занимает 2,6–2,9 мс без эффектов и около 9 мс с боке, а без видеокарты обработка не успевает. На Linux для боке нужен Vulkan 1.1; обычной камере на Linux и macOS видеокарта не нужна.</p></div></details>
+    <details><summary>Это безопасно? Ставится ли драйвер ядра?</summary><div><p>На Windows кода в ядре нет, тестовый режим не нужен. Эффект работает в пользовательском режиме как Device MFT внутри Windows Camera Frame Server, а для загрузочного режима камеры используется встроенный в Windows драйвер WinUSB: чтобы поставить этот пакет драйвера, установщик добавляет в доверенные хранилища сертификат, созданный на вашем компьютере, и сразу удаляет его закрытый ключ, так что ничем другим им подписать нельзя. На Windows в сеть ничего не отправляется, кроме скачивания прошивки. На Linux боке использует модуль ядра v4l2loopback, который ставит установщик. Исходный код открыт под GPL-3.0.</p></div></details>
+    <details><summary>Зачем установщик скачивает прошивку Sony?</summary><div><p>Камере нужна прошивка при каждом подключении. Прошивка Sony не распространяется с драйвером: установщик скачивает оригинальный образ из сторонних копий на GitHub, проверяет его SHA-256 и вносит изменения драйвера — 90 байт (1080p при 60 к/с, режим глубины, автоматическая экспозиция). На Windows без интернета установка всё равно завершается, а прошивку позже соберёт служба; на Linux и macOS установщику нужен интернет или оригинал рядом с ним как sony-firmware.bin.</p></div></details>
+    <details><summary>Подойдёт ли камера PS4?</summary><div><p>Нет. Драйвер только для камеры PlayStation 5 HD Camera (CFI-ZEY1). Камера PS4 — другое устройство, и она не поддерживается, даже через USB-переходник.</p></div></details>
     <details><summary>Какие есть ограничения?</summary><div><p>Камерой пользуется одна программа за раз, как с любой веб-камерой. Глубину камера измеряет примерно с полуметра: то, что ближе, размывается неровно. Боке на Linux экспериментальное, а на macOS его нет (нужно системное расширение камеры, которое macOS запускает только с подписью разработчика Apple).</p></div></details>
     <details><summary>Это бесплатно?</summary><div><p>Да. Драйвер бесплатный, с открытым кодом под GNU GPL 3.0. Прошивка камеры принадлежит Sony и в проект не входит.</p></div></details>
   </div>
