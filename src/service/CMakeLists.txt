@@ -1,6 +1,6 @@
 add_executable(ps5cam-svc main.cpp ../common/firmware.cpp ../common/log.cpp ../common/vcamreg.cpp
     ../common/settings.cpp ../common/camdefaults.cpp)
-target_link_libraries(ps5cam-svc PRIVATE winusb cfgmgr32 advapi32 shell32 ole32 mfplat mfsensorgroup mfuuid wtsapi32 userenv)
+target_link_libraries(ps5cam-svc PRIVATE winusb cfgmgr32 advapi32 shell32 ole32 mfplat mfuuid wtsapi32 userenv)
 # The service uploads the firmware.bin next to its exe. Keep the exe in this directory for every
 # generator (the generator expression stops multi-config generators adding a per-config folder).
 set_target_properties(ps5cam-svc PROPERTIES RUNTIME_OUTPUT_DIRECTORY $<1:${CMAKE_CURRENT_BINARY_DIR}>)

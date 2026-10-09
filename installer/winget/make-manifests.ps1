@@ -39,7 +39,7 @@ ManifestVersion: $manifestVersion
 Write-Manifest "$id.installer.yaml" 'installer' @"
 PackageIdentifier: $id
 PackageVersion: $Version
-MinimumOSVersion: 10.0.22000.0
+MinimumOSVersion: 10.0.19041.0
 InstallerType: msi
 Scope: machine
 InstallModes:

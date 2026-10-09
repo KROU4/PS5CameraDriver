@@ -14,6 +14,7 @@
 #include <wrl/client.h>
 
 #include <algorithm>
+#include <atomic>
 #include <vector>
 
 #include "ids.h"
@@ -47,10 +48,26 @@ struct MfInit {
     }
 };
 
+// MFCreateVirtualCamera exists from Windows 11 on. Looked up when needed, not imported: an import
+// would keep the programs that link this file (ps5cam-ctl, the service) from starting on Windows 10.
+HRESULT CreateVirtualCamera(LPCWSTR name, LPCWSTR clsid, ComPtr<IMFVirtualCamera>& vcam)
+{
+    using CreateFn = decltype(&MFCreateVirtualCamera);
+    static std::atomic<CreateFn> found{nullptr};  // only a success is kept: a failed load is tried again
+    CreateFn create = found.load();
+    if (!create) {
+        HMODULE dll = LoadLibraryExW(L"mfsensorgroup.dll", nullptr, LOAD_LIBRARY_SEARCH_SYSTEM32);
+        if (dll) create = reinterpret_cast<CreateFn>(GetProcAddress(dll, "MFCreateVirtualCamera"));
+        if (!create) return HRESULT_FROM_WIN32(ERROR_PROC_NOT_FOUND);  // Windows 10: no virtual cameras
+        found.store(create);
+    }
+    return create(MFVirtualCameraType_SoftwareCameraSource, MFVirtualCameraLifetime_System,
+        MFVirtualCameraAccess_AllUsers, name, clsid, nullptr, 0, &vcam);
+}
+
 HRESULT OpenVirtualCamera(ComPtr<IMFVirtualCamera>& vcam)
 {
-    return MFCreateVirtualCamera(MFVirtualCameraType_SoftwareCameraSource, MFVirtualCameraLifetime_System,
-        MFVirtualCameraAccess_AllUsers, kCameraName, kSourceClsidString, nullptr, 0, &vcam);
+    return CreateVirtualCamera(kCameraName, kSourceClsidString, vcam);
 }
 
 }  // namespace
@@ -113,8 +130,7 @@ HRESULT SetDepthCamera(bool on, std::wstring& message)
 {
     MfInit mf;
     ComPtr<IMFVirtualCamera> vcam;
-    HRESULT hr = MFCreateVirtualCamera(MFVirtualCameraType_SoftwareCameraSource, MFVirtualCameraLifetime_System,
-        MFVirtualCameraAccess_AllUsers, kDepthCameraName, kDepthSourceClsidString, nullptr, 0, &vcam);
+    HRESULT hr = CreateVirtualCamera(kDepthCameraName, kDepthSourceClsidString, vcam);
     if (FAILED(hr)) {
         message = L"MFCreateVirtualCamera failed " + Hex(hr);
         return hr;
