@@ -217,7 +217,7 @@ int wmain(int argc, wchar_t** argv)
         wprintf(L"stream          : %ls %ls fps %.2f gpu %.2f ms focus %.2f %ls\n", st.streaming ? L"active" : L"idle",
             st.format.c_str(), st.fpsX100 / 100.0, st.gpuUs / 1000.0, st.focusX100 / 100.0, st.error.c_str());
         // Stereo alignment per sensor mode; none until a calibration succeeded (the effect then runs
-        // with no correction and keeps trying while the camera is in use).
+        // with no correction, or 1080h with 1080's inverted, and keeps trying while the camera is in use).
         wprintf(L"calibration     :");
         for (const wchar_t* sensor : {L"1080h", L"1080", L"800"}) {
             StoredCalibration c = LoadCalibration(sensor);
