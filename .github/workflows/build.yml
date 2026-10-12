@@ -49,6 +49,18 @@ jobs:
         shell: pwsh
         run: ./package.ps1 -NoBuild -Msi
 
+      - name: Test MSI install, cross-language upgrade and uninstall
+        shell: pwsh
+        run: ./installer/msi/test-install.ps1 -Dist dist -Out out/msi-test
+
+      - name: Upload MSI test logs
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4.6.2
+        with:
+          name: PS5CameraDriver-msi-test-logs
+          path: out/msi-test/
+          if-no-files-found: warn
+
       - name: Upload MSI packages
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4.6.2
         with:

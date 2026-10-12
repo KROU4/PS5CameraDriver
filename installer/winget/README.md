@@ -23,3 +23,18 @@ it uploaded to the release. To submit a version:
 
 The MSI accepts `BOKEH=on|off`, `TRAY=1` and `SONYFIRMWARE=<path>`; with winget:
 `winget install KROU4.PS5CameraDriver --override "/qn BOKEH=off"`.
+
+The Windows build also tests a fresh English MSI installation, an upgrade to the Russian MSI
+with the user's blur setting preserved, and removal. To run the same check in an elevated
+PowerShell on a disposable Windows machine (for example Windows Sandbox):
+
+```powershell
+./installer/msi/test-install.ps1 -Dist dist -Out out/msi-test
+```
+
+The test refuses an existing installation and leaves MSI and custom-action logs in `-Out`.
+It verifies the running service, boot driver, certificate stores and removal of the signing
+private key. This catches failures that manifest validation alone cannot detect, including
+certificate import from the MSI's SYSTEM custom action. The installer uses `certutil` for the
+machine certificate stores and checks each import; the PowerShell `Import-Certificate` cmdlet
+can fail for `TrustedPublisher` under SYSTEM on a fresh Windows Sandbox.

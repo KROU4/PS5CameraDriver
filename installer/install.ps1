@@ -100,14 +100,28 @@ function Install-BootDriver {
     }
     New-FileCatalog -Path $dir -CatalogFilePath $cat -CatalogVersion 2.0 | Out-Null
     $cert = New-SelfSignedCertificate -Type CodeSigningCert -Subject $signerSubject -CertStoreLocation Cert:\LocalMachine\My -NotAfter (Get-Date).AddYears(50)
+    $cer = Join-Path $env:TEMP "ps5cam-signer-$($cert.Thumbprint).cer"
     try {
         Set-AuthenticodeSignature -FilePath $cat -Certificate $cert -HashAlgorithm SHA256 | Out-Null
-        $cer = Join-Path $env:TEMP "ps5cam-signer-$($cert.Thumbprint).cer"
         Export-Certificate -Cert $cert -FilePath $cer | Out-Null
-        Import-Certificate -FilePath $cer -CertStoreLocation Cert:\LocalMachine\Root | Out-Null
-        Import-Certificate -FilePath $cer -CertStoreLocation Cert:\LocalMachine\TrustedPublisher | Out-Null
-        Remove-Item $cer -Force
+        # The PKI cmdlet can refuse TrustedPublisher under SYSTEM on a fresh Windows Sandbox,
+        # even though the MSI is elevated. certutil writes the same
+        # machine stores without that cmdlet's restriction; no user store or policy is changed.
+        foreach ($store in 'Root', 'TrustedPublisher') {
+            $rc = Run 'certutil.exe' @('-addstore', '-f', $store, $cer)
+            if ($rc -ne 0 -or -not (Test-Path "Cert:\LocalMachine\$store\$($cert.Thumbprint)")) {
+                throw "could not trust the boot driver certificate in $store (certutil $rc)"
+            }
+        }
+    } catch {
+        # A failed ZIP install has no MSI rollback. Remove only this attempt's certificate,
+        # including an add that completed before certutil returned a failure.
+        foreach ($store in 'Root', 'TrustedPublisher') {
+            Remove-Item "Cert:\LocalMachine\$store\$($cert.Thumbprint)" -Force -ErrorAction SilentlyContinue
+        }
+        throw
     } finally {
+        Remove-Item $cer -Force -ErrorAction SilentlyContinue
         Remove-Item "Cert:\LocalMachine\My\$($cert.Thumbprint)" -DeleteKey -ErrorAction SilentlyContinue
     }
     $rc = Run 'pnputil.exe' @('/add-driver', $inf, '/install')

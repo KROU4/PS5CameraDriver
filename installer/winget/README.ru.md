@@ -23,3 +23,18 @@ winget install KROU4.PS5CameraDriver
 
 MSI принимает `BOKEH=on|off`, `TRAY=1` и `SONYFIRMWARE=<путь>`; через winget:
 `winget install KROU4.PS5CameraDriver --override "/qn BOKEH=off"`.
+
+Windows-сборка также проверяет чистую установку английского MSI, обновление на русский MSI
+с сохранением выбранной силы размытия и удаление. Ту же проверку можно запустить в PowerShell
+от администратора на одноразовой Windows, например в Windows Sandbox:
+
+```powershell
+./installer/msi/test-install.ps1 -Dist dist -Out out/msi-test
+```
+
+Тест откажется запускаться при существующей установке и сохранит журналы MSI и установщика
+в `-Out`. Он проверяет работающую службу, драйвер загрузчика, хранилища сертификатов и удаление
+закрытого ключа подписи. Это выявляет ошибки, которых не видит проверка манифеста, в том числе
+сбой импорта сертификата из MSI-действия от имени SYSTEM. Установщик использует `certutil`
+для машинных хранилищ и проверяет каждый импорт: PowerShell-команда `Import-Certificate`
+может отказать для `TrustedPublisher` под SYSTEM в чистой Windows Sandbox.
