@@ -14,3 +14,10 @@ if(EXISTS ${PROJECT_SOURCE_DIR}/firmware/firmware.bin)
     add_dependencies(ps5cam-svc ps5cam-firmware)
 endif()
 ps5cam_version(ps5cam-svc "PS5 HD Camera service")
+
+if(BUILD_TESTING)
+    add_executable(ps5cam-service-tests tests/service_tests.cpp ../common/vcamreg.cpp
+        ../common/settings.cpp ../common/camdefaults.cpp)
+    target_link_libraries(ps5cam-service-tests PRIVATE cfgmgr32 advapi32 shell32 ole32 mfplat mfuuid wtsapi32 userenv)
+    add_test(NAME ps5cam-service-tests COMMAND ps5cam-service-tests)
+endif()

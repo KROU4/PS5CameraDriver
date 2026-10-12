@@ -45,6 +45,10 @@ jobs:
         shell: pwsh
         run: ./build.ps1 -Config Release
 
+      - name: Tests without camera or GPU
+        shell: pwsh
+        run: ctest --test-dir build/Release --output-on-failure
+
       - name: Package
         shell: pwsh
         run: ./package.ps1 -NoBuild -Msi

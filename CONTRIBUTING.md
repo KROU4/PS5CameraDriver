@@ -18,6 +18,9 @@ Questions about setup and usage go to [Discussions](https://github.com/KROU4/PS5
 - One topic per pull request; describe what changes and how you tested it.
 - Build with `.\build.ps1`, package with `.\package.ps1` (requires VS 2022 Build Tools and Windows SDK
   10.0.26100). The GitHub Actions check runs the same steps.
+- After building, run `ctest --test-dir build/Release --output-on-failure`. These tests cover service
+  failures, camera modes and CPU processing logic without opening a camera or creating a GPU device.
+  CI also tests MSI installation, upgrade and removal on its disposable Windows runner.
 - Follow the style of the surrounding code: C++20, comments explain *why* rather than *what*.
 - Do not add Sony's firmware or any other third-party binaries to the repository.
 
