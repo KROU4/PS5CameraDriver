@@ -19,19 +19,22 @@ add_executable(ps5cam-bokehd
     bokehd/testmode.cpp)
 target_link_libraries(ps5cam-bokehd PRIVATE ps5cam-bokehd-base ps5cam-core)
 
-enable_testing()
-add_executable(ps5cam-bokehd-tests tests/bokehd_tests.cpp)
-target_link_libraries(ps5cam-bokehd-tests PRIVATE ps5cam-bokehd-base)
-# The installed config must spell out the defaults (checked when the installer folder is there).
-set(PS5CAM_BOKEH_CONF ${CMAKE_CURRENT_SOURCE_DIR}/../../installer/linux/bokeh.conf)
-if(EXISTS ${PS5CAM_BOKEH_CONF})
-    target_compile_definitions(ps5cam-bokehd-tests PRIVATE PS5CAM_BOKEH_CONF="${PS5CAM_BOKEH_CONF}")
+if(BUILD_TESTING)
+    add_executable(ps5cam-bokehd-tests tests/bokehd_tests.cpp)
+    target_link_libraries(ps5cam-bokehd-tests PRIVATE ps5cam-bokehd-base)
+    # The installed config must spell out the defaults (checked when the installer folder is there).
+    set(PS5CAM_BOKEH_CONF ${CMAKE_CURRENT_SOURCE_DIR}/../../installer/linux/bokeh.conf)
+    if(EXISTS ${PS5CAM_BOKEH_CONF})
+        target_compile_definitions(ps5cam-bokehd-tests PRIVATE PS5CAM_BOKEH_CONF="${PS5CAM_BOKEH_CONF}")
+    endif()
+    add_test(NAME ps5cam-bokehd-tests COMMAND ps5cam-bokehd-tests)
 endif()
-add_test(NAME ps5cam-bokehd-tests COMMAND ps5cam-bokehd-tests)
 
 if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
     foreach(target ps5cam-bokehd-base ps5cam-bokehd ps5cam-bokehd-tests)
-        target_compile_options(${target} PRIVATE -Wall -Wextra)
+        if(TARGET ${target})
+            target_compile_options(${target} PRIVATE -Wall -Wextra)
+        endif()
     endforeach()
     # Runs where the C++ runtime is older than the build machine's; glibc 2.34+ is still needed.
     target_link_options(ps5cam-bokehd PRIVATE -static-libstdc++ -static-libgcc)

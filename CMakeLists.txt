@@ -1,5 +1,6 @@
 cmake_minimum_required(VERSION 3.25)
 project(PS5CameraDriver LANGUAGES CXX)
+include(CTest)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -26,7 +27,6 @@ if(NOT WIN32 OR PS5CAM_VULKAN)
         add_compile_options(-Wall -Wextra)
     endif()
     add_compile_definitions(PS5CAM_VERSION="${PS5CAM_VERSION}")
-    enable_testing()  # ctest from the build root runs the daemon's tests
     add_subdirectory(src/core)
     foreach(dir src/linux src/bench)
         if(EXISTS ${PROJECT_SOURCE_DIR}/${dir}/CMakeLists.txt AND (NOT WIN32 OR dir STREQUAL "src/bench"))

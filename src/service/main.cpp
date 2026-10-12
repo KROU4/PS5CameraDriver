@@ -240,29 +240,30 @@ bool BuildFirmware()
     return code == 0;
 }
 
-void BootDevice(const std::wstring& path)
+bool BootDevice(const std::wstring& path)
 {
     std::vector<uint8_t> image;
     std::wstring error;
     std::wstring fw = g_firmwareOverride.empty() ? ModuleDir() + L"\\firmware.bin" : g_firmwareOverride;
     if (!LoadFirmwareFile(fw, image, error)) {
         Log(L"firmware: %ls", error.c_str());
-        if (!g_firmwareOverride.empty() || !BuildFirmware() || !LoadFirmwareFile(fw, image, error)) return;
+        if (!g_firmwareOverride.empty() || !BuildFirmware() || !LoadFirmwareFile(fw, image, error)) return false;
     }
     for (int attempt = 1; attempt <= 5 && !g_stopping; ++attempt) {
         DWORD t0 = GetTickCount();
         if (UploadFirmware(path, image, error)) {
             Log(L"firmware uploaded (%zu bytes, %lu ms) to %ls", image.size(), GetTickCount() - t0, path.c_str());
-            return;
+            return true;
         }
         Log(L"upload attempt %d failed: %ls", attempt, error.c_str());
         // The interface can arrive before WinUSB is ready to be opened; back off and retry.
         Sleep(400 * attempt);
         if (FindBootDevices().empty()) {
             Log(L"boot device disappeared, giving up");
-            return;
+            return false;
         }
     }
+    return false;
 }
 
 void Worker()
@@ -277,7 +278,7 @@ void Worker()
             g_queue.pop_front();
         }
         if (job.kind == JobKind::Boot) {
-            BootDevice(job.path);
+            (void)BootDevice(job.path);
         } else if (job.kind == JobKind::CameraReady) {
             CameraReady();
             SetEvent(g_settingsEvent);
@@ -522,8 +523,13 @@ int Install()
         SERVICE_AUTO_START, SERVICE_ERROR_NORMAL, cmd.c_str(), nullptr, nullptr, nullptr, nullptr, nullptr);
     if (!svc && GetLastError() == ERROR_SERVICE_EXISTS) {
         svc = OpenServiceW(scm, kServiceName, SERVICE_ALL_ACCESS);
-        ChangeServiceConfigW(svc, SERVICE_NO_CHANGE, SERVICE_AUTO_START, SERVICE_NO_CHANGE, cmd.c_str(), nullptr,
-            nullptr, nullptr, nullptr, nullptr, kDisplayName);
+        if (svc && !ChangeServiceConfigW(svc, SERVICE_NO_CHANGE, SERVICE_AUTO_START, SERVICE_NO_CHANGE, cmd.c_str(),
+                       nullptr, nullptr, nullptr, nullptr, nullptr, kDisplayName)) {
+            fwprintf(stderr, L"ChangeServiceConfig failed %lu\n", GetLastError());
+            CloseServiceHandle(svc);
+            CloseServiceHandle(scm);
+            return 1;
+        }
     }
     if (!svc) {
         fwprintf(stderr, L"CreateService failed %lu\n", GetLastError());
@@ -531,12 +537,29 @@ int Install()
         return 1;
     }
     SERVICE_DESCRIPTIONW desc = {const_cast<wchar_t*>(L"Uploads firmware to the PlayStation 5 HD Camera when it is connected.")};
-    ChangeServiceConfig2W(svc, SERVICE_CONFIG_DESCRIPTION, &desc);
+    if (!ChangeServiceConfig2W(svc, SERVICE_CONFIG_DESCRIPTION, &desc)) {
+        fwprintf(stderr, L"Setting service description failed %lu\n", GetLastError());
+        CloseServiceHandle(svc);
+        CloseServiceHandle(scm);
+        return 1;
+    }
     SC_ACTION actions[3] = {{SC_ACTION_RESTART, 2000}, {SC_ACTION_RESTART, 5000}, {SC_ACTION_NONE, 0}};
     SERVICE_FAILURE_ACTIONSW fa = {86400, nullptr, nullptr, 3, actions};
-    ChangeServiceConfig2W(svc, SERVICE_CONFIG_FAILURE_ACTIONS, &fa);
-    if (!StartServiceW(svc, 0, nullptr) && GetLastError() != ERROR_SERVICE_ALREADY_RUNNING)
-        fwprintf(stderr, L"StartService failed %lu\n", GetLastError());
+    if (!ChangeServiceConfig2W(svc, SERVICE_CONFIG_FAILURE_ACTIONS, &fa)) {
+        fwprintf(stderr, L"Setting service failure actions failed %lu\n", GetLastError());
+        CloseServiceHandle(svc);
+        CloseServiceHandle(scm);
+        return 1;
+    }
+    if (!StartServiceW(svc, 0, nullptr)) {
+        const DWORD error = GetLastError();
+        if (error != ERROR_SERVICE_ALREADY_RUNNING) {
+            fwprintf(stderr, L"StartService failed %lu\n", error);
+            CloseServiceHandle(svc);
+            CloseServiceHandle(scm);
+            return 1;
+        }
+    }
     wprintf(L"service %ls installed and started\n", kServiceName);
     CloseServiceHandle(svc);
     CloseServiceHandle(scm);
@@ -589,8 +612,10 @@ int wmain(int argc, wchar_t** argv)
             wprintf(L"no boot-mode camera found\n");
             return 2;
         }
-        for (const auto& dev : devices) BootDevice(dev);
-        return 0;
+        bool loaded = true;
+        for (const auto& dev : devices)
+            if (!BootDevice(dev)) loaded = false;
+        return loaded ? 0 : 1;
     }
     if (cmd == L"console") {
         LogInit(L"service\\service", true);
