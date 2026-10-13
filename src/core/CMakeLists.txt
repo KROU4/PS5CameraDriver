@@ -77,10 +77,17 @@ endif()
 target_include_directories(ps5cam-core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR} PRIVATE ${CMAKE_CURRENT_BINARY_DIR})
 
 if(BUILD_TESTING)
-    # These tests exercise CPU contracts without opening a camera, creating a GPU or loading shaders.
+    # CPU contracts do not open a camera or create a GPU; the GPU regression uses WARP/lavapipe.
     add_executable(ps5cam-core-logic-tests tests/core_logic_tests.cpp flicker.cpp)
     target_include_directories(ps5cam-core-logic-tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
     add_test(NAME ps5cam-core-logic-tests COMMAND ps5cam-core-logic-tests)
+    add_executable(ps5cam-denoise-gpu-tests tests/denoise_gpu_tests.cpp)
+    target_link_libraries(ps5cam-denoise-gpu-tests PRIVATE ps5cam-core)
+    add_test(NAME ps5cam-denoise-gpu-tests COMMAND ps5cam-denoise-gpu-tests)
+    set_tests_properties(ps5cam-denoise-gpu-tests PROPERTIES LABELS GPU TIMEOUT 180)
+    if(PS5CAM_D3D11)
+        set_tests_properties(ps5cam-denoise-gpu-tests PROPERTIES ENVIRONMENT "PS5CAM_GPU=warp")
+    endif()
     if(PS5CAM_D3D11)
         add_executable(ps5cam-cameramodes-tests tests/cameramodes_tests.cpp cameramodes.cpp)
         target_include_directories(ps5cam-cameramodes-tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})

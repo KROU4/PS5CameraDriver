@@ -90,6 +90,13 @@ float3 Shade(float2 outPx)
         float d = mode == 5 ? DispRaw[wp] : mode == 6 ? DispFilled[wp] : DispHoles[wp];
         result = d < 0 ? float3(0, 0.5, 0.5) : RgbToYuv(Turbo(d / 64.0));
     }
+    else if (mode >= 10 && mode <= 12)
+    {
+        // Numeric depth stages for offline regression metrics, without Turbo colour inversion.
+        int2 wp = min(int2(WorkUv(uv) * float2(workSize)), int2(workSize) - 1);
+        float d = mode == 10 ? DispRaw[wp] : mode == 11 ? DispFilled[wp] : DispHoles[wp];
+        result = float3(max(d, 0) / 64.0, 0.5, 0.5);
+    }
     else if (mode == 4)
     {
         // Both sensors squeezed side by side: main on the left, second on the right.

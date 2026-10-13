@@ -19,12 +19,17 @@ Questions about setup and usage go to [Discussions](https://github.com/KROU4/PS5
 - Build with `.\build.ps1`, package with `.\package.ps1` (requires VS 2022 Build Tools and Windows SDK
   10.0.26100). The GitHub Actions check runs the same steps.
 - After building, run `ctest --test-dir build/Release --output-on-failure`. These tests cover service
-  failures, camera modes and CPU processing logic without opening a camera or creating a GPU device.
+  failures, camera modes, CPU logic and GPU denoise quality without opening a camera. GPU tests
+  use WARP on Windows and lavapipe in Linux CI, so they need no physical GPU.
   CI also tests MSI installation, upgrade and removal on its disposable Windows runner.
 - Follow the style of the surrounding code: C++20, comments explain *why* rather than *what*.
 - Do not add Sony's firmware or any other third-party binaries to the repository.
 
 ## License of contributions
+
+The GPU regression explicitly enables the experimental `EffectSettings::fineDetail` path.
+It remains off by default and has no application setting: recorded camera clips still show a
+noise regression in one scene. Passing synthetic tests alone does not qualify it for release.
 
 The project is licensed under the [GNU GPL 3.0](LICENSE). By submitting a pull request you confirm
 that the contribution is your own work (or that you have the right to submit it) and that you

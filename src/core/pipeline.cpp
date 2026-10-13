@@ -326,6 +326,7 @@ void StereoPipeline::UpdateConstants(const EffectSettings* s, uint32_t pathDir)
         c.denoiseKeep = 1.0f - 0.88f * denoise;
         c.denoiseSpatial = denoise;
         c.denoiseHistory = !m_haveClean ? 0 : m_motionReady ? 2 : 1;
+        if (s->fineDetail && m_haveClean) c.denoiseHistory |= 4;
         c.noiseLevel = m_noise >= 0 ? m_noise : 0.0f;
         // Sharpening leaves alone detail no larger than the noise left in the picture, so that it
         // brings out edges rather than grain: ~2.5 noiseLevel after a full noise reduction (~2
@@ -771,6 +772,7 @@ HRESULT StereoPipeline::Process(const uint8_t* yuy2, uint32_t yuy2Pitch, const E
     const bool needDepth = s.mode == ViewMode::Bokeh || s.mode == ViewMode::Depth || s.mode == ViewMode::DebugRaw ||
                            s.mode == ViewMode::DebugFilled || s.mode == ViewMode::DebugHoles ||
                            s.mode == ViewMode::DebugGrey || s.mode == ViewMode::DebugBlend ||
+                           (s.mode >= ViewMode::DebugRawGrey && s.mode <= ViewMode::DebugHoleGrey) ||
                            (s.depthPlane && !m_stereo.mono);
     d.slots[slot].depth = needDepth;
     if (needDepth) {

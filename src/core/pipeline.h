@@ -21,7 +21,7 @@ namespace ps5cam {
 // weight as grey levels (Y = 16 + 219 w, 0 sharp .. 1 blurred).
 enum class ViewMode : uint32_t {
     Bokeh = 0, Main = 1, Second = 2, Depth = 3, SideBySide = 4, DebugRaw = 5, DebugFilled = 6, DebugHoles = 7,
-    DebugGrey = 8, DebugBlend = 9
+    DebugGrey = 8, DebugBlend = 9, DebugRawGrey = 10, DebugCheckedGrey = 11, DebugHoleGrey = 12
 };
 enum class PixelFormat : uint32_t { NV12 = 0, YUY2 = 1 };
 
@@ -42,6 +42,7 @@ struct EffectSettings {
     float maxGain = 6.0f;
     float denoise = 0.9f;         // temporal noise reduction of the image, 0 (off) .. 1
     bool motionCompensation = true;  // ... averaging along the motion of what moves (shaders/motion.hlsl)
+    bool fineDetail = false;         // experimental fine-motion restoration; requires corpus validation
     float sharpen = 0.5f;         // edge sharpening of the picture (noise-aware), 0 (off) .. 1
     float brightness = 0.0f;      // stops on top of the auto brightness (-1..1)
     float contrast = 1.0f;        // luma gain around mid grey

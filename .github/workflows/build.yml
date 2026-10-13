@@ -45,7 +45,7 @@ jobs:
         shell: pwsh
         run: ./build.ps1 -Config Release
 
-      - name: Tests without camera or GPU
+      - name: CPU and GPU regression tests (WARP)
         shell: pwsh
         run: ctest --test-dir build/Release --output-on-failure
 

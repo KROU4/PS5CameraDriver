@@ -129,9 +129,11 @@ HRESULT Gpu::Initialize()
 {
     D3D_FEATURE_LEVEL levels[] = {D3D_FEATURE_LEVEL_11_1, D3D_FEATURE_LEVEL_11_0};
     // PS5CAM_GPU picks an adapter by a part of its name, any case (e.g. "basic render" for the
-    // software rasteriser), as on Vulkan; without a match, or by default, the default hardware
+    // software rasteriser). "warp" explicitly selects D3D's CPU renderer for regression tests.
+    // Without a match, or by default, use the default hardware
     // adapter (a variable left over from a test must not cost the camera its picture).
     ComPtr<IDXGIAdapter1> chosen;
+    bool warp = false;
     wchar_t wanted[128];
     const DWORD length = GetEnvironmentVariableW(L"PS5CAM_GPU", wanted, 128);
     if (length > 0 && length < 128) {
@@ -140,8 +142,9 @@ HRESULT Gpu::Initialize()
             return s;
         };
         const std::wstring needle = lower(wanted);
+        warp = needle == L"warp";
         ComPtr<IDXGIFactory1> factory;
-        if (SUCCEEDED(CreateDXGIFactory1(IID_PPV_ARGS(&factory)))) {
+        if (!warp && SUCCEEDED(CreateDXGIFactory1(IID_PPV_ARGS(&factory)))) {
             ComPtr<IDXGIAdapter1> adapter;
             for (UINT i = 0; !chosen && factory->EnumAdapters1(i, &adapter) == S_OK; ++i) {
                 DXGI_ADAPTER_DESC1 desc;
@@ -150,7 +153,9 @@ HRESULT Gpu::Initialize()
             }
         }
     }
-    HRESULT hr = D3D11CreateDevice(chosen.Get(), chosen ? D3D_DRIVER_TYPE_UNKNOWN : D3D_DRIVER_TYPE_HARDWARE, nullptr, 0,
+    const D3D_DRIVER_TYPE driver = warp ? D3D_DRIVER_TYPE_WARP :
+        chosen ? D3D_DRIVER_TYPE_UNKNOWN : D3D_DRIVER_TYPE_HARDWARE;
+    HRESULT hr = D3D11CreateDevice(chosen.Get(), driver, nullptr, 0,
         levels, ARRAYSIZE(levels), D3D11_SDK_VERSION, &m->device, nullptr, &m->ctx);
     if (FAILED(hr)) return hr;
     ComPtr<ID3D10Multithread> mt;
