@@ -28,7 +28,8 @@ Questions about setup and usage go to [Discussions](https://github.com/KROU4/PS5
 ## Experimental denoise
 
 The GPU regressions explicitly enable experimental detail restoration, stereo-noise balancing,
-adaptive texture rejection and diagonal SGM. These paths remain off by default and have no
+adaptive texture rejection, diagonal SGM, subject contour tolerance and still-background
+depth smoothing. These paths remain off by default and have no
 application settings. Recorded-camera regression measurements are also required before enabling
 them: passing synthetic GPU tests alone does not qualify a quality change for release.
 

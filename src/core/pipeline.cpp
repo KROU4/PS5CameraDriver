@@ -67,8 +67,9 @@ struct GpuConstants {
     float contrast;
     float saturation;
     float stereoBalanceMain, stereoBalanceSecond, stereoMinTexture;
+    float subjectSlope, backgroundStillScale, pad2[2];
 };
-static_assert(sizeof(GpuConstants) == 208, "constant buffer layout");
+static_assert(sizeof(GpuConstants) == 224, "constant buffer layout");
 // kNumDisp mirrors MAX_DISP in shaders/common.hlsli.
 
 uint32_t DivUp(uint32_t a, uint32_t b) { return (a + b - 1) / b; }
@@ -315,7 +316,11 @@ void StereoPipeline::UpdateConstants(const EffectSettings* s, uint32_t pathDir)
     c.guidedEps = 0.0004f;
     c.stereoBalanceMain = c.stereoBalanceSecond = 0;
     c.stereoMinTexture = 0.012f;
+    c.subjectSlope = 0.25f;
+    c.backgroundStillScale = 0.4f;
     if (s) {
+        if (s->subjectEdges) c.subjectSlope = 0.27f;
+        if (s->backgroundSteady) c.backgroundStillScale = 0.25f;
         if (s->stereoNoiseBalance && m_stereoNoiseMain > 0 && m_stereoNoiseSecond > 0) {
             const float target = std::min(m_stereoNoiseMain, m_stereoNoiseSecond);
             c.stereoBalanceMain = stereonoise::EqualizationAlpha(m_stereoNoiseMain, target);
@@ -400,7 +405,7 @@ void StereoPipeline::RunDepth(const EffectSettings& s, int slot)
 
     for (uint32_t dir = 0; dir < (s.stereoDiagonals ? 8u : 4u); ++dir) {
         UpdateConstants(&s, dir);
-        g.Dispatch(Kernel::Aggregate, {d.censusMain, d.censusSecond, d.workMain}, {d.sum},
+        g.Dispatch(Kernel::Aggregate, {d.censusMain, d.censusSecond, d.workMain, d.motion[d.motionIndex]}, {d.sum},
             dir < 2 ? wh : dir < 4 ? ww : ww + wh - 1, 1);
     }
 
@@ -414,7 +419,9 @@ void StereoPipeline::RunDepth(const EffectSettings& s, int slot)
     // that is not from the frame just before (none made, or the bokeh just switched on) reads as none.
     if (!(s.subjectRange > 0 && m_frame == m_lastShareFrame + 1)) g.ClearFloat(d.Share(), 0);
     g.Dispatch(Kernel::LrFill, {d.dispMain, d.dispSecond}, {d.dispFill, d.leftValid}, DivUp(wh, 64), 1);
-    g.Dispatch(Kernel::HoleFill, {d.dispFill, d.dispHist[prev], d.workMain, d.workPrev, d.dispFrame[prev], d.Share()},
+    g.Dispatch(Kernel::HoleFill,
+        {d.dispFill, d.dispHist[prev], d.workMain, d.workPrev, d.dispFrame[prev], d.Share(),
+         d.motion[d.motionIndex], d.motion[d.motionIndex ^ 1]},
         {d.dispHist[cur], d.dispFrame[cur]}, DivUp(ww, 16), DivUp(wh, 8));
     d.histIndex = cur;
     m_haveHistory = true;
@@ -770,7 +777,8 @@ HRESULT StereoPipeline::Process(const uint8_t* yuy2, uint32_t yuy2Pitch, const E
                            s.mode == ViewMode::DebugGrey || s.mode == ViewMode::DebugBlend ||
                            (s.mode >= ViewMode::DebugRawGrey && s.mode <= ViewMode::DebugHoleGrey) ||
                            (s.depthPlane && !m_stereo.mono);
-    const bool stereoNoiseEnabled = needDepth && !m_stereo.mono && (s.stereoNoiseBalance || s.adaptiveStereoTexture);
+    const bool stereoNoiseEnabled = needDepth && !m_stereo.mono &&
+        (s.stereoNoiseBalance || s.adaptiveStereoTexture);
     if (stereoNoiseEnabled != m_stereoNoiseEnabled) {
         m_stereoNoiseEnabled = stereoNoiseEnabled;
         ++m_stereoNoiseGeneration;

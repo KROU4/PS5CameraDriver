@@ -14,6 +14,8 @@ Texture2D<float> WorkMain : register(t2);  // luma at work resolution
 Texture2D<float> WorkPrev : register(t3);  // the previous depth frame's luma at work resolution
 Texture2D<float> FrameIn : register(t4);   // the previous frame's FrameOut (read only where DispPrev has a value)
 Texture2D<float> PrevShare : register(t5); // the previous frame's subject share (subject.hlsl)
+Texture2D<uint2> PictureMotion : register(t6);
+Texture2D<uint2> PictureMotionBefore : register(t7);
 FORMAT("r32f") RWTexture2D<float> DispOut : register(u0);
 FORMAT("r32f") RWTexture2D<float> FrameOut : register(u1);  // this frame's value before the temporal smoothing
 
@@ -69,6 +71,15 @@ bool Still(int2 p)
         }
     }
     return change / 9.0 < kStillNoise * (noiseLevel > 0 ? noiseLevel : kNoiseUnknown) + kStillFloor;
+}
+
+bool FixedPixel(int2 p)
+{
+    [branch] if ((denoiseHistory & 3) != 2) return false;
+    float2 eye = (float2(p) + 0.5) * float2(eyeSize) / float2(workSize);
+    if (depthMirror != 0) eye.x = eyeSize.x - eye.x;
+    uint2 block = min(uint2(eye) / 32, (eyeSize - 1) / 32);
+    return all(asint(PictureMotion[block]) == 0) && all(asint(PictureMotionBefore[block]) == 0);
 }
 
 [numthreads(16, 8, 1)]
@@ -175,7 +186,10 @@ void main(uint3 id : SV_DispatchThreadID)
         if (abs(prev - d) < 2.0)
         {
             // temporal 1 means no smoothing; the lowest settings stay well under a second.
-            const float alpha = still && temporalAlpha < 1.0 ? max(temporalAlpha * kStillBlend, 0.05) : temporalAlpha;
+            float stillBlend = kStillBlend;
+            [branch] if (backgroundStillScale < kStillBlend && PrevShare[p] < kOnSubject)
+                if (FixedPixel(p)) stillBlend = backgroundStillScale;
+            const float alpha = still && temporalAlpha < 1.0 ? max(temporalAlpha * stillBlend, 0.05) : temporalAlpha;
             d = lerp(prev, d, alpha);
         }
         else if (still && !(abs(FrameIn[p] - d) < kConfirm) && (d > prev || PrevShare[p] >= kOnSubject))

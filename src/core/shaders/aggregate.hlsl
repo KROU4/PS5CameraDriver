@@ -8,6 +8,7 @@
 Texture2D<uint2> CensusMain : register(t0);
 Texture2D<uint2> CensusSecond : register(t1);
 Texture2D<float> WorkMain : register(t2);
+Texture2D<uint2> PictureMotion : register(t3); // full-resolution 32x32 blocks, only with valid motion history
 RWByteAddressBuffer Sum : register(u0); // uint16 per (pixel, disparity), 32 words per pixel
 
 groupshared uint gL[2][MAX_DISP + 2];
@@ -102,7 +103,18 @@ void main(uint3 gid : SV_GroupID, uint3 tid : SV_GroupThreadID)
             // Diagonal context supplements the original paths; half weight avoids giving
             // corner-connected background enough support to spread over a moving contour.
             uint low = gL[nxt][2 * d + 1], high = gL[nxt][2 * d + 2];
-            if (pathDir >= 4) { low /= 2; high /= 2; }
+            if (pathDir >= 4) {
+                low /= 2;
+                high /= 2;
+                [branch] if ((denoiseHistory & 3) == 2) {
+                    float2 eye = (float2(p) + 0.5) * float2(eyeSize) / float2(workSize);
+                    if (depthMirror != 0) eye.x = eyeSize.x - eye.x;
+                    uint2 block = min(uint2(eye) / 32, (eyeSize - 1) / 32);
+                    // Retain the original four-path decision where the picture moves. Extra
+                    // diagonal context otherwise raises depth jitter at a moving fine contour.
+                    if (any(asint(PictureMotion[block]) != 0)) { low = 0; high = 0; }
+                }
+            }
             uint packed = low | (high << 16);
             if (pathDir == 0)
                 Sum.Store(addr, packed);

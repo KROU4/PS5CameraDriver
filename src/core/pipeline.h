@@ -46,6 +46,8 @@ struct EffectSettings {
     bool stereoNoiseBalance = false; // experimental work-image noise equalization before census
     bool adaptiveStereoTexture = false; // threshold from both raw work-image noise estimates
     bool stereoDiagonals = false;    // experimental eight-direction SGM
+    bool subjectEdges = false;       // experimental tolerance within the existing subject volume
+    bool backgroundSteady = false;   // extra smoothing only at still non-subject pixels
     float sharpen = 0.5f;         // edge sharpening of the picture (noise-aware), 0 (off) .. 1
     float brightness = 0.0f;      // stops on top of the auto brightness (-1..1)
     float contrast = 1.0f;        // luma gain around mid grey

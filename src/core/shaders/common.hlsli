@@ -43,6 +43,9 @@ cbuffer Constants : register(b0)
     float  stereoBalanceMain;
     float  stereoBalanceSecond;
     float  stereoMinTexture;
+    float  subjectSlope;
+    float  backgroundStillScale;
+    float2 qualityPad;
 };
 
 SamplerState LinearClamp : register(s0);
