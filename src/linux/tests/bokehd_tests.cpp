@@ -95,12 +95,14 @@ void TestDefaults()
     CHECK(DescribeConfig(c) == DescribeConfig(defaults));
     CHECK(c.mode == 0 && c.blur == 25 && c.autoFocus && c.focus == 50 && c.highlights == 150 && c.temporal == 40);
     CHECK(c.autoBrightness && c.maxGain == 60 && c.denoise == 90 && c.antiFlicker == 0 && c.sharpen == 50);
+    CHECK(c.quality);
     CHECK(c.brightness == 50 && c.contrast == 50 && c.saturation == 50);
     CHECK(c.mainsHz == 50 && c.fps == 60 && !c.alwaysOn && c.camera.empty() && c.output.empty());
     EffectSettings e;
     ApplyConfig(c, e);
     CHECK(e.mode == ViewMode::Bokeh && e.blurStrength == 0.25f && e.denoise == 0.9f && e.maxGain == 6.0f);
     CHECK(e.highlights == 1.5f && e.temporal == 0.4f && e.manualFocus == 0.5f && e.sharpen == 0.5f);
+    CHECK(e.fineDetail && e.subjectEdges && e.backgroundSteady);
     CHECK(e.brightness == 0.0f && e.contrast == 1.0f && e.saturation == 1.0f);  // 50 each: the picture as it is
 #ifdef PS5CAM_BOKEH_CONF
     // The installed file spells out every default.
@@ -112,6 +114,21 @@ void TestDefaults()
     CHECK(log.empty());
     CHECK(DescribeConfig(file) == DescribeConfig(defaults));
 #endif
+}
+
+void TestQualitySwitch()
+{
+    EffectSettings e;
+    const BokehConfig disabled = Parse("quality = 0\n");
+    CHECK(!disabled.quality);
+    ApplyConfig(disabled, e);
+    CHECK(!e.fineDetail && !e.subjectEdges && !e.backgroundSteady);
+
+    const BokehConfig enabled = Parse("quality = 0\nquality = 1\n");
+    CHECK(enabled.quality);
+    CHECK(DescribeConfig(disabled) != DescribeConfig(enabled));
+    ApplyConfig(enabled, e);
+    CHECK(e.fineDetail && e.subjectEdges && e.backgroundSteady);
 }
 
 void TestClamps()
@@ -295,6 +312,7 @@ int main()
         return 1;
     }
     TestDefaults();
+    TestQualitySwitch();
     TestClamps();
     TestSyntax();
     TestFiles(dir);

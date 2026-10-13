@@ -219,9 +219,16 @@ try {
     & $ctl set blur 75
     Assert-True ($LASTEXITCODE -eq 0) "ps5cam-ctl set blur 75 failed with exit code $LASTEXITCODE"
     Assert-True ([int](Get-ItemProperty -LiteralPath $settingsKey).Blur -eq 75) 'ps5cam-ctl did not save blur 75'
+    & $ctl set quality 0
+    Assert-True ($LASTEXITCODE -eq 0) 'ps5cam-ctl set quality 0 failed'
+    Assert-True ([int](Get-ItemProperty -LiteralPath $settingsKey).QualityEnhancements -eq 0) 'quality rollback was not saved'
 
     Invoke-Msi install $russian.Path (Join-Path $Out 'msi-upgrade-ru.log') | Out-Null
     Copy-InstallLog 'ru-upgrade'
+    Assert-True ([int](Get-ItemProperty -LiteralPath $settingsKey).QualityEnhancements -eq 0) 'upgrade lost the quality rollback setting'
+    & $ctl set quality 1
+    Assert-True ($LASTEXITCODE -eq 0) 'ps5cam-ctl set quality 1 failed'
+    Assert-True ([int](Get-ItemProperty -LiteralPath $settingsKey).QualityEnhancements -eq 1) 'quality improvements could not be re-enabled'
     Assert-Installed $russian 75
     if ($english.ProductCode -ne $russian.ProductCode) {
         Assert-True ($null -eq (Get-ProductRegistration $english.ProductCode)) 'the English ProductCode remains after the Russian major upgrade'

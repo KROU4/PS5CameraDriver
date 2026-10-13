@@ -25,13 +25,16 @@ Questions about setup and usage go to [Discussions](https://github.com/KROU4/PS5
 - Follow the style of the surrounding code: C++20, comments explain *why* rather than *what*.
 - Do not add Sony's firmware or any other third-party binaries to the repository.
 
-## Experimental denoise
+## Quality regressions
 
-The GPU regressions explicitly enable experimental detail restoration, stereo-noise balancing,
-adaptive texture rejection, diagonal SGM, subject contour tolerance and still-background
-depth smoothing. These paths remain off by default and have no
-application settings. Recorded-camera regression measurements are also required before enabling
-them: passing synthetic GPU tests alone does not qualify a quality change for release.
+The GPU regressions explicitly select each quality path, including correlated-noise and
+large-motion fixtures. Version 1.2.8 enables detail restoration, conservative subject contour
+tolerance and stationary-background depth smoothing through the shared picture settings.
+Users can disable them together with `ps5cam-ctl set quality 0` on Windows or `quality=0`
+in the Linux configuration. The core test/benchmark defaults stay neutral so baseline comparisons
+remain explicit. Stereo-noise balancing, adaptive texture rejection and diagonal SGM remain
+experimental and disabled. Recorded-camera regression measurements are required alongside
+synthetic GPU tests before changing release defaults.
 
 ## License of contributions
 

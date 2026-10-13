@@ -53,6 +53,15 @@ void Picture()
     CHECK(effect.mode == ViewMode::Bokeh && Near(effect.blurStrength, 0.25f));
     CHECK(Near(effect.brightness, 0) && Near(effect.contrast, 1) && Near(effect.saturation, 1));
     CHECK(Near(effect.denoise, 0.9f) && Near(effect.maxGain, 6));
+    CHECK(picture.quality && effect.fineDetail && effect.subjectEdges && effect.backgroundSteady);
+
+    picture.quality = false;
+    ApplyPicture(picture, effect);
+    CHECK(!effect.fineDetail && !effect.subjectEdges && !effect.backgroundSteady);
+
+    picture.quality = true;
+    ApplyPicture(picture, effect);
+    CHECK(effect.fineDetail && effect.subjectEdges && effect.backgroundSteady);
 
     const uint32_t tooLarge = std::numeric_limits<uint32_t>::max();
     picture.mode = picture.blur = picture.focus = picture.highlights = picture.temporal = tooLarge;

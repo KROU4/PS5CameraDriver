@@ -20,6 +20,7 @@ struct PictureSettings {
     uint32_t denoise = 90;      // temporal noise reduction 0 (off) .. 100
     uint32_t antiFlicker = 0;   // AntiFlicker (flicker.h): 0 auto, 1 50 Hz, 2 60 Hz, 3 off
     uint32_t sharpen = 50;      // edge sharpening 0 (off) .. 100
+    bool quality = true;        // validated fine detail, subject edge and steady background improvements
     // The picture's tone, 50 = as the camera gives it (Windows' camera settings: Brightness,
     // Contrast, Saturation): brightness 0..100 is -1..+1 stop on top of the auto brightness,
     // contrast x0.5..x1.5 around mid grey, saturation x0..x2 of the colour.
@@ -58,6 +59,9 @@ inline void ApplyPicture(const PictureSettings& p, EffectSettings& e)
     e.maxGain = p.maxGain / 10.0f;
     e.denoise = p.denoise / 100.0f;
     e.sharpen = p.sharpen / 100.0f;
+    e.fineDetail = p.quality;
+    e.subjectEdges = p.quality;
+    e.backgroundSteady = p.quality;
     e.brightness = (static_cast<float>(p.brightness) - 50.0f) / 50.0f;
     e.contrast = 0.5f + p.contrast / 100.0f;
     e.saturation = p.saturation / 50.0f;

@@ -35,6 +35,7 @@ constexpr PictureKey kPictureKeys[] = {
     {"maxgain", &PictureSettings::maxGain, nullptr},
     {"denoise", &PictureSettings::denoise, nullptr},
     {"sharpen", &PictureSettings::sharpen, nullptr},
+    {"quality", nullptr, &PictureSettings::quality},
     {"brightness", &PictureSettings::brightness, nullptr},
     {"contrast", &PictureSettings::contrast, nullptr},
     {"saturation", &PictureSettings::saturation, nullptr},
@@ -208,10 +209,10 @@ std::string DescribeConfig(const BokehConfig& c)
     char text[640];
     snprintf(text, sizeof(text),
         "mode %u (%s), blur %u, autofocus %u, focus %u, highlights %u, temporal %u, autobrightness %u, maxgain %u, "
-        "denoise %u, sharpen %u, brightness %u, contrast %u, saturation %u, antiflicker %u (%s), mains %u Hz, fps %u, "
+        "denoise %u, sharpen %u, quality %u, brightness %u, contrast %u, saturation %u, antiflicker %u (%s), mains %u Hz, fps %u, "
         "always_on %u, camera %s, output %s",
         c.mode, ModeName(c.mode), c.blur, c.autoFocus ? 1 : 0, c.focus, c.highlights, c.temporal,
-        c.autoBrightness ? 1 : 0, c.maxGain, c.denoise, c.sharpen, c.brightness, c.contrast, c.saturation, c.antiFlicker,
+        c.autoBrightness ? 1 : 0, c.maxGain, c.denoise, c.sharpen, c.quality ? 1 : 0, c.brightness, c.contrast, c.saturation, c.antiFlicker,
         AntiFlickerName(c.antiFlicker), c.mainsHz,
         c.fps, c.alwaysOn ? 1 : 0, c.camera.empty() ? "auto" : c.camera.c_str(),
         c.output.empty() ? "auto" : c.output.c_str());

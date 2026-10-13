@@ -17,6 +17,7 @@ struct TestOptions {
     uint32_t blur = 60;     // 0..100
     uint32_t denoise = 90;  // 0..100, the pipeline's default
     uint32_t sharpen = 50;  // 0..100, the pipeline's default
+    bool quality = true;    // validated fine detail, subject edge and steady background improvements
     bool haveDy = false;    // dy instead of calibrating on the first frame
     float dy = 0;
     int depthPlane = -1;    // also write the depth camera's plane: -1 no, 0 disparity, 1 matte
