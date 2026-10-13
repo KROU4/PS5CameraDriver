@@ -135,7 +135,8 @@ struct ProcessedClip {
     std::vector<std::vector<float>> truth;
 };
 
-bool ProcessClip(const Clip& clip, bool motionCompensation, ProcessedClip& processed)
+bool ProcessClip(const Clip& clip, bool motionCompensation, ProcessedClip& processed,
+                 bool replayAfterReset = false, bool fineDetail = true)
 {
     StereoFormat stereo;
     stereo.eyeWidth = kWidth;
@@ -163,10 +164,12 @@ bool ProcessClip(const Clip& clip, bool motionCompensation, ProcessedClip& proce
     settings.denoise = 1.0f;
     settings.sharpen = 0.0f;
     settings.motionCompensation = motionCompensation;
-    settings.fineDetail = true;
+    settings.fineDetail = fineDetail;
     std::vector<uint8_t> nv12(size_t(kWidth) * kHeight * 3 / 2);
 
-    for (uint32_t frameIndex = 0; frameIndex < kFrames; ++frameIndex) {
+    for (uint32_t call = 0; call < kFrames * (replayAfterReset ? 2u : 1u); ++call) {
+        const uint32_t frameIndex = call % kFrames;
+        if (call == kFrames) pipeline.Reset();
         const HRESULT result = pipeline.Process(clip.packed[frameIndex].data(), kWidth * 4, settings, nv12.data(),
             nv12.data() + size_t(kWidth) * kHeight, kWidth);
         if (frameIndex == 0) {
@@ -179,6 +182,17 @@ bool ProcessClip(const Clip& clip, bool motionCompensation, ProcessedClip& proce
         if (result != S_OK) {
             std::fprintf(stderr, "Process frame %u failed: 0x%08X\n", frameIndex, static_cast<unsigned>(result));
             return false;
+        }
+        if (call >= kFrames) {
+            // Reset must discard temporal luma and fine-motion confidence even though GPU images
+            // retain old contents. Replaying a seeded clip must reproduce a fresh stream exactly.
+            const auto& expected = processed.output[frameIndex - 1];
+            if (!std::equal(expected.begin(), expected.end(), nv12.begin())) {
+                std::fprintf(stderr, "Reset changed luma at frame %u (motion %d, fine detail %d)\n",
+                    frameIndex, motionCompensation ? 1 : 0, fineDetail ? 1 : 0);
+                return false;
+            }
+            continue;
         }
         processed.output.emplace_back(nv12.begin(), nv12.begin() + size_t(kWidth) * kHeight);
         // Process is explicitly one frame deep: output from call n belongs to input n - 1.
@@ -362,6 +376,16 @@ int main()
 {
     const bool withoutMotion = Run(false);
     const bool withMotion = Run(true);
-    std::printf("denoise GPU quality: %s\n", withoutMotion && withMotion ? "PASS" : "FAIL");
-    return withoutMotion && withMotion ? 0 : 1;
+    bool resetPassed = true;
+    const Clip resetClip = MakeClip(Scene::Texture);
+    for (bool motion : {false, true}) {
+        for (bool fineDetail : {false, true}) {
+            ProcessedClip replay;
+            if (!ProcessClip(resetClip, motion, replay, true, fineDetail)) resetPassed = false;
+        }
+    }
+    std::printf("denoise history reset: %s\n", resetPassed ? "PASS" : "FAIL");
+    const bool passed = withoutMotion && withMotion && resetPassed;
+    std::printf("denoise GPU quality: %s\n", passed ? "PASS" : "FAIL");
+    return passed ? 0 : 1;
 }

@@ -31,9 +31,9 @@ static const float kChromaColourSigma = 0.03;
 // is about 2.3 noiseLevel (the ISP's noise is correlated between neighbours).
 static const float kLumaSigma = 4.5;
 // Signed changes add along a moving line but cancel along each row or column for random noise. A
-// cheap 3x3 test opens the 7x7 test; above 3..5 noiseLevel that larger support is fine motion.
-static const float kFineMotionStart = 3.0;
-static const float kFineMotionEnd = 5.0;
+// cheap 3x3 test opens the 7x7 test; above 2.8..4.8 noiseLevel that larger support is fine motion.
+static const float kFineMotionStart = 2.8;
+static const float kFineMotionEnd = 4.8;
 static const float kSpatialDetailNoise = 0.5;
 static const uint kMotionBlock = 32;
 static const int kMotionAgree = 2;  // pixels a block's vector may differ from its previous one

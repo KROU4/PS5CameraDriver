@@ -25,11 +25,13 @@ Questions about setup and usage go to [Discussions](https://github.com/KROU4/PS5
 - Follow the style of the surrounding code: C++20, comments explain *why* rather than *what*.
 - Do not add Sony's firmware or any other third-party binaries to the repository.
 
-## License of contributions
+## Experimental denoise
 
 The GPU regression explicitly enables the experimental `EffectSettings::fineDetail` path.
 It remains off by default and has no application setting: recorded camera clips still show a
 noise regression in one scene. Passing synthetic tests alone does not qualify it for release.
+
+## License of contributions
 
 The project is licensed under the [GNU GPL 3.0](LICENSE). By submitting a pull request you confirm
 that the contribution is your own work (or that you have the right to submit it) and that you
