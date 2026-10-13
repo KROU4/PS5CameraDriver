@@ -8,6 +8,7 @@
 #include <vector>
 
 #include "gpu.h"
+#include "stereonoise.h"
 
 namespace ps5cam {
 
@@ -65,7 +66,7 @@ struct GpuConstants {
     float subjectRange;
     float contrast;
     float saturation;
-    float pad[3];
+    float stereoBalanceMain, stereoBalanceSecond, stereoMinTexture;
 };
 static_assert(sizeof(GpuConstants) == 208, "constant buffer layout");
 // kNumDisp mirrors MAX_DISP in shaders/common.hlsli.
@@ -85,6 +86,7 @@ struct StereoPipeline::Impl {
     uint32_t motionIndex = 0;  // which motion holds the latest vectors
     GpuImage *workMain = nullptr, *workSecond = nullptr; // R32_FLOAT work res
     GpuImage* workPrev = nullptr;   // the previous depth frame's workMain (they swap): a still picture for holefill.hlsl
+    GpuImage *workSecondPrev = nullptr, *matchMain = nullptr, *matchSecond = nullptr;
     GpuImage *censusMain = nullptr, *censusSecond = nullptr;  // R32G32_UINT work res
     GpuImage *dispMain = nullptr, *dispSecond = nullptr;      // R32_FLOAT work res
     GpuImage* dispFill = nullptr;   // after the LR check and the fill of short gaps, -1 = still unknown
@@ -105,10 +107,14 @@ struct StereoPipeline::Impl {
     GpuBuffer* sum = nullptr;  // uint16 per (pixel, disparity)
     GpuBuffer *hist = nullptr, *scoreBuf = nullptr, *lumaHist = nullptr, *noiseHist = nullptr;  // read back
     GpuBuffer* meter = nullptr;  // the subject's light per cell (meter.hlsl), read back
+    GpuBuffer* stereoNoiseHist = nullptr; // signed temporal differences of both raw work images
 
     // Readback ring: the GPU fills slot N while the CPU reads slot N-1.
     struct Slot {
-        bool depth = false, brightness = false, denoise = false, depthPlane = false, meter = false;
+        bool depth = false, brightness = false, denoise = false, depthPlane = false, meter = false, stereoNoise = false;
+        uint32_t stereoNoiseGeneration = 0;
+        float stereoNoiseMain = 0, stereoNoiseSecond = 0;
+        float stereoBalanceMain = 0, stereoBalanceSecond = 0, stereoMinTexture = 0.012f;
     } slots[2];
     int pending = -1;  // slot holding a submitted frame that has not been read back yet
     uint32_t histIndex = 0;  // which dispHist is current
@@ -187,6 +193,10 @@ HRESULT StereoPipeline::CreateResources()
         TRY(g.CreateImage(ww, wh, GpuFormat::R32_FLOAT, rw, &d.workMain));
         TRY(g.CreateImage(ww, wh, GpuFormat::R32_FLOAT, rw, &d.workPrev));
         TRY(g.CreateImage(ww, wh, GpuFormat::R32_FLOAT, rw, &d.workSecond));
+        TRY(g.CreateImage(ww, wh, GpuFormat::R32_FLOAT, rw, &d.workSecondPrev));
+        TRY(g.CreateImage(ww, wh, GpuFormat::R32_FLOAT, rw, &d.matchMain));
+        TRY(g.CreateImage(ww, wh, GpuFormat::R32_FLOAT, rw, &d.matchSecond));
+        TRY(g.CreateBuffer(2 * stereonoise::kHistogramBins * sizeof(uint32_t), true, &d.stereoNoiseHist));
         TRY(g.CreateImage(ww, wh, GpuFormat::RG32_UINT, rw, &d.censusMain));
         TRY(g.CreateImage(ww, wh, GpuFormat::RG32_UINT, rw, &d.censusSecond));
         TRY(g.CreateImage(ww, wh, GpuFormat::R32_FLOAT, rw, &d.dispMain));
@@ -228,6 +238,10 @@ void StereoPipeline::Reset()
     m_haveHistory = false;
     m_haveClean = false;
     m_noise = -1;  // another stream may run at another gain
+    m_stereoNoiseMain = m_stereoNoiseSecond = -1;
+    m_haveStereoWork = false;
+    m_stereoNoiseEnabled = false;
+    ++m_stereoNoiseGeneration;
     m_focus = -1;
     RestartFocus();
     // The auto brightness measures afresh (another stream, other light); the gain itself stays as
@@ -242,6 +256,10 @@ void StereoPipeline::SetRectification(const Rectification& r)
 {
     std::lock_guard lock(m_lock);
     m_rect = r;
+    m_stereoNoiseMain = m_stereoNoiseSecond = -1;
+    m_haveStereoWork = false;
+    ++m_stereoNoiseGeneration;
+    if (m_impl) for (auto& slot : m_impl->slots) slot.stereoNoise = false;
 }
 
 void StereoPipeline::Upload(const uint8_t* yuy2, uint32_t pitch)
@@ -295,7 +313,18 @@ void StereoPipeline::UpdateConstants(const EffectSettings* s, uint32_t pathDir)
     c.p1 = 10;
     c.p2 = 120;
     c.guidedEps = 0.0004f;
+    c.stereoBalanceMain = c.stereoBalanceSecond = 0;
+    c.stereoMinTexture = 0.012f;
     if (s) {
+        if (s->stereoNoiseBalance && m_stereoNoiseMain > 0 && m_stereoNoiseSecond > 0) {
+            const float target = std::min(m_stereoNoiseMain, m_stereoNoiseSecond);
+            c.stereoBalanceMain = stereonoise::EqualizationAlpha(m_stereoNoiseMain, target);
+            c.stereoBalanceSecond = stereonoise::EqualizationAlpha(m_stereoNoiseSecond, target);
+        }
+        if (s->adaptiveStereoTexture)
+            c.stereoMinTexture = stereonoise::TextureThreshold(
+                stereonoise::BalancedSigma(m_stereoNoiseMain, c.stereoBalanceMain),
+                stereonoise::BalancedSigma(m_stereoNoiseSecond, c.stereoBalanceSecond));
         float strength = std::clamp(s->blurStrength, 0.0f, 1.0f);
         float outScale = o.width / 1920.0f;
         // Blur grows with disparity measured in eye pixels and is expressed in output pixels.
@@ -339,7 +368,7 @@ void StereoPipeline::UpdateConstants(const EffectSettings* s, uint32_t pathDir)
     m_gpu->SetConstants(&c, sizeof(c));
 }
 
-void StereoPipeline::RunDepth(const EffectSettings& s)
+void StereoPipeline::RunDepth(const EffectSettings& s, int slot)
 {
     auto& g = *m_gpu;
     auto& d = *m_impl;
@@ -347,15 +376,35 @@ void StereoPipeline::RunDepth(const EffectSettings& s)
 
     // The last depth frame's work luma stays for the hole fill (it matters only where there is history).
     std::swap(d.workMain, d.workPrev);
+    std::swap(d.workSecond, d.workSecondPrev);
     g.Dispatch(Kernel::Downscale, {d.mainYuv, d.secondYuv}, {d.workMain, d.workSecond}, DivUp(ww, 16), DivUp(wh, 8));
-    g.Dispatch(Kernel::Census, {d.workMain, d.workSecond}, {d.censusMain, d.censusSecond}, DivUp(ww, 16), DivUp(wh, 8));
+    const bool stereoNoise = s.stereoNoiseBalance || s.adaptiveStereoTexture;
+    if (stereoNoise && m_haveHistory && m_haveStereoWork) {
+        g.ClearUint(d.stereoNoiseHist);
+        g.Dispatch(Kernel::StereoNoise, {d.workMain, d.workPrev, d.workSecond, d.workSecondPrev},
+            {d.stereoNoiseHist}, DivUp(ww, 16), DivUp(wh, 8));
+        g.CopyToReadback(d.stereoNoiseHist, slot);
+        d.slots[slot].stereoNoise = true;
+        d.slots[slot].stereoNoiseGeneration = m_stereoNoiseGeneration;
+    }
+    m_haveStereoWork = true;
+    GpuImage* matchMain = d.workMain;
+    GpuImage* matchSecond = d.workSecond;
+    if (s.stereoNoiseBalance) {
+        g.Dispatch(Kernel::StereoBalance, {d.workMain, d.workSecond}, {d.matchMain, d.matchSecond},
+            DivUp(ww, 16), DivUp(wh, 8));
+        matchMain = d.matchMain;
+        matchSecond = d.matchSecond;
+    }
+    g.Dispatch(Kernel::Census, {matchMain, matchSecond}, {d.censusMain, d.censusSecond}, DivUp(ww, 16), DivUp(wh, 8));
 
-    for (uint32_t dir = 0; dir < 4; ++dir) {
+    for (uint32_t dir = 0; dir < (s.stereoDiagonals ? 8u : 4u); ++dir) {
         UpdateConstants(&s, dir);
-        g.Dispatch(Kernel::Aggregate, {d.censusMain, d.censusSecond, d.workMain}, {d.sum}, dir < 2 ? wh : ww, 1);
+        g.Dispatch(Kernel::Aggregate, {d.censusMain, d.censusSecond, d.workMain}, {d.sum},
+            dir < 2 ? wh : dir < 4 ? ww : ww + wh - 1, 1);
     }
 
-    g.Dispatch(Kernel::Wta, {d.sum, d.workMain, d.censusMain, d.censusSecond}, {d.dispMain, d.dispSecond}, DivUp(ww, 16),
+    g.Dispatch(Kernel::Wta, {d.sum, matchMain, d.censusMain, d.censusSecond}, {d.dispMain, d.dispSecond}, DivUp(ww, 16),
         DivUp(wh, 8));
 
     uint32_t cur = d.histIndex ^ 1, prev = d.histIndex;
@@ -716,6 +765,17 @@ HRESULT StereoPipeline::Process(const uint8_t* yuy2, uint32_t yuy2Pitch, const E
     auto& d = *m_impl;
     const uint32_t ow = m_output.width, oh = m_output.height;
     const int slot = (d.pending == 0) ? 1 : 0;
+    const bool needDepth = s.mode == ViewMode::Bokeh || s.mode == ViewMode::Depth || s.mode == ViewMode::DebugRaw ||
+                           s.mode == ViewMode::DebugFilled || s.mode == ViewMode::DebugHoles ||
+                           s.mode == ViewMode::DebugGrey || s.mode == ViewMode::DebugBlend ||
+                           (s.mode >= ViewMode::DebugRawGrey && s.mode <= ViewMode::DebugHoleGrey) ||
+                           (s.depthPlane && !m_stereo.mono);
+    const bool stereoNoiseEnabled = needDepth && !m_stereo.mono && (s.stereoNoiseBalance || s.adaptiveStereoTexture);
+    if (stereoNoiseEnabled != m_stereoNoiseEnabled) {
+        m_stereoNoiseEnabled = stereoNoiseEnabled;
+        ++m_stereoNoiseGeneration;
+        m_stereoNoiseMain = m_stereoNoiseSecond = -1;
+    }
     // The second sensor view shows no main sensor image to clean up.
     const bool denoise = s.denoise > 0.0f && s.mode != ViewMode::Second;
     if (denoise && m_frame != m_lastDenoiseFrame + 1) m_haveClean = false;  // it was off: history is stale
@@ -729,6 +789,11 @@ HRESULT StereoPipeline::Process(const uint8_t* yuy2, uint32_t yuy2Pitch, const E
 
     Upload(yuy2, yuy2Pitch);
     UpdateConstants(&s, 0);
+    d.slots[slot].stereoNoiseMain = std::max(m_stereoNoiseMain, 0.0f);
+    d.slots[slot].stereoNoiseSecond = std::max(m_stereoNoiseSecond, 0.0f);
+    d.slots[slot].stereoBalanceMain = d.c.stereoBalanceMain;
+    d.slots[slot].stereoBalanceSecond = d.c.stereoBalanceSecond;
+    d.slots[slot].stereoMinTexture = d.c.stereoMinTexture;
 
     g.Dispatch(Kernel::Unpack, {d.packed}, {d.mainYuv, d.secondYuv}, DivUp(m_stereo.eyeWidth / 2, 16),
         DivUp(m_stereo.eyeHeight, 8));
@@ -769,19 +834,19 @@ HRESULT StereoPipeline::Process(const uint8_t* yuy2, uint32_t yuy2Pitch, const E
         image = d.clean[cur];
     }
 
-    const bool needDepth = s.mode == ViewMode::Bokeh || s.mode == ViewMode::Depth || s.mode == ViewMode::DebugRaw ||
-                           s.mode == ViewMode::DebugFilled || s.mode == ViewMode::DebugHoles ||
-                           s.mode == ViewMode::DebugGrey || s.mode == ViewMode::DebugBlend ||
-                           (s.mode >= ViewMode::DebugRawGrey && s.mode <= ViewMode::DebugHoleGrey) ||
-                           (s.depthPlane && !m_stereo.mono);
+    d.slots[slot].stereoNoise = false;
+    if (!needDepth || !(s.stereoNoiseBalance || s.adaptiveStereoTexture))
+        m_stereoNoiseMain = m_stereoNoiseSecond = -1;
+    if (!needDepth) m_haveStereoWork = false;
     d.slots[slot].depth = needDepth;
     if (needDepth) {
         if (m_frame != m_lastDepthFrame + 1) {  // depth was off: its history and the focus are stale
             m_haveHistory = false;
+            m_stereoNoiseMain = m_stereoNoiseSecond = -1;
             RestartFocus();
         }
         m_lastDepthFrame = m_frame;
-        RunDepth(s);
+        RunDepth(s, slot);
         UpdateConstants(&s, 0);
         g.ClearUint(d.hist);
         g.Dispatch(Kernel::Histogram, {image, d.gfC, d.dispFill}, {d.hist}, DivUp(ow / 4, 16), DivUp(oh / 4, 8));
@@ -862,6 +927,16 @@ HRESULT StereoPipeline::Process(const uint8_t* yuy2, uint32_t yuy2Pitch, const E
     if (d.slots[read].brightness) withHistogram(d.lumaHist, [&](const uint32_t* h) { UpdateGain(h, s, subject); });
     if (d.slots[read].depth) withHistogram(d.hist, [&](const uint32_t* h) { UpdateFocus(h, s); });
     if (d.slots[read].denoise) withHistogram(d.noiseHist, [&](const uint32_t* h) { UpdateNoise(h); });
+    if (m_stereoNoiseEnabled && d.slots[read].stereoNoise &&
+        d.slots[read].stereoNoiseGeneration == m_stereoNoiseGeneration)
+        withHistogram(d.stereoNoiseHist, [&](const uint32_t* h) {
+        auto update = [](float& value, float sample) {
+            if (sample < 0) { value = -1; return; }
+            value = value < 0 ? sample : value + 0.25f * (sample - value);
+        };
+        update(m_stereoNoiseMain, stereonoise::NoiseFromHistogram(h).sigma);
+        update(m_stereoNoiseSecond, stereonoise::NoiseFromHistogram(h + stereonoise::kHistogramBins).sigma);
+    });
 
     if (stats) {
         float ms = 0;
@@ -870,6 +945,11 @@ HRESULT StereoPipeline::Process(const uint8_t* yuy2, uint32_t yuy2Pitch, const E
         stats->gain = s.autoBrightness ? m_gain : 1.0f;
         stats->noise = std::max(m_noise, 0.0f);
         stats->subjectLuma = m_subjectLuma;
+        stats->stereoNoiseMain = d.slots[read].stereoNoiseMain;
+        stats->stereoNoiseSecond = d.slots[read].stereoNoiseSecond;
+        stats->stereoBalanceMain = d.slots[read].stereoBalanceMain;
+        stats->stereoBalanceSecond = d.slots[read].stereoBalanceSecond;
+        stats->stereoTextureThreshold = d.slots[read].stereoMinTexture;
     }
     return S_OK;
 }
@@ -919,6 +999,11 @@ HRESULT StereoPipeline::Calibrate(const uint8_t* yuy2, uint32_t yuy2Pitch, Recti
     if (result) result->contrast = -1;
     if (!m_impl || m_stereo.mono) return E_NOT_VALID_STATE;
     auto& d = *m_impl;
+    // Calibration reuses WorkSecond for its sweep, so its contents cease to be a temporal sample.
+    m_haveStereoWork = false;
+    ++m_stereoNoiseGeneration;
+    m_stereoNoiseMain = m_stereoNoiseSecond = -1;
+    for (auto& slot : d.slots) slot.stereoNoise = false;
     Rectification saved = m_rect;
     Upload(yuy2, yuy2Pitch);
     UpdateConstants(nullptr, 0);

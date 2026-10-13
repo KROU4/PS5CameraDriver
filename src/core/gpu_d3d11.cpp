@@ -16,6 +16,8 @@
 #include "shaders/census.h"
 #include "shaders/composite.h"
 #include "shaders/denoise.h"
+#include "shaders/stereo_noise.h"
+#include "shaders/stereo_balance.h"
 #include "shaders/depthout.h"
 #include "shaders/downscale.h"
 #include "shaders/guided_box.h"
@@ -74,6 +76,7 @@ const Blob kKernels[] = {
     {g_subject_sweep, sizeof(g_subject_sweep)}, {g_subject_share, sizeof(g_subject_share)}, {g_meter, sizeof(g_meter)},
     {g_motion_down, sizeof(g_motion_down)}, {g_motion_search, sizeof(g_motion_search)},
     {g_motion_refine, sizeof(g_motion_refine)},
+    {g_stereo_noise, sizeof(g_stereo_noise)}, {g_stereo_balance, sizeof(g_stereo_balance)},
 };
 static_assert(sizeof(kKernels) / sizeof(kKernels[0]) == size_t(Kernel::Count), "one blob per kernel");
 

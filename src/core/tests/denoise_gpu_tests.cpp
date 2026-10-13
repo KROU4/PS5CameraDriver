@@ -21,7 +21,7 @@ constexpr uint32_t kHeight = 192;
 constexpr uint32_t kFrames = 48;
 constexpr uint32_t kCrop = 24;
 
-enum class Scene { Flat, Texture, Edge };
+enum class Scene { Flat, Texture, Edge, Correlated, HeterogeneousNoise };
 
 // A fixed generator and Box-Muller transform keep the fixture reproducible without depending on
 // the implementation-defined sequence of std::normal_distribution.
@@ -92,6 +92,11 @@ Clip MakeClip(Scene scene)
     const uint32_t pitch = kWidth * 4;  // Two side-by-side YUY2 eyes.
 
     for (uint32_t frameIndex = 0; frameIndex < kFrames; ++frameIndex) {
+        std::vector<double> correlated;
+        if (scene == Scene::Correlated || scene == Scene::HeterogeneousNoise) {
+            correlated.resize(size_t(kWidth + 4) * (kHeight + 4));
+            for (double& value : correlated) value = noise.Next();
+        }
         std::vector<uint8_t> luma(size_t(kWidth) * kHeight);
         std::vector<float> truth(size_t(kWidth) * kHeight);
         for (uint32_t y = 0; y < kHeight; ++y) {
@@ -106,7 +111,21 @@ Clip MakeClip(Scene scene)
                 }
                 const size_t index = size_t(y) * kWidth + x;
                 truth[index] = Studio(level);
-                const long sample = std::lround(level + noise.Next() * 10.0);
+                double sampleNoise = 0;
+                if (scene == Scene::HeterogeneousNoise && (x < kWidth / 3 || x >= 2 * kWidth / 3)) {
+                    sampleNoise = noise.Next() * 3.0;
+                } else if (scene == Scene::Correlated || scene == Scene::HeterogeneousNoise) {
+                    // Binomial 5x5 correlation, normalized to the same pixel sigma=10 as white
+                    // noise. Independent frames reproduce ISP-sized blobs without real motion.
+                    constexpr int kernel[5] = {1, 4, 6, 4, 1};
+                    for (uint32_t dy = 0; dy < 5; ++dy)
+                        for (uint32_t dx = 0; dx < 5; ++dx)
+                            sampleNoise += kernel[dy] * kernel[dx] *
+                                correlated[size_t(y + dy) * (kWidth + 4) + x + dx] / 7.0;
+                } else {
+                    sampleNoise = noise.Next() * 10.0;
+                }
+                const long sample = std::lround(level + sampleNoise);
                 luma[index] = static_cast<uint8_t>(std::clamp(sample, 0L, 255L));
             }
         }
@@ -370,12 +389,47 @@ bool Run(bool motionCompensation)
     return passed;
 }
 
+double FlatFlicker(const ProcessedClip& clip)
+{
+    double sum = 0;
+    uint64_t count = 0;
+    for (size_t frame = 17; frame < clip.output.size(); ++frame)
+        for (uint32_t y = kCrop; y < kHeight - kCrop; ++y)
+            for (uint32_t x = kCrop; x < kWidth - kCrop; ++x) {
+                const size_t p = size_t(y) * kWidth + x;
+                sum += std::abs(int(clip.output[frame][p]) - int(clip.output[frame - 1][p]));
+                ++count;
+            }
+    return sum / double(count);
+}
+
+bool CorrelatedNoise(bool motion, Scene scene)
+{
+    const Clip fixture = MakeClip(scene);
+    ProcessedClip normal, detail;
+    if (!ProcessClip(fixture, motion, normal, false, false) ||
+        !ProcessClip(fixture, motion, detail)) return false;
+    const double normalRms = FlatRms(normal), detailRms = FlatRms(detail);
+    const double normalFlicker = FlatFlicker(normal), detailFlicker = FlatFlicker(detail);
+    std::printf("motion %d; %s noise RMS %.3f -> %.3f; flicker %.3f -> %.3f\n",
+        motion ? 1 : 0, scene == Scene::Correlated ? "correlated" : "heterogeneous",
+        normalRms, detailRms, normalFlicker, detailFlicker);
+    const bool passed = std::isfinite(detailRms) && std::isfinite(detailFlicker) &&
+        detailRms <= normalRms * 1.05 && detailFlicker <= normalFlicker * 1.05;
+    if (!passed) std::fprintf(stderr, "motion %d: correlated noise exceeds 5%% regression limit\n", motion ? 1 : 0);
+    return passed;
+}
+
 }  // namespace
 
 int main()
 {
     const bool withoutMotion = Run(false);
     const bool withMotion = Run(true);
+    const bool correlatedWithoutMotion = CorrelatedNoise(false, Scene::Correlated);
+    const bool correlatedWithMotion = CorrelatedNoise(true, Scene::Correlated);
+    const bool heterogeneousWithoutMotion = CorrelatedNoise(false, Scene::HeterogeneousNoise);
+    const bool heterogeneousWithMotion = CorrelatedNoise(true, Scene::HeterogeneousNoise);
     bool resetPassed = true;
     const Clip resetClip = MakeClip(Scene::Texture);
     for (bool motion : {false, true}) {
@@ -385,7 +439,8 @@ int main()
         }
     }
     std::printf("denoise history reset: %s\n", resetPassed ? "PASS" : "FAIL");
-    const bool passed = withoutMotion && withMotion && resetPassed;
+    const bool passed = withoutMotion && withMotion && correlatedWithoutMotion && correlatedWithMotion &&
+        heterogeneousWithoutMotion && heterogeneousWithMotion && resetPassed;
     std::printf("denoise GPU quality: %s\n", passed ? "PASS" : "FAIL");
     return passed ? 0 : 1;
 }

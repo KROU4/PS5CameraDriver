@@ -19,7 +19,7 @@ Questions about setup and usage go to [Discussions](https://github.com/KROU4/PS5
 - Build with `.\build.ps1`, package with `.\package.ps1` (requires VS 2022 Build Tools and Windows SDK
   10.0.26100). The GitHub Actions check runs the same steps.
 - After building, run `ctest --test-dir build/Release --output-on-failure`. These tests cover service
-  failures, camera modes, CPU logic and GPU denoise quality without opening a camera. GPU tests
+  failures, camera modes, CPU noise estimation and GPU denoise/stereo quality without opening a camera. GPU tests
   use WARP on Windows and lavapipe in Linux CI, so they need no physical GPU.
   CI also tests MSI installation, upgrade and removal on its disposable Windows runner.
 - Follow the style of the surrounding code: C++20, comments explain *why* rather than *what*.
@@ -27,9 +27,10 @@ Questions about setup and usage go to [Discussions](https://github.com/KROU4/PS5
 
 ## Experimental denoise
 
-The GPU regression explicitly enables the experimental `EffectSettings::fineDetail` path.
-It remains off by default and has no application setting: recorded camera clips still show a
-noise regression in one scene. Passing synthetic tests alone does not qualify it for release.
+The GPU regressions explicitly enable experimental detail restoration, stereo-noise balancing,
+adaptive texture rejection and diagonal SGM. These paths remain off by default and have no
+application settings. Recorded-camera regression measurements are also required before enabling
+them: passing synthetic GPU tests alone does not qualify a quality change for release.
 
 ## License of contributions
 

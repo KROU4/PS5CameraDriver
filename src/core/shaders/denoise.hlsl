@@ -67,6 +67,7 @@ float3 PrevMatch(int2 p, int2 v, int2 last)
 float FineChange(int2 p, int2 v, int2 last)
 {
     float columns[7] = {0, 0, 0, 0, 0, 0, 0};
+    float rowProfile[7] = {0, 0, 0, 0, 0, 0, 0};
     float rows = 0;
     [unroll] for (int y = -3; y <= 3; ++y)
     {
@@ -79,11 +80,23 @@ float FineChange(int2 p, int2 v, int2 last)
             columns[x + 3] += d;
         }
         rows += abs(row);
+        rowProfile[y + 3] = row;
     }
     float cols = 0;
     [unroll] for (int i = 0; i < 7; ++i)
         cols += abs(columns[i]);
-    return max(rows, cols) / 49.0;
+    // A noisy dark patch can exceed the frame's median noise while containing no motion.
+    // Its correlated blobs vary smoothly across the directional profile. Thin moving lines
+    // have a stronger second difference; require that fine structure before bypassing denoise.
+    float rowCurvature = 0, columnCurvature = 0;
+    [unroll] for (int k = 1; k < 6; ++k)
+    {
+        rowCurvature += abs(rowProfile[k - 1] - 2.0 * rowProfile[k] + rowProfile[k + 1]);
+        columnCurvature += abs(columns[k - 1] - 2.0 * columns[k] + columns[k + 1]);
+    }
+    const float amplitude = max(rows, cols);
+    const float curvature = cols >= rows ? columnCurvature : rowCurvature;
+    return amplitude / 49.0 * smoothstep(0.6, 1.1, curvature / max(amplitude, 1e-6));
 }
 
 [numthreads(16, 8, 1)]

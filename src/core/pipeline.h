@@ -43,6 +43,9 @@ struct EffectSettings {
     float denoise = 0.9f;         // temporal noise reduction of the image, 0 (off) .. 1
     bool motionCompensation = true;  // ... averaging along the motion of what moves (shaders/motion.hlsl)
     bool fineDetail = false;         // experimental fine-motion restoration; requires corpus validation
+    bool stereoNoiseBalance = false; // experimental work-image noise equalization before census
+    bool adaptiveStereoTexture = false; // threshold from both raw work-image noise estimates
+    bool stereoDiagonals = false;    // experimental eight-direction SGM
     float sharpen = 0.5f;         // edge sharpening of the picture (noise-aware), 0 (off) .. 1
     float brightness = 0.0f;      // stops on top of the auto brightness (-1..1)
     float contrast = 1.0f;        // luma gain around mid grey
@@ -113,6 +116,10 @@ struct FrameStats {
     float gain = 1;
     float noise = 0;        // typical 3x3-mean luma change of a still scene between frames (denoise on)
     float subjectLuma = 0;  // mean luma of the subject's head the exposure aims at, 0 = not metered
+    // Pair-noise estimates and constants applied to the delivered frame, not the next submission.
+    float stereoNoiseMain = 0, stereoNoiseSecond = 0;
+    float stereoBalanceMain = 0, stereoBalanceSecond = 0;
+    float stereoTextureThreshold = 0.012f;
 };
 
 class Gpu;
@@ -152,7 +159,7 @@ private:
     HRESULT CreateResources();
     void Upload(const uint8_t* yuy2, uint32_t pitch);
     void UpdateConstants(const EffectSettings* s, uint32_t pathDir);
-    void RunDepth(const EffectSettings& s);
+    void RunDepth(const EffectSettings& s, int slot);
     float ScoreAlignment(float dy, float rotationDeg);
     void UpdateFocus(const uint32_t* histogram, const EffectSettings& s);  // 2 x kNumDisp bins (histogram.hlsl)
     void RestartFocus();  // the next histograms acquire the subject anew (kFocusAcquireFrames)
@@ -192,6 +199,10 @@ private:
     uint32_t m_gainHistoryNext = 0, m_gainHistoryCount = 0;
     float m_subjectLuma = 0;  // FrameStats::subjectLuma of the latest metering
     float m_noise = -1;  // < 0: not measured yet
+    float m_stereoNoiseMain = -1, m_stereoNoiseSecond = -1;
+    bool m_haveStereoWork = false;
+    bool m_stereoNoiseEnabled = false;
+    uint32_t m_stereoNoiseGeneration = 0;
     bool m_haveHistory = false;
     bool m_haveClean = false;  // a denoised previous frame to blend with
     uint32_t m_frame = 0;

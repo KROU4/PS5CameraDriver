@@ -13,7 +13,8 @@ RWByteAddressBuffer Sum : register(u0); // uint16 per (pixel, disparity), 32 wor
 groupshared uint gL[2][MAX_DISP + 2];
 groupshared uint gMin[3];
 
-static const int2 kDirs[4] = { int2(1, 0), int2(-1, 0), int2(0, 1), int2(0, -1) };
+static const int2 kDirs[8] = { int2(1, 0), int2(-1, 0), int2(0, 1), int2(0, -1),
+    int2(1, 1), int2(-1, -1), int2(-1, 1), int2(1, -1) };
 
 uint MatchCost(int2 p, uint d)
 {
@@ -37,11 +38,24 @@ void main(uint3 gid : SV_GroupID, uint3 tid : SV_GroupThreadID)
         p = int2(dir.x > 0 ? 0 : (int)workSize.x - 1, gid.x);
         steps = workSize.x;
     }
-    else
+    else if (dir.x == 0)
     {
         if (gid.x >= workSize.x) return;
         p = int2(gid.x, dir.y > 0 ? 0 : (int)workSize.y - 1);
         steps = workSize.y;
+    }
+    else
+    {
+        if (gid.x >= workSize.x + workSize.y - 1) return;
+        // Top/bottom row plus the entering side excluding its corner. Every pixel belongs
+        // to exactly one diagonal of this direction, so sum words still have a single writer.
+        if (gid.x < workSize.x)
+            p = int2(gid.x, dir.y > 0 ? 0 : (int)workSize.y - 1);
+        else
+            p = int2(dir.x > 0 ? 0 : (int)workSize.x - 1,
+                dir.y > 0 ? (int)(gid.x - workSize.x + 1) : (int)(workSize.x + workSize.y - 2 - gid.x));
+        steps = min(dir.x > 0 ? (int)workSize.x - p.x : p.x + 1,
+                    dir.y > 0 ? (int)workSize.y - p.y : p.y + 1);
     }
 
     // Sentinels outside [0, MAX_DISP) so that d-1 / d+1 lookups need no branches.
@@ -85,7 +99,11 @@ void main(uint3 gid : SV_GroupID, uint3 tid : SV_GroupThreadID)
         {
             uint pixel = (uint)p.y * workSize.x + (uint)p.x;
             uint addr = (pixel * (MAX_DISP / 2) + d) * 4;
-            uint packed = gL[nxt][2 * d + 1] | (gL[nxt][2 * d + 2] << 16);
+            // Diagonal context supplements the original paths; half weight avoids giving
+            // corner-connected background enough support to spread over a moving contour.
+            uint low = gL[nxt][2 * d + 1], high = gL[nxt][2 * d + 2];
+            if (pathDir >= 4) { low /= 2; high /= 2; }
+            uint packed = low | (high << 16);
             if (pathDir == 0)
                 Sum.Store(addr, packed);
             else

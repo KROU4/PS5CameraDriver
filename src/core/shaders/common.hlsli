@@ -40,6 +40,9 @@ cbuffer Constants : register(b0)
     float  subjectRange;   // subject.hlsl: widening of the sharp zone over the subject's own surface
     float  contrast;       // composite.hlsl: luma gain around mid grey (1 = as is)
     float  saturation;     // composite.hlsl: colour gain (1 = as is)
+    float  stereoBalanceMain;
+    float  stereoBalanceSecond;
+    float  stereoMinTexture;
 };
 
 SamplerState LinearClamp : register(s0);
