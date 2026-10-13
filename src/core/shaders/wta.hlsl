@@ -14,7 +14,6 @@ static const uint kUniquenessPercent = 92;
 // A flat neighbourhood (luma standard deviation below this, sensor noise level) matches anywhere:
 // SGM then just carries a neighbour's disparity along its paths, which is how a subject's depth
 // spreads over a plain wall. Such pixels are left to the hole filling instead.
-static const float kMinTexture = 0.012;
 // Census bits that differ at the chosen disparity, averaged over 3x3 (of 62). A real match differs
 // in a few bits; in dark noisy areas (a ceiling at high gain) the winner is the least bad of random
 // patterns, which SGM turns into blobs that pass the other tests.
@@ -90,7 +89,7 @@ void main(uint3 id : SV_DispatchThreadID)
     bool inside = id.y >= 3 && id.y + 3 < workSize.y && id.x >= bestD + 4 && id.x + 4 < workSize.x;
     bool confident = inside && (second == 0xFFFFFFFF || best * 100 < second * kUniquenessPercent);
     [branch] if (confident)
-        confident = LocalStd(int2(id.xy)) >= kMinTexture;
+        confident = LocalStd(int2(id.xy)) >= stereoMinTexture;
     [branch] if (confident)
         confident = CensusCost(int2(id.xy), bestD) <= kMaxCensusCost * 9;
     float disp = -1;

@@ -18,7 +18,7 @@ namespace ps5cam {
 enum class Kernel : uint32_t {
     Unpack, Downscale, Census, Aggregate, Wta, LrFill, HoleFill, GuidedPrep, GuidedBox, GuidedCoef, Histogram, Bokeh,
     Composite, Score, LumaStats, Denoise, DepthOut, SubjectSeed, SubjectSweep, SubjectShare, Meter, MotionDown,
-    MotionSearch, MotionRefine, Count
+    MotionSearch, MotionRefine, StereoNoise, StereoBalance, Count
 };
 
 enum class GpuFormat : uint32_t { RGBA8_UINT, RGBA8_UNORM, R32_FLOAT, RG32_UINT, RGBA32_FLOAT, RGBA16_FLOAT, R8_UNORM, RG8_UNORM };

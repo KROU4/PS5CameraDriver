@@ -165,6 +165,7 @@ int wmain(int argc, wchar_t** argv)
         else if (k == L"maxgain") s.maxGain = v;
         else if (k == L"denoise") s.denoise = v;
         else if (k == L"sharpen") s.sharpen = v;
+        else if (k == L"quality" && v <= 1) s.quality = v != 0;
         else if (k == L"brightness") s.brightness = v;
         else if (k == L"contrast") s.contrast = v;
         else if (k == L"saturation") s.saturation = v;
@@ -215,10 +216,10 @@ int wmain(int argc, wchar_t** argv)
         wprintf(L"device MFT      : %ls\n", IsDeviceMftSet() ? L"on" : L"off");
         wprintf(L"Windows default : background effects %ls\n", DescribeBackgroundEffectDefault().c_str());
         wprintf(L"settings        : mode %u blur %u autofocus %u focus %u prefer60 %u fullhdonly %u highlights %u "
-                L"temporal %u autobrightness %u maxgain %u denoise %u sharpen %u brightness %u contrast %u saturation %u "
+                L"temporal %u autobrightness %u maxgain %u denoise %u sharpen %u quality %u brightness %u contrast %u saturation %u "
                 L"antiflicker %u blurstyle %u mains %u Hz depthcamera %u depthview %u\n",
             s.mode, s.blur, s.autoFocus, s.focus, s.prefer60, s.fullHdOnly, s.highlights, s.temporal, s.autoBrightness,
-            s.maxGain, s.denoise, s.sharpen, s.brightness, s.contrast, s.saturation, s.antiFlicker, s.blurStyle,
+            s.maxGain, s.denoise, s.sharpen, s.quality, s.brightness, s.contrast, s.saturation, s.antiFlicker, s.blurStyle,
             s.mainsHz ? s.mainsHz : RegionMainsHz(), s.depthCamera, s.depthView);
         wprintf(L"stream          : %ls %ls fps %.2f gpu %.2f ms focus %.2f %ls\n", st.streaming ? L"active" : L"idle",
             st.format.c_str(), st.fpsX100 / 100.0, st.gpuUs / 1000.0, st.focusX100 / 100.0, st.error.c_str());
@@ -236,12 +237,13 @@ int wmain(int argc, wchar_t** argv)
     wprintf(L"usage: ps5cam-ctl setup | register | remove | hide | unhide | dmft on|off | status | recalibrate |\n"
             L"                  record N | defaults |\n"
             L"                  set mode|blur|autofocus|focus|prefer60|fullhdonly|highlights|temporal|autobrightness|\n"
-            L"                      maxgain|denoise|sharpen|brightness|contrast|saturation|antiflicker|blurstyle|\n"
+            L"                      maxgain|denoise|sharpen|quality|brightness|contrast|saturation|antiflicker|blurstyle|\n"
             L"                      depthcamera|depthview VALUE\n"
             L"  blur 0..100: portrait blur strength (25 light, 50 medium, 75 strong, 100 maximum)\n"
             L"  fullhdonly 1: apps are offered 1920x1080 at 60 fps only; 0: also 1280x720 and 30 fps\n"
             L"  denoise 0..100: temporal noise reduction of the picture (0 off)\n"
             L"  sharpen 0..100: edge sharpening of the picture, leaving the noise alone (0 off)\n"
+            L"  quality 1: improved fine detail, subject edges and steady backgrounds; 0: rollback to legacy processing\n"
             L"  brightness, contrast, saturation 0..100 (50 = as the camera gives it): also in Windows' camera settings\n"
             L"  antiflicker 0 auto (dim scenes without lamp flicker get the longer exposure), 1 50 Hz, 2 60 Hz, 3 off\n"
             L"  blurstyle 0 portrait blur (the blur setting), 1 standard blur (stronger, fixed): Windows' background effects\n"

@@ -86,6 +86,7 @@ Settings LoadSettings()
     s.maxGain = ReadDword(key, L"MaxGain", s.maxGain);
     s.denoise = ReadDword(key, L"Denoise", s.denoise);
     s.sharpen = ReadDword(key, L"Sharpen", s.sharpen);
+    s.quality = ReadDword(key, L"QualityEnhancements", s.quality) != 0;
     s.antiFlicker = ReadDword(key, L"AntiFlicker", s.antiFlicker);
     s.brightness = ReadDword(key, L"Brightness", s.brightness);
     s.contrast = ReadDword(key, L"Contrast", s.contrast);
@@ -126,6 +127,7 @@ bool SaveSettings(const Settings& s)
     WriteDword(key, L"MaxGain", s.maxGain);
     WriteDword(key, L"Denoise", s.denoise);
     WriteDword(key, L"Sharpen", s.sharpen);
+    WriteDword(key, L"QualityEnhancements", s.quality);
     WriteDword(key, L"AntiFlicker", s.antiFlicker);
     WriteDword(key, L"Brightness", s.brightness);
     WriteDword(key, L"Contrast", s.contrast);

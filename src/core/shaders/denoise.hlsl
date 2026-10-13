@@ -30,25 +30,73 @@ static const float kChromaColourSigma = 0.03;
 // Luma range sigma of the spatial smoothing per unit of noiseLevel: on this camera a pixel's noise
 // is about 2.3 noiseLevel (the ISP's noise is correlated between neighbours).
 static const float kLumaSigma = 4.5;
+// Signed changes add along a moving line but cancel along each row or column for random noise. A
+// cheap 3x3 test opens the 7x7 test; above 2.8..4.8 noiseLevel that larger support is fine motion.
+static const float kFineMotionStart = 2.8;
+static const float kFineMotionEnd = 4.8;
+static const float kSpatialDetailNoise = 0.5;
 static const uint kMotionBlock = 32;
 static const int kMotionAgree = 2;  // pixels a block's vector may differ from its previous one
 
 // The history's 3x3 luma mean around p - v, and its pixel by pixel difference from this frame's
 // 3x3 around p (summed absolute differences: fine texture that the means hide counts here).
-float2 PrevMatch(int2 p, int2 v, int2 last)
+float3 PrevMatch(int2 p, int2 v, int2 last)
 {
     float mean = 0, sad = 0;
+    float3 rowDiff = 0, columnDiff = 0;
     [unroll] for (int y = -1; y <= 1; ++y)
     {
         [unroll] for (int x = -1; x <= 1; ++x)
         {
             int2 q = clamp(p + int2(x, y), int2(0, 0), last);
             float h = Prev[clamp(q - v, int2(0, 0), last)].x;
+            float d = Cur[q].x - h;
             mean += h;
-            sad += abs(Cur[q].x - h);
+            sad += abs(d);
+            rowDiff[y + 1] += d;
+            columnDiff[x + 1] += d;
         }
     }
-    return float2(mean / 9.0, sad);
+    const float3 one = 1.0;
+    float coherent = max(dot(abs(rowDiff), one), dot(abs(columnDiff), one)) / 9.0;
+    return float3(mean / 9.0, sad, coherent);
+}
+
+// Directional signed change over a larger support. This runs only where the 3x3 version already
+// exceeds the noise threshold, so flat areas keep the original cost of the filter.
+float FineChange(int2 p, int2 v, int2 last)
+{
+    float columns[7] = {0, 0, 0, 0, 0, 0, 0};
+    float rowProfile[7] = {0, 0, 0, 0, 0, 0, 0};
+    float rows = 0;
+    [unroll] for (int y = -3; y <= 3; ++y)
+    {
+        float row = 0;
+        [unroll] for (int x = -3; x <= 3; ++x)
+        {
+            int2 q = clamp(p + int2(x, y), int2(0, 0), last);
+            float d = Cur[q].x - Prev[clamp(q - v, int2(0, 0), last)].x;
+            row += d;
+            columns[x + 3] += d;
+        }
+        rows += abs(row);
+        rowProfile[y + 3] = row;
+    }
+    float cols = 0;
+    [unroll] for (int i = 0; i < 7; ++i)
+        cols += abs(columns[i]);
+    // A noisy dark patch can exceed the frame's median noise while containing no motion.
+    // Its correlated blobs vary smoothly across the directional profile. Thin moving lines
+    // have a stronger second difference; require that fine structure before bypassing denoise.
+    float rowCurvature = 0, columnCurvature = 0;
+    [unroll] for (int k = 1; k < 6; ++k)
+    {
+        rowCurvature += abs(rowProfile[k - 1] - 2.0 * rowProfile[k] + rowProfile[k + 1]);
+        columnCurvature += abs(columns[k - 1] - 2.0 * columns[k] + columns[k + 1]);
+    }
+    const float amplitude = max(rows, cols);
+    const float curvature = cols >= rows ? columnCurvature : rowCurvature;
+    return amplitude / 49.0 * smoothstep(0.6, 1.1, curvature / max(amplitude, 1e-6));
 }
 
 [numthreads(16, 8, 1)]
@@ -61,6 +109,7 @@ void main(uint3 id : SV_DispatchThreadID)
     float4 c = Cur[p];
 
     float meanCur = 0, meanPrev = 0, sadPrev = 0;
+    float3 rowDiff = 0, columnDiff = 0;
     float2 meanChroma = 0;
     [unroll] for (int y = -1; y <= 1; ++y)
     {
@@ -73,14 +122,20 @@ void main(uint3 id : SV_DispatchThreadID)
             if (denoiseHistory != 0)
             {
                 float h = Prev[q].x;
+                float d = n.x - h;
                 meanPrev += h;
-                sadPrev += abs(n.x - h);
+                sadPrev += abs(d);
+                rowDiff[y + 1] += d;
+                columnDiff[x + 1] += d;
             }
         }
     }
     meanCur /= 9.0;
     meanPrev /= 9.0;
     meanChroma /= 9.0;
+    const float3 one = 1.0;
+    float coarseFineChange = max(dot(abs(rowDiff), one), dot(abs(columnDiff), one)) / 9.0;
+    const float t = max(noiseLevel, 1.0 / 4096.0);
 
     // Neighbours are weighed by their difference from the 3x3 mean rather than from the pixel
     // itself, so that a lone noisy pixel does not keep itself. On a thin line or a sharp step in a
@@ -119,13 +174,16 @@ void main(uint3 id : SV_DispatchThreadID)
             chromaWeight += wc;
         }
     }
-    // What a moving pixel shows: the new frame, smoothed as much as the setting asks for.
-    const float moving = lerp(c.x, luma / lumaWeight, denoiseSpatial);
+    float spatialLuma = luma / lumaWeight;
+    const float spatialDetail = c.x - spatialLuma;
+    const float spatialDetailed = spatialLuma +
+        sign(spatialDetail) * max(abs(spatialDetail) - kSpatialDetailNoise * t, 0.0);
     chroma /= chromaWeight;
 
     if (denoiseHistory == 0)
     {
-        Out[p] = float4(moving, chroma, 1);
+        // With no history there is no evidence that residual detail is coherent rather than noise.
+        Out[p] = float4(lerp(c.x, spatialLuma, denoiseSpatial), chroma, 0);
         return;
     }
     float change = abs(meanCur - meanPrev);
@@ -133,9 +191,9 @@ void main(uint3 id : SV_DispatchThreadID)
     if ((id.x & 3) == 0 && (id.y & 3) == 0)
         NoiseHist.InterlockedAdd(min(uint(change * 4096.0), 127u) * 4, 1);
 
-    float t = max(noiseLevel, 1.0 / 4096.0);
+    int2 historyOffset = 0;
     int2 from = p;
-    if (denoiseHistory == 2)
+    if ((denoiseHistory & 3) == 2)
     {
         const uint2 block = min(id.xy / kMotionBlock, (eyeSize - 1) / kMotionBlock);
         int2 v = asint(Motion[block]);
@@ -144,20 +202,35 @@ void main(uint3 id : SV_DispatchThreadID)
         {
             // Along the motion only where it matches this pixel's 3x3 better than the history in
             // place, pixel by pixel: still fine texture next to a moving hand stays in place.
-            float2 moved = PrevMatch(p, v, last);
+            float3 moved = PrevMatch(p, v, last);
             if (moved.y < sadPrev)
             {
                 change = abs(meanCur - moved.x);
+                coarseFineChange = moved.z;
+                historyOffset = v;
                 from = clamp(p - v, int2(0, 0), last);
             }
         }
     }
 
+    // A 3x3 mean hides a fine pattern which moves by one or two pixels. Confirm its directional
+    // change over 7x7 before restoring detail; random noise which passes 3x3 cancels over 7x7.
+    float4 prev = Prev[from];
+    float rawFineMotion = 0;
+    [branch] if ((denoiseHistory & 4) != 0 && coarseFineChange > kFineMotionStart * t)
+        rawFineMotion = smoothstep(kFineMotionStart * t, kFineMotionEnd * t,
+                                   FineChange(p, historyOffset, last));
+    // Real camera noise also comes in spatially coherent blobs, but unlike moving hair or fabric
+    // they do not persist at the same (motion-compensated) point. Keep this frame's raw confidence
+    // in alpha and restore detail only after two consecutive frames agree.
+    const float fineMotion = rawFineMotion * smoothstep(0.25, 0.5, prev.a);
+    const float movingLuma = lerp(spatialLuma, spatialDetailed, fineMotion);
+    const float moving = lerp(c.x, movingLuma, denoiseSpatial);
+
     // Still: keep denoiseKeep of the new frame; clearly moving (several times the still-scene
     // change): none of the history.
-    float m = smoothstep(2.0 * t, 5.0 * t, change);
-    float4 prev = Prev[from];
+    float m = max(smoothstep(2.0 * t, 5.0 * t, change), fineMotion);
     float still = lerp(prev.x, c.x, denoiseKeep);
     float2 stillChroma = lerp(prev.yz, chroma, denoiseKeep);
-    Out[p] = float4(lerp(still, moving, m), lerp(stillChroma, chroma, m), 1);
+    Out[p] = float4(lerp(still, moving, m), lerp(stillChroma, chroma, m), rawFineMotion);
 }

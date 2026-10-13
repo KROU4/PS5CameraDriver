@@ -19,10 +19,22 @@ Questions about setup and usage go to [Discussions](https://github.com/KROU4/PS5
 - Build with `.\build.ps1`, package with `.\package.ps1` (requires VS 2022 Build Tools and Windows SDK
   10.0.26100). The GitHub Actions check runs the same steps.
 - After building, run `ctest --test-dir build/Release --output-on-failure`. These tests cover service
-  failures, camera modes and CPU processing logic without opening a camera or creating a GPU device.
+  failures, camera modes, CPU noise estimation and GPU denoise/stereo quality without opening a camera. GPU tests
+  use WARP on Windows and lavapipe in Linux CI, so they need no physical GPU.
   CI also tests MSI installation, upgrade and removal on its disposable Windows runner.
 - Follow the style of the surrounding code: C++20, comments explain *why* rather than *what*.
 - Do not add Sony's firmware or any other third-party binaries to the repository.
+
+## Quality regressions
+
+The GPU regressions explicitly select each quality path, including correlated-noise and
+large-motion fixtures. Version 1.2.8 enables detail restoration, conservative subject contour
+tolerance and stationary-background depth smoothing through the shared picture settings.
+Users can disable them together with `ps5cam-ctl set quality 0` on Windows or `quality=0`
+in the Linux configuration. The core test/benchmark defaults stay neutral so baseline comparisons
+remain explicit. Stereo-noise balancing, adaptive texture rejection and diagonal SGM remain
+experimental and disabled. Recorded-camera regression measurements are required alongside
+synthetic GPU tests before changing release defaults.
 
 ## License of contributions
 

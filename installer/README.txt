@@ -49,6 +49,8 @@ Picture
   several frames; what moves is followed (motion compensation), and where that fails it is
   smoothed within the frame instead; colour noise is smoothed over a wide area.
   ps5cam-ctl set denoise 0..100 (default 90, 0 = off).
+  Version 1.2.8 also preserves weak moving detail and stabilizes the background depth. To return
+  to legacy processing: ps5cam-ctl set quality 0. Restore the improvements: set quality 1 (default).
 - Auto brightness: brightens a dim picture digitally. While the camera measures depth (bokeh on,
   or the depth camera) it meters the person (the head of what the bokeh keeps sharp): a face
   against a bright window is not left dark, and a face lit by the screen in a dark room is not

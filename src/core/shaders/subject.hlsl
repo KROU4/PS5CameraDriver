@@ -9,7 +9,7 @@
 // the sharp zone by Share (depthsample.hlsli): subjectRange behind the focus plane, and in front of
 // it as far as the share reaches (subjectRange / kNearer), while the full-resolution disparity still
 // decides where an edge lies. focusRange and subjectRange come scaled to the subject's distance
-// (pipeline.cpp); kSlope does not, which makes an outline a little easier to cross up close.
+// (pipeline.cpp); subjectSlope does not, which makes an outline a little easier to cross up close.
 //   ENTRY_SEED:   disparity d = a I + b of the guided filter at working resolution; cost 0 within
 //                 focusRange of the focus plane, unreached elsewhere
 //   ENTRY_SWEEP:  one scan direction (pathDir: 0 right, 1 left, 2 down, 3 up), one thread per line:
@@ -18,7 +18,6 @@
 //   ENTRY_SHARE:  Share from the cost
 #include "common.hlsli"
 
-static const float kSlope = 0.25;   // steepest change per work pixel the subject's own surface has
 static const float kJump = 4.0;
 static const float kNearer = 0.25;  // cost per disparity unit of coming nearer; depthsample.hlsli kNearWiden
 static const float kUnreached = 1e4;
@@ -62,7 +61,7 @@ void main(uint3 id : SV_DispatchThreadID)
         p += dir;
         float d = Disp[p];
         float change = d - prevD;  // > 0: nearer
-        float step = change > 0 ? kNearer * change : -change + kJump * max(-change - kSlope, 0);
+        float step = change > 0 ? kNearer * change : -change + kJump * max(-change - subjectSlope, 0);
         float cost = min(CostIn[p], prevCost + step);
         CostOut[p] = cost;
         prevD = d;

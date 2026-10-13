@@ -33,13 +33,19 @@ cbuffer Constants : register(b0)
                           //    although the main sensor is the left stream (see downscale.hlsl)
     float  noiseLevel;    // typical frame-to-frame change of a 3x3 luma mean in a still scene
     float  denoiseKeep;   // share of the new frame kept where nothing moves (1 = no temporal denoise)
-    uint   denoiseHistory; // 0: no previous frame to blend with, 1: blend in place, 2: along the motion
+    uint   denoiseHistory; // low bits: 0 no history, 1 in place, 2 along motion; flag 4 experimental detail
     float  denoiseSpatial; // share of the spatially smoothed luma where something moves (0..1)
     float  sharpen;        // composite.hlsl: unsharp-mask amount on the sharp picture (0 off .. 1)
     float  sharpenCore;    // detail up to this size is noise and left alone (luma 0..1)
     float  subjectRange;   // subject.hlsl: widening of the sharp zone over the subject's own surface
     float  contrast;       // composite.hlsl: luma gain around mid grey (1 = as is)
     float  saturation;     // composite.hlsl: colour gain (1 = as is)
+    float  stereoBalanceMain;
+    float  stereoBalanceSecond;
+    float  stereoMinTexture;
+    float  subjectSlope;
+    float  backgroundStillScale;
+    float2 qualityPad;
 };
 
 SamplerState LinearClamp : register(s0);

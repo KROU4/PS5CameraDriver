@@ -57,6 +57,7 @@ Settings are in /etc/ps5cam/bokeh.conf and apply a couple of seconds after the f
   maxgain         the most it may amplify, in tenths 10..160 (60, that is 6x)
   denoise         noise reduction 0..100 (90)
   sharpen         edge sharpening that leaves the noise alone 0..100 (50)
+  quality         detail, subject-edge and background-depth improvements, 0 off / 1 on (1)
   brightness, contrast, saturation  the picture's tone 0..100, 50 = as the camera gives it (50)
   antiflicker     lamp flicker: 0 auto, 1 50 Hz, 2 60 Hz, 3 off (0)
   mains           mains frequency 50 or 60 (50)
