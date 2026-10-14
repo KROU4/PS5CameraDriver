@@ -27,6 +27,8 @@
 #include <mutex>
 #include <vector>
 
+#include "frametiming.h"
+
 #include "processor.h"
 
 namespace ps5cam {
@@ -131,6 +133,8 @@ public:
     STDMETHODIMP KsMethod(PKSMETHOD m, ULONG ml, LPVOID d, ULONG dl, ULONG* r) override;
     STDMETHODIMP KsEvent(PKSEVENT e, ULONG el, LPVOID d, ULONG dl, ULONG* r) override;
 
+    friend struct DeviceMftTestAccess;
+
 private:
     struct Stream {
         DWORD id = 0;
@@ -149,6 +153,8 @@ private:
         ULONGLONG pendingTick = 0;
         bool discontinuity = false;   // first sample after a format change
         std::deque<Microsoft::WRL::ComPtr<IMFSample>> queue;
+        LatestFrameState latest;
+        uint64_t sequence = 0;
         std::unique_ptr<FrameProcessor> processor;
     };
 

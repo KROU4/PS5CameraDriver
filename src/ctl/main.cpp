@@ -9,6 +9,7 @@
 #include "../common/camdefaults.h"
 #include "../common/ids.h"
 #include "../common/settings.h"
+#include "latency.h"
 #include "../common/vcamreg.h"
 
 using namespace ps5cam;
@@ -102,6 +103,7 @@ static void RestartCameraService()
 
 int wmain(int argc, wchar_t** argv)
 {
+    if (argc >= 2 && wcscmp(argv[1], L"latency") == 0) return RunLatency(argc - 2, argv + 2);
     std::wstring cmd = argc > 1 ? argv[1] : L"";
     std::wstring msg;
     if (cmd == L"setup") return Setup();
@@ -235,7 +237,7 @@ int wmain(int argc, wchar_t** argv)
         return 0;
     }
     wprintf(L"usage: ps5cam-ctl setup | register | remove | hide | unhide | dmft on|off | status | recalibrate |\n"
-            L"                  record N | defaults |\n"
+            L"                  record N | defaults | latency [frames=360] [consumer-delay-ms=0] [csv-path] |\n"
             L"                  set mode|blur|autofocus|focus|prefer60|fullhdonly|highlights|temporal|autobrightness|\n"
             L"                      maxgain|denoise|sharpen|quality|brightness|contrast|saturation|antiflicker|blurstyle|\n"
             L"                      depthcamera|depthview VALUE\n"

@@ -8,6 +8,7 @@
 
 #include "../common/camctl.h"
 #include "../common/camdefaults.h"
+#include "../common/frameclock.h"
 #include "../common/log.h"
 #include "../common/settings.h"
 
@@ -17,9 +18,6 @@ using Microsoft::WRL::MakeAndInitialize;
 namespace ps5cam {
 
 namespace {
-
-// Frames waiting for ProcessOutput; more means the app stopped reading, so the oldest go.
-constexpr size_t kMaxQueued = 3;
 
 bool Describe(IMFMediaType* t, GUID* sub, UINT32* w, UINT32* h, uint32_t* fps)
 {
@@ -399,6 +397,8 @@ HRESULT DeviceMft::SetOutputLocked(std::unique_lock<std::mutex>& lock, DWORD str
     const bool changed = !SameType(full.Get(), s->outputType.Get()) || previous != state;
     s->outputState = DeviceStreamState_Disabled;  // no frames while the formats change
     s->queue.clear();
+    s->latest.Reset();
+    s->sequence = 0;
     if (!SameType(input.Get(), s->inputType.Get()) || s->inputState != state) {
         HRESULT hr = RequestInput(lock, *s, input.Get(), state, true);
         s = Find(stream);
@@ -488,16 +488,22 @@ STDMETHODIMP DeviceMft::ProcessInput(DWORD stream, IMFSample* sample, DWORD)
         if (m_shutdown) hr = MF_E_SHUTDOWN;
         else if (!s) hr = MF_E_INVALIDSTREAMNUMBER;
         else if (sample && s->outputState == DeviceStreamState_Run) {
+            StampIngress(sample, FrameClockNow(), ++s->sequence);
             ComPtr<IMFSample> out = s->processor ? s->processor->Process(sample) : ComPtr<IMFSample>(sample);
+            if (out && !s->processor) out->SetUINT64(kFrameProcessedTime, FrameClockNow());
             if (s->processor && (powerLine = s->processor->TakePowerLineRequest()) >= 0) cameraKs = m_sourceKs;
             if (out) {
                 if (s->discontinuity) {
                     out->SetUINT32(MFSampleExtension_Discontinuity, TRUE);
                     s->discontinuity = false;
                 }
+                const bool alreadyAvailable = !s->queue.empty();
+                if (s->latest.Replace(alreadyAvailable)) {
+                    s->queue.clear();
+                    out->SetUINT32(MFSampleExtension_Discontinuity, TRUE);
+                }
                 s->queue.push_back(out);
-                while (s->queue.size() > kMaxQueued) s->queue.pop_front();
-                haveOutput = true;
+                haveOutput = !alreadyAvailable;
             }
             if (s->inputChangePending && GetTickCount64() - s->pendingTick > kPendingTimeoutMs) {
                 Log(L"stream %lu: the camera format change was not answered, giving up", stream);
@@ -554,6 +560,7 @@ STDMETHODIMP DeviceMft::ProcessOutput(DWORD, DWORD count, MFT_OUTPUT_DATA_BUFFER
         buffers[i].dwStatus = 0;
         Stream* s = Find(buffers[i].dwStreamID);
         if (!s || s->queue.empty() || buffers[i].pSample) continue;
+        StampDelivery(s->queue.front().Get(), FrameClockNow(), s->latest.TakeDropped());
         buffers[i].pSample = s->queue.front().Detach();
         s->queue.pop_front();
         any = true;
@@ -572,7 +579,13 @@ STDMETHODIMP DeviceMft::ProcessMessage(MFT_MESSAGE_TYPE message, ULONG_PTR)
     if (m_shutdown) return MF_E_SHUTDOWN;
     switch (message) {
     case MFT_MESSAGE_COMMAND_FLUSH:
-        for (auto& s : m_streams) s->queue.clear();
+        for (auto& s : m_streams) {
+            s->queue.clear();
+            s->latest.Reset();
+            s->sequence = 0;
+            s->discontinuity = true;
+            if (s->processor) s->processor->Flush();
+        }
         break;
     default:
         // Streaming starts and stops per stream through SetOutputStreamState; MFT_MESSAGE_SET_D3D_MANAGER
@@ -593,6 +606,10 @@ STDMETHODIMP DeviceMft::FlushOutputStream(DWORD stream, DWORD)
     Stream* s = Find(stream);
     if (!s) return MF_E_INVALIDSTREAMNUMBER;
     s->queue.clear();
+    s->latest.Reset();
+    s->sequence = 0;
+    s->discontinuity = true;
+    if (s->processor) s->processor->Flush();
     return S_OK;
 }
 

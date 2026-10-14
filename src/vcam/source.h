@@ -20,6 +20,7 @@
 #include <vector>
 
 #include "capture.h"
+#include "frametiming.h"
 
 namespace ps5cam {
 
@@ -72,6 +73,7 @@ private:
     bool m_shutdown = false;
     std::deque<Microsoft::WRL::ComPtr<IUnknown>> m_tokens;
     Microsoft::WRL::ComPtr<IMFSample> m_pending;  // newest undelivered frame
+    LatestFrameState m_latest;
     uint64_t m_epoch = 0;  // bumped on every start/stop; frames from older sessions are dropped
     std::unique_ptr<FrameEngine> m_engine;
 };

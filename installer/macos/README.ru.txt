@@ -13,8 +13,9 @@ PS5 HD Camera для macOS
 на macOS для него нужна системная камера-расширение, а её macOS запускает только с подписью
 разработчика Apple. Поэтому на macOS ставится обычная камера: родные 1920x1080, 30 и 60 к/с.
 
-Нужен python3 из Command Line Tools (xcode-select --install). Homebrew не нужен: библиотеку
-libusb установщик берёт из пакета libusb-package.
+Нужен Python 3.9 или новее из Command Line Tools (xcode-select --install). Homebrew не нужен:
+полный набор зависимостей закреплён и проверяется по SHA-256: PyUSB 1.3.1, libusb-package
+1.0.30.0, importlib-resources 6.5.2 и zipp 3.23.1 для Python 3.9.
 
 После установки подключите камеру в порт USB 3 (в USB 2.0 она отдаёт только 640x400) и выберите "USB Camera-OV580" в приложении.
 

@@ -116,6 +116,12 @@ Troubleshooting
 - Logs: %ProgramData%\PS5Camera\dmft.log (video; vcam.log with -VirtualCamera) and
   %ProgramData%\PS5Camera\service\service.log (service).
 - Status: "C:\Program Files\PS5Camera\ps5cam-ctl.exe" status
+- Video timing (1.2.9+): close other camera apps, then run
+  "C:\Program Files\PS5Camera\ps5cam-ctl.exe" latency 360 0 latency.csv
+  Measures 360 frames after 30 warm-up frames at 1080p60, using the current settings.
+  CSV contains timings, not images. Replace 0 with 40 to simulate a slow consumer.
+  Missing metadata is unavailable; GPU compute, processing/queue and local reader latency
+  are separate metrics. Application display and network latency are outside this measurement.
 - If there is no picture after plugging the camera in, replug it.
 - The camera measures depth from about half a metre. Anything closer turns into noise
   on the depth map, and bokeh blurs it unevenly. Sit further from the camera.
