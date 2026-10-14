@@ -35,14 +35,16 @@ def log(text):
 
 
 def make_firmware(patch_path, out_path, original_path=None):
-    patch = json.load(open(patch_path))
+    with open(patch_path, encoding="utf-8") as patch_file:
+        patch = json.load(patch_file)
     want = patch["original"]
     candidates = [("file", original_path)] if original_path else [("url", u) for u in patch["sources"]]
     original = None
     for kind, where in candidates:
         try:
             if kind == "file":
-                data = open(where, "rb").read()
+                with open(where, "rb") as original_file:
+                    data = original_file.read()
             else:
                 with urllib.request.urlopen(where, timeout=30) as r:
                     data = r.read()
@@ -56,10 +58,22 @@ def make_firmware(patch_path, out_path, original_path=None):
         log(f"{where} is not Sony's original firmware 21.01-03.20.00.04 (size or hash differ)")
     if original is None:
         return 1
-    for offset, new in patch["runs"]:
-        chunk = bytes.fromhex(new)
+    result = patch["result"]
+    if result.get("size") != len(original):
+        log("the patched firmware has an unexpected size")
+        return 1
+    for run in patch["runs"]:
+        try:
+            offset, new = run
+            chunk = bytes.fromhex(new)
+        except (TypeError, ValueError):
+            log("the firmware patch contains an invalid run")
+            return 1
+        if not isinstance(offset, int) or offset < 0 or offset + len(chunk) > len(original):
+            log("the firmware patch contains a run outside the original image")
+            return 1
         original[offset:offset + len(chunk)] = chunk
-    if hashlib.sha256(original).hexdigest() != patch["result"]["sha256"]:
+    if len(original) != result["size"] or hashlib.sha256(original).hexdigest() != result["sha256"]:
         log("the patched firmware has an unexpected hash")
         return 1
     with open(out_path, "wb") as f:

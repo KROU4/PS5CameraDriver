@@ -10,6 +10,7 @@
 #include <cmath>
 
 #include "../common/effect.h"
+#include "../common/frameclock.h"
 #include "../common/log.h"
 #include "../common/settings.h"
 
@@ -64,6 +65,8 @@ bool FrameProcessor::Configure(IMFMediaType* input, IMFMediaType* output)
     else m_pipeline->Reset();
     m_retryTick = 0;
     m_lastTime = -1;
+    m_frameTiming.Reset();
+    m_discontinuity = true;
     wchar_t text[64];
     swprintf_s(text, L"%ux%u %ls @%u", outW, outH, pf == PixelFormat::YUY2 ? L"YUY2" : L"NV12", outFps);
     m_formatText = text;
@@ -97,20 +100,30 @@ void FrameProcessor::Reset()
     m_pipeline.reset();  // releases the GPU device and its ~65 MB while nobody streams
     EndRecording(L"stopped with the stream");
     m_lastTime = -1;
+    m_frameTiming.Reset();
+    m_discontinuity = true;
     m_flickerStarted = false;
     m_powerLineHeld = false;
     if (!m_configured) return;  // a transform that never streamed: another one may be streaming now
     m_configured = false;
     Status st;
     st.streaming = false;
-    SaveStatus(st);
+    if (m_externalSideEffects) SaveStatus(st);
+}
+
+void FrameProcessor::Flush()
+{
+    if (m_pipeline) m_pipeline->Reset();
+    m_lastTime = -1;
+    m_frameTiming.Reset();
+    m_discontinuity = true;
 }
 
 const wchar_t* FrameProcessor::WantedKey()
 {
     RefreshSettings(false);
     // The depth camera needs the second sensor even when the picture does not.
-    return m_depth.Wanted() ? kHalfKey : ps5cam::WantedKey(m_effect.mode);
+    return m_externalSideEffects && m_depth.Wanted() ? kHalfKey : ps5cam::WantedKey(m_effect.mode);
 }
 
 void FrameProcessor::RefreshSettings(bool force)
@@ -132,7 +145,7 @@ void FrameProcessor::RefreshSettings(bool force)
         if (m_flickerStarted) m_powerLineRequest = m_flicker.Start(static_cast<AntiFlicker>(m_antiFlicker), m_mains60);
     }
     // The tray bumps Request; Handled records the last one served.
-    if (LoadCalibrationRequest() != LoadCalibrationHandled()) m_calib.Request(m_frameCount);
+    if (m_externalSideEffects && LoadCalibrationRequest() != LoadCalibrationHandled()) m_calib.Request(m_frameCount);
 }
 
 bool FrameProcessor::EnsurePipeline()
@@ -237,10 +250,10 @@ ComPtr<IMFSample> FrameProcessor::Process(IMFSample* input)
     if (!otherMode && pitch >= static_cast<LONG>(rowBytes) && available >= size_t(pitch) * (rows - 1) + rowBytes) {
         ++m_frameCount;
         // Taken only while frames flow, so the file is named after the sensor mode actually streaming.
-        if (!m_recordLeft)
+        if (m_externalSideEffects && !m_recordLeft)
             if (uint32_t frames = TakeRecordRequest()) StartRecording(frames);
         if (m_recordLeft) Record(scan0, pitch, rowBytes, rows);
-        Calibrate(scan0, static_cast<uint32_t>(pitch));
+        if (m_externalSideEffects) Calibrate(scan0, static_cast<uint32_t>(pitch));
         MainRowMeans(scan0, static_cast<uint32_t>(pitch), m_stereo, m_rowMeans);
         if (const int pl = m_flicker.Update(m_rowMeans); pl >= 0) {
             m_powerLineRequest = pl;
@@ -254,9 +267,10 @@ ComPtr<IMFSample> FrameProcessor::Process(IMFSample* input)
         out.Attach(NewOutputSample(&dst, &dstPitch, lock));
         if (out) {
             FrameStats st;
-            DepthPlane* plane = m_depth.Plane(m_output.width, m_output.height);
+            DepthPlane* plane = m_externalSideEffects ? m_depth.Plane(m_output.width, m_output.height) : nullptr;
             EffectSettings effect = m_effect;
             effect.depthPlane = plane != nullptr;
+            const FrameTiming currentTiming = ReadFrameTiming(input);
             HRESULT hr = m_pipeline->Process(scan0, static_cast<uint32_t>(pitch), effect, dst,
                 dst + size_t(dstPitch) * m_output.height, static_cast<uint32_t>(dstPitch), &st, plane);
             lock->Unlock2D();
@@ -268,18 +282,29 @@ ComPtr<IMFSample> FrameProcessor::Process(IMFSample* input)
                     Log(L"pipeline failed 0x%08lX%ls, rebuilding", hr, IsDeviceLost(hr) ? L" (GPU device lost)" : L"");
                 m_pipeline.reset();
                 m_retryTick = GetTickCount64() + 500;
+                m_frameTiming.Reset();
+                m_lastTime = -1;
+                m_discontinuity = true;
                 out.Reset();
-            } else if (hr == S_FALSE || previous < 0) {
+            } else if (const auto completed = m_frameTiming.Advance(currentTiming);
+                       hr == S_FALSE || previous < 0 || !completed) {
                 out.Reset();  // the first frame only primes the GPU pipeline
             } else {
                 m_failures = 0;
                 m_lastGpuMs = st.gpuMs;
                 m_lastFocus = st.focusDisparity;
                 out->SetSampleTime(previous);
-                m_depth.Publish(previous);
+                ApplyProcessedTiming(out.Get(), *completed, FrameClockNow());
+                if (m_discontinuity) {
+                    out->SetUINT32(MFSampleExtension_Discontinuity, TRUE);
+                    m_discontinuity = false;
+                }
+                if (st.gpuMs > 0)
+                    out->SetUINT64(kFrameGpuTimeUs, static_cast<UINT64>(std::llround(st.gpuMs * 1000)));
+                if (m_externalSideEffects) m_depth.Publish(previous);
                 out->SetSampleDuration(10'000'000LL / std::max<uint32_t>(m_fps, 1));
                 ++m_framesInWindow;
-                PublishStatus();
+                if (m_externalSideEffects) PublishStatus();
             }
         }
     }

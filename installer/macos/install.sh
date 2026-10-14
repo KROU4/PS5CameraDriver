@@ -39,7 +39,7 @@ if [[ $EUID -ne 0 ]]; then
     echo "$(t 'Запустите с правами администратора' 'Run as administrator'): sudo bash install.sh" >&2
     exit 1
 fi
-for f in ps5cam_fwload.py ps5cam-firmware.json; do
+for f in ps5cam_fwload.py ps5cam-firmware.json requirements.lock; do
     [[ -f "$here/$f" ]] || { echo "$(t 'В папке установщика нет файла' 'The installer folder lacks the file') $f" >&2; exit 1; }
 done
 
@@ -60,7 +60,7 @@ if [[ "$bokeh" == on ]]; then
     [[ "$answer" =~ ^[Nn] ]] && exit 1
 fi
 
-if ! /usr/bin/python3 -c 'import sys; assert sys.version_info >= (3, 8)' 2>/dev/null; then
+if ! /usr/bin/python3 -c 'import sys; assert sys.version_info >= (3, 9)' 2>/dev/null; then
     echo "$(t 'Нужен python3: установите Command Line Tools (xcode-select --install) и запустите снова.' 'python3 is required: install the Command Line Tools (xcode-select --install) and run again.')" >&2
     exit 1
 fi
@@ -69,10 +69,12 @@ echo "==> $(t 'Файлы и Python-окружение в' 'Files and Python env
 install -d "$target"
 install -m 0755 "$here/ps5cam_fwload.py" "$target/ps5cam_fwload.py"
 install -m 0644 "$here/ps5cam-firmware.json" "$target/ps5cam-firmware.json"
+install -m 0644 "$here/requirements.lock" "$target/requirements.lock"
 install -m 0755 "$here/uninstall.sh" "$target/uninstall.sh"
 /usr/bin/python3 -m venv "$target/venv"
 # libusb-package carries its own libusb, so Homebrew is not needed.
-"$target/venv/bin/pip" install --quiet --no-cache-dir --disable-pip-version-check pyusb libusb-package
+"$target/venv/bin/pip" install --quiet --no-cache-dir --disable-pip-version-check \
+    --require-hashes --only-binary=:all: -r "$target/requirements.lock"
 
 echo "==> $(t 'Прошивка камеры: оригинал Sony + изменения драйвера' "Camera firmware: Sony's original + the driver's changes")"
 make_args=(make "$target/ps5cam-firmware.json" "$target/firmware.bin")

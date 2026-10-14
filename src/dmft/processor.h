@@ -15,15 +15,18 @@
 #include "cameramodes.h"
 #include "flicker.h"
 #include "pipeline.h"
+#include "frametiming.h"
 
 namespace ps5cam {
 
 class FrameProcessor {
 public:
+    explicit FrameProcessor(bool externalSideEffects = true) : m_externalSideEffects(externalSideEffects) {}
     ~FrameProcessor() { EndRecording(L"stopped with the transform"); }
     // Input: the camera's UVC format; output: one of OutputTypes(). False if either is not ours.
     bool Configure(IMFMediaType* input, IMFMediaType* output);
     void Reset();  // stream stopped: drop the GPU pipeline and temporal state
+    void Flush();  // discard queued GPU history but keep the configured stream
 
     // The processed frame, one frame late (the GPU pipeline overlaps frames), or null.
     Microsoft::WRL::ComPtr<IMFSample> Process(IMFSample* input);
@@ -63,6 +66,8 @@ private:
     CalibrationSchedule m_calib;
     uint32_t m_frameCount = 0;
     LONGLONG m_lastTime = -1;  // time stamp of the frame the pipeline holds
+    DelayedFrameTiming m_frameTiming;
+    bool m_discontinuity = true;
 
     DepthPublisher m_depth;  // for the "PS5 Camera Depth" camera
     FlickerGuard m_flicker;
@@ -82,6 +87,7 @@ private:
     uint32_t m_framesInWindow = 0;
     float m_lastGpuMs = 0, m_lastFocus = 0;
     std::wstring m_formatText;
+    bool m_externalSideEffects = true;
 };
 
 }  // namespace ps5cam

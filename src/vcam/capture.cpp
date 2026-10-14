@@ -19,6 +19,7 @@
 #include "../common/camctl.h"
 #include "../common/effect.h"
 #include "../common/log.h"
+#include "../common/frameclock.h"
 #include "cameramodes.h"
 
 using Microsoft::WRL::ComPtr;
@@ -143,6 +144,9 @@ HRESULT CaptureEngine::Start(const OutputRequest& req, FrameSink sink)
     m_req.fps = std::clamp<uint32_t>(m_req.fps, 1, 240);
     m_sink = std::move(sink);
     m_frameCount = 0;
+    m_frameTiming.Reset();
+    m_sequence = 0;
+    m_discontinuity = true;
     m_framesInWindow = 0;
     m_flickerStarted = false;
     m_powerLineHeld = false;
@@ -181,6 +185,7 @@ void CaptureEngine::StopLocked()
         // Release the GPU device and its ~65 MB of resources while nobody streams.
         std::lock_guard lock(m_lock);
         m_pipeline.reset();
+        m_frameTiming.Reset();
         EndRecording(L"stopped with the stream");
     }
     Status st;
@@ -407,8 +412,16 @@ HRESULT CaptureEngine::OpenCamera()
         if (!same) {
             m_pipeline.reset();
             m_pipelineRetryTick = 0;
+            m_frameTiming.Reset();
+            m_sequence = 0;
+            m_discontinuity = true;
         }
-        if (m_pipeline) m_pipeline->Reset();
+        if (m_pipeline) {
+            m_pipeline->Reset();
+            m_frameTiming.Reset();
+            m_sequence = 0;
+            m_discontinuity = true;
+        }
         EnsurePipeline();
         m_source = source;
         // Once per stream; a reopen for another sensor mode keeps what the guard found, on the new
@@ -472,6 +485,7 @@ bool CaptureEngine::OnReadSample(HRESULT hr, DWORD flags, IMFSample* sample)
         return false;
     }
     if (sample) {
+        StampIngress(sample, FrameClockNow(), ++m_sequence);
         ProcessFrame(sample);
         m_lastFrameTick = GetTickCount64();
     }
@@ -526,7 +540,7 @@ void CaptureEngine::HandleFrame(IMFSample* sample)
         else if (--m_recordLeft == 0) EndRecording(L"finished");
     }
     if (ok) {
-        Deliver(scan0, static_cast<uint32_t>(pitch));
+        Deliver(scan0, static_cast<uint32_t>(pitch), ReadFrameTiming(sample));
     } else if (m_badFrames++ % 300 == 0) {
         Log(L"unexpected camera buffer (pitch %ld, %lu bytes), frame skipped", pitch, len);
     }
@@ -557,7 +571,7 @@ IMFSample* CaptureEngine::NewOutputSample(BYTE** scan0, LONG* pitch, ComPtr<IMF2
     return sample.Detach();
 }
 
-void CaptureEngine::Deliver(const uint8_t* yuy2, uint32_t pitch)
+void CaptureEngine::Deliver(const uint8_t* yuy2, uint32_t pitch, const FrameTiming& timing)
 {
     // Called with m_lock held and m_pipeline present.
     RefreshSettings(false);
@@ -605,18 +619,28 @@ void CaptureEngine::Deliver(const uint8_t* yuy2, uint32_t pitch)
         if (m_pipelineFailures++ % 300 == 0)
             Log(L"pipeline failed 0x%08lX%ls, rebuilding", hr, IsDeviceLost(hr) ? L" (GPU device lost)" : L"");
         m_pipeline.reset();
+        m_frameTiming.Reset();
+        m_discontinuity = true;
         m_pipelineRetryTick = GetTickCount64() + 500;
         SetError(L"GPU restarting");
         DeliverPlaceholder();
         return;
     }
     m_pipelineFailures = 0;
-    if (hr == S_FALSE) return;  // first frame primes the GPU pipeline
+    const auto completed = m_frameTiming.Advance(timing);
+    if (hr == S_FALSE || !completed) return;  // first frame primes the GPU pipeline
     m_lastGpuMs = st.gpuMs;
     m_lastFocus = st.focusDisparity;
     const LONGLONG now = MFGetSystemTime();
     m_depth.Publish(now);
     out->SetSampleTime(now);
+    ApplyProcessedTiming(out.Get(), *completed, FrameClockNow());
+    if (m_discontinuity) {
+        out->SetUINT32(MFSampleExtension_Discontinuity, TRUE);
+        m_discontinuity = false;
+    }
+    if (st.gpuMs > 0)
+        out->SetUINT64(kFrameGpuTimeUs, static_cast<UINT64>(std::llround(st.gpuMs * 1000)));
     out->SetSampleDuration(10'000'000LL / m_req.fps);
     ++m_framesInWindow;
     PublishStatus();

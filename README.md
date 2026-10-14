@@ -89,6 +89,33 @@ will most likely manage bokeh only at 30 fps or the camera without effects — t
 a measurement. If you try it on other hardware, please share the frame rate and GPU time from
 `ps5cam-ctl status` in [Discussions](https://github.com/KROU4/PS5CameraDriver/discussions).
 
+### Measuring video latency on Windows
+
+From version 1.2.9, close other camera applications and run:
+
+```powershell
+& "$env:ProgramFiles\PS5Camera\ps5cam-ctl.exe" latency 360 0 latency.csv
+```
+
+This opens the physical camera at 1080p60 using the current picture settings, warms up for 30
+frames, then measures 360 frames. The CSV contains timings and counters, not camera images.
+The report gives mean, p50, p95 and maximum values for each available stage. Run the same command
+with `360 40 slow-consumer.csv` to simulate an application taking 40 ms between reads.
+
+`device -> reader` uses the capture source's device timestamp;
+`driver -> reader` starts when the frame enters our processing. The processing span includes
+the GPU pipeline's one-frame readback delay; GPU compute time is reported separately. Output
+queue and delivery-to-reader times show where completed frames wait. Device MFT keeps the newest
+undelivered frame and reports replacements instead of retaining three ready frames.
+The reported drop counter covers that ready queue. Compare the CSV `sequence` values to detect
+frames missing between driver ingress and the reader; Frame Server or the application can skip
+frames while the driver's own replacement counter remains zero.
+
+Missing timestamps are reported as `unavailable`, not zero. Camera/Frame Server paths can omit
+sample attributes. These measurements stop at the local Media Foundation reader; they do not
+measure sensor exposure, an application's preview/display, encoding, or network latency. The
+GPU performance table above is also separate from total video latency.
+
 ## Firmware
 
 The camera needs firmware every time it is plugged in; the driver's service uploads it. Sony's

@@ -8,6 +8,7 @@
 #include <cmath>
 
 #include "../common/log.h"
+#include "../common/frameclock.h"
 #include "../common/settings.h"
 #include "cameramodes.h"
 #include "depthengine.h"
@@ -110,6 +111,7 @@ HRESULT Ps5Stream::StartEngine()
         std::lock_guard lock(m_lock);
         m_tokens.clear();
         m_pending.Reset();
+        m_latest.Reset();
         m_state = MF_STREAM_STATE_RUNNING;
         epoch = ++m_epoch;
     }
@@ -132,6 +134,7 @@ void Ps5Stream::StopEngine()
         ++m_epoch;
         m_tokens.clear();
         m_pending.Reset();
+        m_latest.Reset();
     }
     m_engine->Stop();
 }
@@ -166,6 +169,7 @@ void Ps5Stream::OnFrame(IMFSample* sample, uint64_t epoch)
 {
     std::lock_guard lock(m_lock);
     if (m_shutdown || m_state != MF_STREAM_STATE_RUNNING || epoch != m_epoch) return;
+    if (m_latest.Replace(bool(m_pending))) sample->SetUINT32(MFSampleExtension_Discontinuity, TRUE);
     m_pending = sample;  // drop older undelivered frames: always serve the newest
     DeliverLocked();
 }
@@ -175,6 +179,7 @@ void Ps5Stream::DeliverLocked()
     ComPtr<IUnknown> token = m_tokens.front();
     m_tokens.pop_front();
     if (token) m_pending->SetUnknown(MFSampleExtension_Token, token.Get());
+    StampDelivery(m_pending.Get(), FrameClockNow(), m_latest.TakeDropped());
     m_queue->QueueEventParamUnk(MEMediaSample, GUID_NULL, S_OK, m_pending.Get());
     m_pending.Reset();
 }
@@ -211,6 +216,7 @@ STDMETHODIMP Ps5Stream::SetStreamState(MF_STREAM_STATE state)
             m_state = state;
             m_tokens.clear();
             m_pending.Reset();
+            m_latest.Reset();
             return S_OK;
         case MF_STREAM_STATE_RUNNING:
             if (current == MF_STREAM_STATE_PAUSED) {

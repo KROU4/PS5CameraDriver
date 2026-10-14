@@ -205,9 +205,96 @@ jobs:
           path: build/src/linux/ps5cam-bokehd
           if-no-files-found: error
 
+  # Exercise the exact macOS ZIP assembled by the Windows packaging job on both supported CPU
+  # families. The fixture is generated after checking the package: no Sony firmware is shipped.
+  macos:
+    needs: build
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-15
+            arch: arm64
+          - runner: macos-15-intel
+            arch: x86_64
+    runs-on: ${{ matrix.runner }}
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
+        with:
+          persist-credentials: false
+
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093  # v4.3.0
+        with:
+          name: PS5CameraDriver-linux-macos
+          path: dist
+
+      - name: Inspect package and run firmware-loader CPU tests
+        env:
+          EXPECTED_ARCH: ${{ matrix.arch }}
+        run: |
+          set -euo pipefail
+          test "$(uname -m)" = "$EXPECTED_ARCH"
+          mkdir package
+          unzip -q dist/PS5CameraDriver-macos.zip -d package
+          bash -n package/install.sh package/uninstall.sh
+          python3 -I tools/tests/test-fwload.py
+          /usr/bin/python3 -I tools/tests/test-fwload.py --check-lock "$EXPECTED_ARCH" \
+            "/tmp/ps5camera-lock-$EXPECTED_ARCH"
+          if find package -type f -name '*.bin' -print -quit | grep -q .; then
+            echo "The release package must not contain firmware binaries" >&2
+            exit 1
+          fi
+          python3 -I tools/tests/test-fwload.py --write-fixture package
+
+      - name: Native install, launchd and uninstall smoke test
+        env:
+          EXPECTED_ARCH: ${{ matrix.arch }}
+        run: |
+          set -euo pipefail
+          target='/Library/Application Support/PS5Camera'
+          plist=/Library/LaunchDaemons/com.ps5camera.fwload.plist
+          /usr/bin/python3 -c 'import sys; assert sys.version_info >= (3, 9)'
+          sudo bash package/install.sh --bokeh off --original "$PWD/package/sony-firmware.bin"
+          plutil -lint "$plist"
+          # launchd starts the process asynchronously after bootstrap returns.
+          for _ in {1..10}; do
+            sudo launchctl print system/com.ps5camera.fwload | tee /tmp/ps5camera-launchd.txt >/dev/null
+            grep -q 'state = running' /tmp/ps5camera-launchd.txt && break
+            sleep 1
+          done
+          cat /tmp/ps5camera-launchd.txt
+          grep -q 'state = running' /tmp/ps5camera-launchd.txt
+          cmp package/requirements.lock "$target/requirements.lock"
+          "$target/venv/bin/python" -c \
+            'import importlib.metadata as m, sys; assert m.version("pyusb") == "1.3.1"; assert m.version("libusb-package") == "1.0.30.0"; assert m.version("importlib-resources") == "6.5.2"; assert sys.version_info >= (3, 10) or m.version("zipp") == "3.23.1"'
+          PYTHONPATH="$target" "$target/venv/bin/python" -c \
+            'import ps5cam_fwload; assert ps5cam_fwload.backend() is not None'
+          libusb_path="$("$target/venv/bin/python" -c 'import libusb_package; print(libusb_package.find_library())')"
+          file "$libusb_path"
+          file "$libusb_path" | grep -q "$EXPECTED_ARCH"
+          test -s "$target/firmware.bin"
+          sudo bash "$target/uninstall.sh"
+          test ! -e "$target"
+          test ! -e "$plist"
+
+      - name: Clean up launchd service
+        if: always()
+        run: |
+          target='/Library/Application Support/PS5Camera'
+          plist=/Library/LaunchDaemons/com.ps5camera.fwload.plist
+          if [[ -x "$target/uninstall.sh" ]]; then
+            sudo bash "$target/uninstall.sh"
+          else
+            sudo launchctl bootout system "$plist" 2>/dev/null || true
+            sudo rm -f "$plist"
+            sudo rm -rf "$target"
+          fi
+
   release:
     if: startsWith(github.ref, 'refs/tags/v')
-    needs: [build, linux]
+    needs: [build, linux, macos]
     runs-on: ubuntu-22.04
     permissions:
       contents: write  # the release

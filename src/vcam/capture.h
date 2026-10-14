@@ -22,6 +22,7 @@
 #include "calibschedule.h"
 #include "engine.h"
 #include "flicker.h"
+#include "frametiming.h"
 #include "pipeline.h"
 #include "../common/settings.h"
 
@@ -52,7 +53,7 @@ private:
     void Supervisor();
     void ProcessFrame(IMFSample* sample);
     void HandleFrame(IMFSample* sample);
-    void Deliver(const uint8_t* yuy2, uint32_t pitch);
+    void Deliver(const uint8_t* yuy2, uint32_t pitch, const FrameTiming& timing);
     void DeliverPlaceholder();
     bool EnsurePipeline();
     IMFSample* NewOutputSample(BYTE** scan0, LONG* pitch, Microsoft::WRL::ComPtr<IMF2DBuffer2>& lockOut);
@@ -99,6 +100,9 @@ private:
     CalibrationSchedule m_calib;
     uint32_t m_frameCount = 0;
     uint32_t m_badFrames = 0;
+    DelayedFrameTiming m_frameTiming;
+    uint64_t m_sequence = 0;
+    bool m_discontinuity = true;
     // Raw frames for tuning (ps5cam-ctl record N), written on the reader thread under m_lock.
     HANDLE m_record = INVALID_HANDLE_VALUE;
     uint32_t m_recordLeft = 0;

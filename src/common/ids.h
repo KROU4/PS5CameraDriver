@@ -20,6 +20,22 @@ inline constexpr wchar_t kDepthCameraName[] = L"PS5 Camera Depth";
 inline constexpr GUID kDmftClsid = {0x1e72d619, 0xc6e0, 0x408b, {0xbd, 0x95, 0x6d, 0x63, 0x34, 0x21, 0x3e, 0x9b}};
 inline constexpr wchar_t kDmftClsidString[] = L"{1E72D619-C6E0-408B-BD95-6D6334213E9B}";
 
+// Per-sample latency diagnostics. All times use Media Foundation's 100 ns QPC epoch, so values
+// from different stages can be subtracted without changing the sample's presentation timestamp.
+// {3FE6A7B1-A85C-4E28-9B5E-31ED7D4A3001} .. 3006
+inline constexpr GUID kFrameIngressTime =
+    {0x3fe6a7b1, 0xa85c, 0x4e28, {0x9b, 0x5e, 0x31, 0xed, 0x7d, 0x4a, 0x30, 0x01}};
+inline constexpr GUID kFrameProcessedTime =
+    {0x3fe6a7b1, 0xa85c, 0x4e28, {0x9b, 0x5e, 0x31, 0xed, 0x7d, 0x4a, 0x30, 0x02}};
+inline constexpr GUID kFrameDeliveredTime =
+    {0x3fe6a7b1, 0xa85c, 0x4e28, {0x9b, 0x5e, 0x31, 0xed, 0x7d, 0x4a, 0x30, 0x03}};
+inline constexpr GUID kFrameSequence =
+    {0x3fe6a7b1, 0xa85c, 0x4e28, {0x9b, 0x5e, 0x31, 0xed, 0x7d, 0x4a, 0x30, 0x04}};
+inline constexpr GUID kDroppedFrames =
+    {0x3fe6a7b1, 0xa85c, 0x4e28, {0x9b, 0x5e, 0x31, 0xed, 0x7d, 0x4a, 0x30, 0x05}};
+inline constexpr GUID kFrameGpuTimeUs =
+    {0x3fe6a7b1, 0xa85c, 0x4e28, {0x9b, 0x5e, 0x31, 0xed, 0x7d, 0x4a, 0x30, 0x06}};
+
 // Shared configuration and status. The installer grants Users and LOCAL SERVICE write access.
 inline constexpr wchar_t kRegRoot[] = L"SOFTWARE\\PS5Camera";
 // Values only administrators may change (they make the SYSTEM service restart devices).

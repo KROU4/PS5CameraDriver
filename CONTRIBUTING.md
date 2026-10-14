@@ -36,6 +36,21 @@ remain explicit. Stereo-noise balancing, adaptive texture rejection and diagonal
 experimental and disabled. Recorded-camera regression measurements are required alongside
 synthetic GPU tests before changing release defaults.
 
+## Installer and latency checks
+
+macOS CI tests the assembled ZIP on Apple Silicon and Intel, installs the hash-locked Python
+dependencies, validates and starts the launchd service, and removes it. Its firmware input is
+a synthetic fixture generated after confirming that the release ZIP contains no firmware binaries.
+Run the CPU fixture tests with `python3 -I tools/tests/test-fwload.py`.
+
+Windows timing regressions check the one-frame GPU metadata association, history reset, missing
+timestamps and elapsed-time statistics. Timing tests must not publish shared camera status,
+consume recording requests or change picture settings. Live measurements use
+`ps5cam-ctl latency 360 0 report.csv`; repeat with a consumer delay to inspect backpressure.
+Compare the same hardware, mode, settings and reader. Separate GPU computation from observable
+capture-to-reader time, and report metadata coverage and any unavailable stages. A synthetic
+queue test alone does not establish a camera-to-display latency improvement.
+
 ## License of contributions
 
 The project is licensed under the [GNU GPL 3.0](LICENSE). By submitting a pull request you confirm
