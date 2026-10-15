@@ -181,8 +181,10 @@ HRESULT StereoPipeline::CreateResources()
     TRY(g.CreateImage(m_stereo.PackedWidth() / 2, m_stereo.PackedHeight(), GpuFormat::RGBA8_UINT, 0, &d.packed));
     TRY(g.CreateImage(ew, eh, GpuFormat::RGBA8_UNORM, rw, &d.mainYuv));
     TRY(g.CreateImage(m_stereo.SecondWidth(), m_stereo.SecondHeight(), GpuFormat::RGBA8_UNORM, rw, &d.secondYuv));
-    TRY(g.CreateImage(ew, eh, GpuFormat::RGBA8_UNORM, rw, &d.clean[0]));
-    TRY(g.CreateImage(ew, eh, GpuFormat::RGBA8_UNORM, rw, &d.clean[1]));
+    // Keep fractional IIR updates: at denoiseKeep=0.12, rounding every frame to UNORM8
+    // permanently loses colour changes below about four input codes.
+    TRY(g.CreateImage(ew, eh, GpuFormat::RGBA16_FLOAT, rw, &d.clean[0]));
+    TRY(g.CreateImage(ew, eh, GpuFormat::RGBA16_FLOAT, rw, &d.clean[1]));
     TRY(g.CreateImage(ew / 4, eh / 4, GpuFormat::R32_FLOAT, rw, &d.smallCur));
     TRY(g.CreateImage(ew / 4, eh / 4, GpuFormat::R32_FLOAT, rw, &d.smallPrev));
     TRY(g.CreateImage(DivUp(ew, kMotionBlock), DivUp(eh, kMotionBlock), GpuFormat::RG32_UINT, rw, &d.motionCoarse));

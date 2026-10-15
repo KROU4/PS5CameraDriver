@@ -1,3 +1,24 @@
+# Version 1.2.10 — 15 October 2026
+
+Fixes small colour changes getting stuck in temporal denoising. The accumulated image now keeps
+fractional values in half-float GPU textures instead of rounding to eight bits on every frame.
+The final NV12/YUY2 output formats, filtering strength and number of processing passes are unchanged.
+The fix applies to the shared Windows/Linux picture pipeline whenever denoising is enabled.
+
+A compiled GPU regression reproduces the old error and verifies convergence after the fix:
+mean chroma error for a small colour step fell from 2.635 to 0.439 studio-range codes. Existing
+moving-detail, edge, correlated-noise and reset tests pass. This is a correction to colour
+accumulation, not a claim of a large overall noise reduction: three recorded scenes showed
+temporal brightness variation changing by +1.81%, -1.73% and +0.66% respectively.
+
+On an RTX 3060 Ti, a live 1920x1080 bokeh test delivered 59.993 fps over 600 measured frames
+after 30 warm-up frames, with no reported dropped frames and 8.927 ms mean GPU compute.
+The change needs about 15.82 MiB of additional GPU history memory at 1080p; performance on
+other hardware depends on its memory bandwidth and processing capacity.
+
+Existing camera settings and calibration are preserved. No new camera firmware is required.
+Windows, Linux and macOS installers remain available; the macOS firmware loader itself is unchanged.
+
 # Version 1.2.9 — 14 October 2026
 
 Adds native macOS installer checks on Apple Silicon and Intel, and observable Windows video
