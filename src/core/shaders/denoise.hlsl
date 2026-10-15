@@ -20,7 +20,9 @@ Texture2D<float4> Cur : register(t0);   // main sensor, this frame (Y, U, V, 1)
 Texture2D<float4> Prev : register(t1);  // the previous result
 Texture2D<uint2> Motion : register(t2); // one vector per 32x32 block (asuint), denoiseHistory 2
 Texture2D<uint2> MotionBefore : register(t3);  // the same of the previous frame
-FORMAT("rgba8") RWTexture2D<unorm float4> Out : register(u0);
+// Fractional history prevents small temporal updates from rounding back to the old colour.
+// The final composite still writes the normal 8-bit NV12/YUY2 output.
+FORMAT("rgba16f") RWTexture2D<float4> Out : register(u0);
 RWByteAddressBuffer NoiseHist : register(u1);  // 128 bins of the 3x3-mean change, 1/4096 each
 
 static const float kChromaSigma = 0.05;  // luma difference at which a neighbour's chroma counts ~60%

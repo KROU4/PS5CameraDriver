@@ -21,7 +21,7 @@ constexpr uint32_t kHeight = 192;
 constexpr uint32_t kFrames = 48;
 constexpr uint32_t kCrop = 24;
 
-enum class Scene { Flat, Texture, Edge, Correlated, HeterogeneousNoise };
+enum class Scene { Flat, Texture, Edge, Correlated, HeterogeneousNoise, ChromaStep };
 
 // A fixed generator and Box-Muller transform keep the fixture reproducible without depending on
 // the implementation-defined sequence of std::normal_distribution.
@@ -112,7 +112,9 @@ Clip MakeClip(Scene scene)
                 const size_t index = size_t(y) * kWidth + x;
                 truth[index] = Studio(level);
                 double sampleNoise = 0;
-                if (scene == Scene::HeterogeneousNoise && (x < kWidth / 3 || x >= 2 * kWidth / 3)) {
+                if (scene == Scene::ChromaStep) {
+                    sampleNoise = 0;
+                } else if (scene == Scene::HeterogeneousNoise && (x < kWidth / 3 || x >= 2 * kWidth / 3)) {
                     sampleNoise = noise.Next() * 3.0;
                 } else if (scene == Scene::Correlated || scene == Scene::HeterogeneousNoise) {
                     // Binomial 5x5 correlation, normalized to the same pixel sigma=10 as white
@@ -137,9 +139,9 @@ Clip MakeClip(Scene scene)
                 const uint8_t* source = luma.data() + size_t(y) * kWidth;
                 for (uint32_t x = 0; x < kWidth; x += 2) {
                     row[x * 2] = source[x];
-                    row[x * 2 + 1] = 128;
+                    row[x * 2 + 1] = scene == Scene::ChromaStep && frameIndex >= 16 ? 131 : 128;
                     row[x * 2 + 2] = source[x + 1];
-                    row[x * 2 + 3] = 128;
+                    row[x * 2 + 3] = scene == Scene::ChromaStep && frameIndex >= 16 ? 125 : 128;
                 }
             }
         }
@@ -207,13 +209,13 @@ bool ProcessClip(const Clip& clip, bool motionCompensation, ProcessedClip& proce
             // retain old contents. Replaying a seeded clip must reproduce a fresh stream exactly.
             const auto& expected = processed.output[frameIndex - 1];
             if (!std::equal(expected.begin(), expected.end(), nv12.begin())) {
-                std::fprintf(stderr, "Reset changed luma at frame %u (motion %d, fine detail %d)\n",
+                std::fprintf(stderr, "Reset changed NV12 at frame %u (motion %d, fine detail %d)\n",
                     frameIndex, motionCompensation ? 1 : 0, fineDetail ? 1 : 0);
                 return false;
             }
             continue;
         }
-        processed.output.emplace_back(nv12.begin(), nv12.begin() + size_t(kWidth) * kHeight);
+        processed.output.emplace_back(nv12.begin(), nv12.end());
         // Process is explicitly one frame deep: output from call n belongs to input n - 1.
         processed.truth.push_back(clip.truth[frameIndex - 1]);
     }
@@ -420,6 +422,32 @@ bool CorrelatedNoise(bool motion, Scene scene)
     return passed;
 }
 
+bool SmallColourChangesConverge()
+{
+    // A three-code colour change is smaller than half a code after the 0.12 IIR update.
+    // Rounding the history to UNORM8 every frame leaves the old colour indefinitely.
+    // After 30 frames the intended temporal filter has less than 0.1 code of lag.
+    ProcessedClip clip;
+    if (!ProcessClip(MakeClip(Scene::ChromaStep), false, clip)) return false;
+    double error = 0;
+    uint64_t count = 0;
+    for (size_t frame = 44; frame < clip.output.size(); ++frame) {
+        for (uint32_t y = kCrop / 2; y < (kHeight - kCrop) / 2; ++y) {
+            for (uint32_t x = kCrop; x < kWidth - kCrop; x += 2) {
+                const size_t offset = size_t(kWidth) * kHeight + size_t(y) * kWidth + x;
+                const double expectedU = 127.5 + (131.0 - 127.5) * (224.0 / 255.0);
+                const double expectedV = 127.5 + (125.0 - 127.5) * (224.0 / 255.0);
+                error += std::abs(clip.output[frame][offset] - expectedU);
+                error += std::abs(clip.output[frame][offset + 1] - expectedV);
+                count += 2;
+            }
+        }
+    }
+    error /= double(count);
+    std::printf("small colour step: settled UV MAE %.3f (limit 0.75)\n", error);
+    return std::isfinite(error) && error <= 0.75;
+}
+
 }  // namespace
 
 int main()
@@ -430,6 +458,7 @@ int main()
     const bool correlatedWithMotion = CorrelatedNoise(true, Scene::Correlated);
     const bool heterogeneousWithoutMotion = CorrelatedNoise(false, Scene::HeterogeneousNoise);
     const bool heterogeneousWithMotion = CorrelatedNoise(true, Scene::HeterogeneousNoise);
+    const bool colourConverged = SmallColourChangesConverge();
     bool resetPassed = true;
     const Clip resetClip = MakeClip(Scene::Texture);
     for (bool motion : {false, true}) {
@@ -440,7 +469,7 @@ int main()
     }
     std::printf("denoise history reset: %s\n", resetPassed ? "PASS" : "FAIL");
     const bool passed = withoutMotion && withMotion && correlatedWithoutMotion && correlatedWithMotion &&
-        heterogeneousWithoutMotion && heterogeneousWithMotion && resetPassed;
+        heterogeneousWithoutMotion && heterogeneousWithMotion && resetPassed && colourConverged;
     std::printf("denoise GPU quality: %s\n", passed ? "PASS" : "FAIL");
     return passed ? 0 : 1;
 }
