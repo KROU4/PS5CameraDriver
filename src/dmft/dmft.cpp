@@ -412,7 +412,8 @@ HRESULT DeviceMft::SetOutputLocked(std::unique_lock<std::mutex>& lock, DWORD str
                 TypeText(full.Get()).c_str());
             return MF_E_INVALIDMEDIATYPE;  // the stream stays disabled
         }
-        if (!active) s->processor->Reset();
+        if (active) s->processor->Watch(state == DeviceStreamState_Run);  // no frames come in Pause
+        else s->processor->Reset();
     }
     s->outputType = full;
     s->outputState = state;
@@ -446,8 +447,10 @@ STDMETHODIMP DeviceMft::SetInputStreamState(DWORD stream, IMFMediaType* type, De
         // Our own request after the effect changed while streaming (see ProcessInput).
         s->inputChangePending = false;
         s->discontinuity = true;
-        if (s->processor && s->outputState == DeviceStreamState_Run && !s->processor->Configure(type, s->outputType.Get()))
-            Log(L"stream %lu: cannot process %ls", stream, TypeText(type).c_str());
+        if (s->processor && s->outputState == DeviceStreamState_Run) {
+            if (s->processor->Configure(type, s->outputType.Get())) s->processor->Watch(true);
+            else Log(L"stream %lu: cannot process %ls", stream, TypeText(type).c_str());
+        }
     }
     m_inputChanged.notify_all();
     return S_OK;

@@ -1,4 +1,5 @@
-add_executable(ps5cam-ctl main.cpp latency.cpp ../common/settings.cpp ../common/vcamreg.cpp ../common/camdefaults.cpp)
+add_executable(ps5cam-ctl main.cpp latency.cpp ../common/settings.cpp ../common/vcamreg.cpp ../common/camdefaults.cpp
+    ../common/usbpath.cpp)
 target_link_libraries(ps5cam-ctl PRIVATE mfplat mf mfreadwrite mfuuid ole32 cfgmgr32 advapi32)
 ps5cam_version(ps5cam-ctl "PS5 HD Camera settings tool")
 if(BUILD_TESTING)

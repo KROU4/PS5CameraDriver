@@ -10,6 +10,7 @@
 #include "../common/ids.h"
 #include "../common/settings.h"
 #include "latency.h"
+#include "../common/usbpath.h"
 #include "../common/vcamreg.h"
 
 using namespace ps5cam;
@@ -214,6 +215,7 @@ int wmain(int argc, wchar_t** argv)
         Status st = LoadStatus();
         std::wstring link = FindPhysicalCameraLink();
         wprintf(L"physical camera : %ls\n", link.empty() ? L"not connected" : link.c_str());
+        wprintf(L"camera USB      : %ls\n", DescribeUsbPath(FindCameraUsbPath()).c_str());
         wprintf(L"raw camera hidden: %ls\n", IsPhysicalCameraHidden() ? L"yes" : L"no");
         wprintf(L"device MFT      : %ls\n", IsDeviceMftSet() ? L"on" : L"off");
         wprintf(L"Windows default : background effects %ls\n", DescribeBackgroundEffectDefault().c_str());

@@ -66,6 +66,14 @@
     },
     {
       "@type": "Question",
+      "name": "Why is the PS5 camera picture black?",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "Usually because of the USB connection. The camera's video stream reserves almost the whole bandwidth of a USB 3 link, so behind a hub, a monitor's USB ports or some front-panel ports it may start without delivering a single frame. Plug the camera straight into a USB 3 port of the computer, on a desktop at the back. ps5cam-ctl status shows the camera's USB path, and the driver's log names the cause."
+      }
+    },
+    {
+      "@type": "Question",
       "name": "Does the PS5 camera work in Zoom, Teams, Discord and OBS?",
       "acceptedAnswer": {
         "@type": "Answer",
@@ -589,6 +597,12 @@
 <summary>Do I need an adapter for the PS5 camera on PC?</summary>
 <div>
 <p>No adapter is needed: plug the camera into a USB 3 port. On a USB 2.0 port the camera only delivers 640×400.</p>
+</div>
+</details>
+<details>
+<summary>Why is the PS5 camera picture black?</summary>
+<div>
+<p>Usually because of the USB connection. The camera's video stream reserves almost the whole bandwidth of a USB 3 link, so behind a hub, a monitor's USB ports or some front-panel ports it may start without delivering a single frame. Plug the camera straight into a USB 3 port of the computer, on a desktop at the back. <code>ps5cam-ctl status</code> shows the camera's USB path, and the driver's log names the cause.</p>
 </div>
 </details>
 <details>

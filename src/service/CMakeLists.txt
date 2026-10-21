@@ -1,5 +1,5 @@
 add_executable(ps5cam-svc main.cpp ../common/firmware.cpp ../common/log.cpp ../common/vcamreg.cpp
-    ../common/settings.cpp ../common/camdefaults.cpp)
+    ../common/settings.cpp ../common/camdefaults.cpp ../common/usbpath.cpp)
 target_link_libraries(ps5cam-svc PRIVATE winusb cfgmgr32 advapi32 shell32 ole32 mfplat mfuuid wtsapi32 userenv)
 # The service uploads the firmware.bin next to its exe. Keep the exe in this directory for every
 # generator (the generator expression stops multi-config generators adding a per-config folder).
@@ -17,7 +17,7 @@ ps5cam_version(ps5cam-svc "PS5 HD Camera service")
 
 if(BUILD_TESTING)
     add_executable(ps5cam-service-tests tests/service_tests.cpp ../common/vcamreg.cpp
-        ../common/settings.cpp ../common/camdefaults.cpp)
+        ../common/settings.cpp ../common/camdefaults.cpp ../common/usbpath.cpp)
     target_link_libraries(ps5cam-service-tests PRIVATE cfgmgr32 advapi32 shell32 ole32 mfplat mfuuid wtsapi32 userenv)
     add_test(NAME ps5cam-service-tests COMMAND ps5cam-service-tests)
 endif()

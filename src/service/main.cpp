@@ -23,6 +23,7 @@
 #include "../common/ids.h"
 #include "../common/log.h"
 #include "../common/settings.h"
+#include "../common/usbpath.h"
 #include "../common/vcamreg.h"
 
 using namespace ps5cam;
@@ -142,6 +143,8 @@ void CameraReady()
         Log(L"camera interface did not appear");
         return;
     }
+    // Behind a hub the video stream may start without ever delivering a frame (usbpath.h).
+    Log(L"camera USB: %ls", DescribeUsbPath(FindCameraUsbPath()).c_str());
     if (CameraNeedsRestart()) {
         // Left waiting for a reboot by a refused device restart: re-enumerate it instead (its
         // arrival brings us back here).
