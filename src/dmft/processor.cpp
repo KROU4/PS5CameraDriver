@@ -13,12 +13,16 @@
 #include "../common/frameclock.h"
 #include "../common/log.h"
 #include "../common/settings.h"
+#include "../common/usbpath.h"
 
 using Microsoft::WRL::ComPtr;
 
 namespace ps5cam {
 
 namespace {
+
+// Frames normally arrive within a fraction of a second of the start (a sensor mode switch included).
+constexpr uint32_t kWatchdogMs = 4000;
 
 bool SizeAndRate(IMFMediaType* t, GUID* sub, UINT32* w, UINT32* h, uint32_t* fps)
 {
@@ -38,6 +42,13 @@ bool IsDeviceLost(HRESULT hr)
 
 }  // namespace
 
+FrameProcessor::~FrameProcessor()
+{
+    StopWatchdog();
+    if (m_watchdog) CloseThreadpoolTimer(m_watchdog);
+    EndRecording(L"stopped with the transform");
+}
+
 bool FrameProcessor::Configure(IMFMediaType* input, IMFMediaType* output)
 {
     GUID inSub = {}, outSub = {};
@@ -49,6 +60,7 @@ bool FrameProcessor::Configure(IMFMediaType* input, IMFMediaType* output)
         (outSub != MFVideoFormat_NV12 && outSub != MFVideoFormat_YUY2) || !SensorModeOf(inW, inH, inFps, &mode)) {
         m_configured = false;  // no frames from a half-known format
         m_pipeline.reset();
+        Watch(false);
         return false;
     }
     m_configured = true;
@@ -97,6 +109,10 @@ int FrameProcessor::TakePowerLineRequest()
 
 void FrameProcessor::Reset()
 {
+    const bool watched = m_watching;
+    Watch(false);
+    if (watched && m_externalSideEffects && m_inputFrames == 0)
+        Log(L"stream stopped after %llu ms without a single camera frame", GetTickCount64() - m_startTick);
     m_pipeline.reset();  // releases the GPU device and its ~65 MB while nobody streams
     EndRecording(L"stopped with the stream");
     m_lastTime = -1;
@@ -104,7 +120,9 @@ void FrameProcessor::Reset()
     m_discontinuity = true;
     m_flickerStarted = false;
     m_powerLineHeld = false;
-    if (!m_configured) return;  // a transform that never streamed: another one may be streaming now
+    // A transform that never streamed leaves the status alone: another one may be streaming now.
+    // The watchdog's error goes in any case.
+    if (!m_statusError.exchange(false) && !m_configured) return;
     m_configured = false;
     Status st;
     st.streaming = false;
@@ -226,6 +244,7 @@ ComPtr<IMFSample> FrameProcessor::Process(IMFSample* input)
 {
     ComPtr<IMFMediaBuffer> buf;
     if (!m_configured || !input || FAILED(input->GetBufferByIndex(0, &buf))) return nullptr;
+    ++m_inputFrames;
     RefreshSettings(false);
     if (!EnsurePipeline()) return nullptr;
     const uint32_t rowBytes = m_stereo.PackedWidth() * 2;  // YUY2: 2 bytes per pixel
@@ -255,6 +274,9 @@ ComPtr<IMFSample> FrameProcessor::Process(IMFSample* input)
         if (m_recordLeft) Record(scan0, pitch, rowBytes, rows);
         if (m_externalSideEffects) Calibrate(scan0, static_cast<uint32_t>(pitch));
         MainRowMeans(scan0, static_cast<uint32_t>(pitch), m_stereo, m_rowMeans);
+        float mean = 0;
+        for (float r : m_rowMeans) mean += r;
+        m_brightness = m_rowMeans.empty() ? 0u : static_cast<uint32_t>(std::lround(mean * 255 / m_rowMeans.size()));
         if (const int pl = m_flicker.Update(m_rowMeans); pl >= 0) {
             m_powerLineRequest = pl;
             Log(pl == kPowerLineOff ? L"dim scene: anti-flicker off for a longer exposure"
@@ -290,6 +312,9 @@ ComPtr<IMFSample> FrameProcessor::Process(IMFSample* input)
                        hr == S_FALSE || previous < 0 || !completed) {
                 out.Reset();  // the first frame only primes the GPU pipeline
             } else {
+                if (m_delivered++ == 0 && m_externalSideEffects)
+                    Log(L"first picture after %llu ms and %u camera frames", GetTickCount64() - m_startTick,
+                        m_inputFrames.load());
                 m_failures = 0;
                 m_lastGpuMs = st.gpuMs;
                 m_lastFocus = st.focusDisparity;
@@ -307,6 +332,9 @@ ComPtr<IMFSample> FrameProcessor::Process(IMFSample* input)
                 if (m_externalSideEffects) PublishStatus();
             }
         }
+    } else if (m_rejected++ < 3 && m_externalSideEffects) {
+        Log(L"camera frame skipped: pitch %ld, %zu bytes, expected %u rows of %u bytes", static_cast<long>(pitch),
+            available, rows, rowBytes);
     }
     if (twoD) b2->Unlock2D();
     else buf->Unlock();
@@ -378,6 +406,71 @@ void FrameProcessor::PublishStatus()
     SaveStatus(st);
     m_statusTick = now;
     m_framesInWindow = 0;
+}
+
+void FrameProcessor::Watch(bool running)
+{
+    StopWatchdog();  // also waits for a callback running now, before the counters restart
+    m_watching = running && m_configured;
+    if (!m_watching) return;
+    m_startTick = GetTickCount64();
+    m_inputFrames = 0;
+    m_rejected = 0;
+    m_delivered = 0;
+    m_brightness = 0;
+    if (!m_externalSideEffects) return;
+    // Read here rather than in the callback, which Reset waits for: not during a device removal.
+    const UsbPath usb = FindCameraUsbPath();
+    m_usbPath = DescribeUsbPath(usb);
+    m_behindHub = !usb.hubs.empty();
+    if (!m_watchdog) m_watchdog = CreateThreadpoolTimer(OnWatchdog, this, nullptr);
+    if (!m_watchdog) return;
+    ULARGE_INTEGER due;
+    due.QuadPart = static_cast<ULONGLONG>(-static_cast<LONGLONG>(kWatchdogMs) * 10'000);  // relative, 100 ns
+    FILETIME ft = {due.LowPart, due.HighPart};
+    SetThreadpoolTimer(m_watchdog, &ft, 0, 0);
+}
+
+void FrameProcessor::StopWatchdog()
+{
+    if (!m_watchdog) return;
+    SetThreadpoolTimer(m_watchdog, nullptr, 0, 0);
+    WaitForThreadpoolTimerCallbacks(m_watchdog, TRUE);
+}
+
+void CALLBACK FrameProcessor::OnWatchdog(PTP_CALLBACK_INSTANCE, void* context, PTP_TIMER)
+{
+    // A thread pool thread: the stream may change meanwhile, so only the atomic counters and what
+    // Watch set before arming the timer are read here (Watch and Reset wait for this callback).
+    auto* self = static_cast<FrameProcessor*>(context);
+    const uint32_t frames = self->m_inputFrames;
+    const uint32_t rejected = self->m_rejected;  // after frames: frames arriving meanwhile only add to it
+    const uint32_t delivered = self->m_delivered;
+    if (delivered) {
+        // Tells a dark scene, or a camera sending black, from a picture lost on the way.
+        Log(L"%u camera frames and %u pictures in %u s, camera brightness %u of 255", frames, delivered,
+            kWatchdogMs / 1000, self->m_brightness.load());
+        return;
+    }
+    Status st;
+    st.streaming = true;
+    if (!frames) {
+        // Seen behind USB hubs: Windows starts the stream, the isochronous endpoint never delivers.
+        Log(L"no frame from the camera %u s after the stream started; camera USB: %ls", kWatchdogMs / 1000,
+            self->m_usbPath.c_str());
+        st.error = self->m_behindHub ? L"no frames from the camera: plug it straight into a USB 3 port of the "
+                                       L"computer, not through a hub"
+                                     : L"no frames from the camera: plug it into another USB 3 port of the computer";
+    } else if (rejected >= frames) {
+        Log(L"%u camera frames in %u s, none of the expected size", frames, kWatchdogMs / 1000);
+        st.error = L"the camera sends frames of an unexpected size";
+    } else {
+        Log(L"%u camera frames in %u s but no picture (GPU messages above)", frames, kWatchdogMs / 1000);
+        st.error = L"camera frames arrive but the GPU makes no picture";
+    }
+    if (self->m_delivered) return;  // the first picture came meanwhile: its status stands
+    self->m_statusError = true;
+    SaveStatus(st);  // the tray shows it; the first picture's status or Reset replaces it
 }
 
 }  // namespace ps5cam

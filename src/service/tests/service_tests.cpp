@@ -249,6 +249,32 @@ bool IsBootDevicePath(const std::wstring&)
     return false;
 }
 
+void TestUsbPathDescription()
+{
+    ExpectEqual("root hub 3.0", IsRootHubId(L"USB\\ROOT_HUB30\\5&2c35141&0&0"), 1);
+    ExpectEqual("root hub 2.0 lower case", IsRootHubId(L"usb\\root_hub20\\4&1"), 1);
+    ExpectEqual("external hub", IsRootHubId(L"USB\\VID_174C&PID_3074\\6&10cdd27&0&3"), 0);
+    ExpectEqual("short id", IsRootHubId(L"USB\\ROOT"), 0);
+    ExpectEqual("instance stripped",
+        WithoutInstance(L"USB\\VID_174C&PID_3074\\6&10cdd27&0&3") == L"USB\\VID_174C&PID_3074", 1);
+    ExpectEqual("no instance kept", WithoutInstance(L"HUB") == L"HUB", 1);
+    UsbPath p;
+    ExpectEqual("absent", DescribeUsbPath(p) == L"camera not found", 1);
+    p.found = true;
+    ExpectEqual("walk failed", DescribeUsbPath(p) == L"path unknown", 1);
+    p.complete = true;
+    ExpectEqual("direct", DescribeUsbPath(p) == L"directly on a root port", 1);
+    p.hubs = {L"USB\\VID_174C&PID_3074"};
+    p.neighbours = 2;
+    ExpectEqual("one hub",
+        DescribeUsbPath(p) == L"behind 1 USB hub (USB\\VID_174C&PID_3074), 2 other devices on it", 1);
+    p.hubs.push_back(L"USB\\VID_2109&PID_0817");
+    p.neighbours = 1;
+    ExpectEqual("two hubs",
+        DescribeUsbPath(p) ==
+            L"behind 2 USB hubs (USB\\VID_174C&PID_3074 -> USB\\VID_2109&PID_0817), 1 other device on it", 1);
+}
+
 void TestLogInit(const wchar_t*, bool) {}
 void TestLog(const wchar_t*, ...) {}
 
@@ -264,6 +290,7 @@ int main()
     TestLoadUploadFailure();
     TestLoadAggregatesDeviceResults();
     TestBootDeviceResults();
+    TestUsbPathDescription();
     if (failures) {
         std::fprintf(stderr, "%d service test(s) failed\n", failures);
         return 1;

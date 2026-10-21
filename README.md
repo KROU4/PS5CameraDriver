@@ -35,7 +35,8 @@ Telegram, OBS, browsers and any other program.
 
 ## Install
 
-A **USB 3** port is required: on USB 2.0 the camera only delivers 640x400.
+A **USB 3** port is required: on USB 2.0 the camera only delivers 640x400. Plug it straight into
+the computer, not through a hub: behind one the video may stay black (see troubleshooting).
 
 **Windows 11**
 1. Download `PS5CameraDriver.msi` (`PS5CameraDriver-ru.msi` in Russian) from the

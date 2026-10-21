@@ -123,6 +123,11 @@ Troubleshooting
   Missing metadata is unavailable; GPU compute, processing/queue and local reader latency
   are separate metrics. Application display and network latency are outside this measurement.
 - If there is no picture after plugging the camera in, replug it.
+- Black picture in every app: plug the camera straight into a USB 3 port of the
+  computer (on a desktop, at the back), not through a hub, a monitor or a front-panel
+  port. Its video stream reserves almost the whole bandwidth of a USB 3 link, so behind
+  a hub it may start without a single frame. "ps5cam-ctl status" shows the camera's
+  USB path ("camera USB"); dmft.log says "no frame from the camera" in this case.
 - The camera measures depth from about half a metre. Anything closer turns into noise
   on the depth map, and bokeh blurs it unevenly. Sit further from the camera.
 - With -VirtualCamera the raw stereo camera "USB Camera-OV580" is hidden. To show it:

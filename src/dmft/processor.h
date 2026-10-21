@@ -6,6 +6,7 @@
 #include <mfidl.h>
 #include <wrl/client.h>
 
+#include <atomic>
 #include <memory>
 #include <string>
 #include <vector>
@@ -22,11 +23,15 @@ namespace ps5cam {
 class FrameProcessor {
 public:
     explicit FrameProcessor(bool externalSideEffects = true) : m_externalSideEffects(externalSideEffects) {}
-    ~FrameProcessor() { EndRecording(L"stopped with the transform"); }
+    ~FrameProcessor();
     // Input: the camera's UVC format; output: one of OutputTypes(). False if either is not ours.
     bool Configure(IMFMediaType* input, IMFMediaType* output);
     void Reset();  // stream stopped: drop the GPU pipeline and temporal state
     void Flush();  // discard queued GPU history but keep the configured stream
+    // After Configure: whether frames should now flow (Run, not Pause). A stream that gets no camera
+    // frame (or no usable one) shows apps a black picture and nothing else, so some seconds into
+    // Run a watchdog names the cause in the log and the status.
+    void Watch(bool running);
 
     // The processed frame, one frame late (the GPU pipeline overlaps frames), or null.
     Microsoft::WRL::ComPtr<IMFSample> Process(IMFSample* input);
@@ -51,6 +56,8 @@ private:
     void StartRecording(uint32_t frames);
     void Record(const BYTE* scan0, LONG pitch, uint32_t rowBytes, uint32_t rows);
     void EndRecording(const wchar_t* why);
+    void StopWatchdog();
+    static void CALLBACK OnWatchdog(PTP_CALLBACK_INSTANCE, void* context, PTP_TIMER);
 
     bool m_configured = false;  // Configure succeeded since the last Reset
     SensorMode m_mode = {};
@@ -88,6 +95,17 @@ private:
     float m_lastGpuMs = 0, m_lastFocus = 0;
     std::wstring m_formatText;
     bool m_externalSideEffects = true;
+
+    PTP_TIMER m_watchdog = nullptr;
+    bool m_watching = false;                 // Watch(true) since the last Configure / Reset
+    ULONGLONG m_startTick = 0;               // of that Watch
+    std::wstring m_usbPath;                  // DescribeUsbPath then, for the watchdog
+    bool m_behindHub = false;
+    std::atomic<bool> m_statusError{false};  // the watchdog wrote an error to the status
+    std::atomic<uint32_t> m_inputFrames{0};  // since then; read by the watchdog
+    std::atomic<uint32_t> m_rejected{0};     // camera frames of an unexpected size
+    std::atomic<uint32_t> m_delivered{0};    // pictures handed to the app
+    std::atomic<uint32_t> m_brightness{0};   // mean Y of the latest camera frame, 0..255
 };
 
 }  // namespace ps5cam
